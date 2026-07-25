@@ -136,8 +136,9 @@ export async function serve({
   // Whiteboard sidecar files live next to state.json, keyed by session + diagram.
   const whiteboardStateRoot = path.dirname(stateFile);
 
-  // DNS-rebinding guard. isSameOriginRequest (used on the whiteboard write
-  // routes) stops classic cross-origin CSRF but NOT DNS rebinding: a page
+  // DNS-rebinding guard. The two same-origin guards (isSameOriginRequest on the
+  // whiteboard write routes, isSameOriginOrHeaderlessRequest on the CLI-reachable
+  // state-changing routes) stop classic cross-origin CSRF but NOT DNS rebinding: a page
   // that rebinds its own domain to this loopback port sends that domain in both
   // Origin and Host, so the two still match. The robust defense is a Host-header
   // allowlist - a rebound browser carries the attacker's domain in Host, which is
@@ -182,13 +183,20 @@ export async function serve({
   });
 
   app.post("/shutdown", (req, res) => {
+    if (rejectCrossOriginWrite(req, res, "cross-origin shutdown rejected")) return;
     res.json({ status: "shutting-down" });
     // Defer until after the response flushes so the client gets confirmation.
     setImmediate(shutdown);
   });
 
+  // Guarded like the keyed routes even though only the CLI posts it today: `{reopen:true}`
+  // revives a session the human deliberately ended, which is exactly the decision the
+  // user-ended check below exists to protect. The session key is sha256(path).slice(0,16)
+  // with no secret in it, so knowing the artifact's path is enough to address a session -
+  // the keyed guards are only worth anything if this file-addressed twin is guarded too.
   app.post("/api/sessions", async (req, res, next) => {
     try {
+      if (rejectCrossOriginWrite(req, res, "cross-origin session open rejected")) return;
       const file = await canonicalFile(req.body.file);
       const key = sessionKey(file);
       const reopen = Boolean(req.body.reopen);
@@ -293,6 +301,7 @@ export async function serve({
 
   app.post("/api/:key/prompts", async (req, res, next) => {
     try {
+      if (rejectCrossOriginWrite(req, res, "cross-origin prompt submission rejected")) return;
       const shouldEndSession = Boolean(req.body?.endSession || req.body?.end_session);
       const session = await store.queuePrompts(req.params.key, req.body || {});
       if (!session) {
@@ -310,6 +319,7 @@ export async function serve({
 
   app.post("/api/:key/layout-warnings", async (req, res, next) => {
     try {
+      if (rejectCrossOriginWrite(req, res, "cross-origin layout-warning report rejected")) return;
       const result = await store.recordLayoutWarnings(req.params.key, req.body || {});
       if (!result) {
         res.status(404).json({ error: "session not found" });
@@ -326,6 +336,7 @@ export async function serve({
 
   app.post("/api/:key/end", async (req, res, next) => {
     try {
+      if (rejectCrossOriginWrite(req, res, "cross-origin session end rejected")) return;
       await store.endSession(req.params.key, "user");
       clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
       events.emit("ended", req.params.key);
@@ -338,6 +349,7 @@ export async function serve({
 
   app.post("/api/:key/agent-reply", async (req, res, next) => {
     try {
+      if (rejectCrossOriginWrite(req, res, "cross-origin agent reply rejected")) return;
       const text = String(req.body?.text || "");
       const session = await store.addAgentReply(req.params.key, text);
       if (!session) {
@@ -346,8 +358,8 @@ export async function serve({
       }
       events.emit("agent-reply", req.params.key, text);
       // The reply concludes the delivered-feedback "working" state. Without this, a poll that
-      // drains feedback and then releases leaves presence stuck on "working" — the chrome keeps
-      // Send disabled — until some future poll happens to attach, even though the agent already
+      // drains feedback and then releases leaves presence stuck on "working" - the chrome keeps
+      // Send disabled - until some future poll happens to attach, even though the agent already
       // answered. See "SSE agent-presence returns to waiting after an agent reply".
       clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
       res.json({ status: "sent" });
@@ -383,8 +395,12 @@ export async function serve({
     }
   });
 
+  // The file-addressed twin of /api/:key/end, and guarded for the same reason: ending a
+  // session here also runs shutdownIfNoLiveSessions(), so an unguarded route let a hostile
+  // page that knew (or guessed) the artifact path both end the review and stop the server.
   app.post("/api/end", async (req, res, next) => {
     try {
+      if (rejectCrossOriginWrite(req, res, "cross-origin session end rejected")) return;
       const file = await canonicalFile(req.body.file);
       const key = sessionKey(file);
       await store.endSession(key, "agent");
@@ -399,6 +415,7 @@ export async function serve({
 
   app.get("/session/:key", async (req, res, next) => {
     try {
+      setFramingHeaders(res, { frameAncestors: "none" });
       const session = await store.findByKey(req.params.key);
       if (!session) {
         res.status(404).send("Session not found");
@@ -420,11 +437,13 @@ export async function serve({
   });
 
   app.get("/artifact/:key", (req, res) => {
+    setFramingHeaders(res, { frameAncestors: "self" });
     res.redirect(`/artifact/${req.params.key}/index.html`);
   });
 
   app.get(/^\/artifact\/([^/]+)\/index\.html$/, async (req, res, next) => {
     try {
+      setFramingHeaders(res, { frameAncestors: "self" });
       const key = req.params[0];
       const session = await store.findByKey(key);
       if (!session) {
@@ -440,6 +459,7 @@ export async function serve({
 
   app.get(/^\/artifact\/([^/]+)\/(.+)$/, async (req, res, next) => {
     try {
+      setFramingHeaders(res, { frameAncestors: "self" });
       const key = req.params[0];
       const assetPath = req.params[1];
       const session = await store.findByKey(key);
@@ -915,6 +935,9 @@ export function isAllowedRequestHost({ host, forwardedHost }, allowedHostnames) 
 // that must match this server's own origin. Called from the whiteboard-channel, whiteboard PUT,
 // and whiteboard feedback-files routes - it is load-bearing on all three, and deleting it fails
 // only on the first whiteboard save, long after a boot smoke test has passed.
+// Fails closed on a request with no Origin and no Referer, which is correct for these three:
+// only the browser calls them. Routes the CLI also calls use isSameOriginOrHeaderlessRequest
+// below instead; do not "unify" the two, the difference is the whole point.
 function isSameOriginRequest(req) {
   const expectedOrigin = `${req.protocol}://${req.get("host")}`;
   const origin = req.get("origin");
@@ -923,6 +946,48 @@ function isSameOriginRequest(req) {
   }
   const referer = req.get("referer");
   return Boolean(referer) && normalizeOrigin(referer) === expectedOrigin;
+}
+
+// CSRF guard for the state-changing routes that BOTH a browser and the CLI reach:
+// /shutdown, /api/sessions, /api/end, /api/:key/end, /api/:key/prompts, /api/:key/agent-reply
+// and /api/:key/layout-warnings. Browser provenance is judged exactly as
+// isSameOriginRequest judges it - a mismatched Origin, or a mismatched Referer when
+// there is no Origin, is rejected - but a request carrying NO provenance at all is
+// allowed through, which is the one place the two guards differ.
+//
+// That difference is deliberate and load-bearing. isSameOriginRequest fails closed on a
+// header-less request, which is right for the whiteboard routes (only the browser ever
+// calls them) and wrong here: `luxe <file>`, `luxe end`, `luxe stop` and
+// `luxe poll --agent-reply` post from Node's fetch, which sends neither Origin nor Referer,
+// so the strict guard would 403 every CLI flow.
+// Allowing header-less callers does not reopen the hole this guard closes, because CSRF
+// needs a browser and browsers attach Origin to every cross-origin POST. Notably `Origin:
+// null` - what a sandboxed iframe or a redirected/`data:` navigation sends - is NOT
+// header-less: it fails to parse as an origin, so it does not match and is rejected. A
+// non-browser attacker that can already reach this loopback port can send any header it
+// likes anyway, so no header check would stop it.
+function isSameOriginOrHeaderlessRequest(req) {
+  if (!req.get("origin") && !req.get("referer")) return true;
+  return isSameOriginRequest(req);
+}
+
+// Reject a state-changing request that a browser attached foreign provenance to. Returns
+// true when the request was rejected (and the 403 already sent), so callers can bail out.
+function rejectCrossOriginWrite(req, res, error) {
+  if (isSameOriginOrHeaderlessRequest(req)) return false;
+  res.status(403).json({ error });
+  return true;
+}
+
+// Clickjacking defense (decision D2). The chrome page must never be framed: it carries the
+// session key, the conversation, and the controls that end a session, and the artifact it
+// frames is private. The artifact routes get 'self' instead of 'none' because the chrome
+// legitimately frames them from the same origin. Deliberately frame-ancestors only - upstream
+// sets no CSP over artifact content and author-supplied artifacts must keep rendering as
+// written, so nothing here constrains scripts, styles, or connections.
+function setFramingHeaders(res, { frameAncestors }) {
+  res.setHeader("X-Frame-Options", frameAncestors === "none" ? "DENY" : "SAMEORIGIN");
+  res.setHeader("Content-Security-Policy", `frame-ancestors '${frameAncestors}'`);
 }
 
 function normalizeOrigin(value) {
@@ -1060,10 +1125,6 @@ const chromeIcons = {
     '<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>',
     15,
   ),
-  camera: chromeIcon(
-    '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>',
-    15,
-  ),
   download: chromeIcon(
     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
     15,
@@ -1174,6 +1235,15 @@ export function extractArtifactHead(html) {
   return { faviconTag, title };
 }
 
+// Single source of truth for the annotate/explore default. The chrome owns the mode and
+// drives the artifact SDK over postMessage, so this value has to reach three places that
+// would otherwise drift apart: the toolbar switch's rendered `aria-pressed`, the chrome
+// client's `annotation` state, and (through the client's first `luxe:setAnnotationMode`)
+// the SDK. Both of the latter read it out of the session bootstrap JSON below rather than
+// carrying a literal of their own. Reviewing starts in explore mode: the artifact behaves
+// like an ordinary page until the reviewer deliberately turns annotation on.
+export const ANNOTATION_DEFAULT = false;
+
 export function createChromeHtml(
   session,
   { layoutGateEnabled = true, faviconTag = LUXE_DEFAULT_FAVICON, title = "Luxe Editor" } = {},
@@ -1184,12 +1254,14 @@ export function createChromeHtml(
     initialChat: session.chat || [],
     layoutGateEnabled,
     modeToggleHotkeyKey: MODE_TOGGLE_HOTKEY_KEY,
+    annotationDefault: ANNOTATION_DEFAULT,
   });
   const { head: pathHead, tail: pathTail } = displayPathParts(session.file);
   const bodyClass = layoutGateEnabled ? "luxe layout-gate-active" : "luxe";
   const layoutGateHidden = layoutGateEnabled ? "" : " hidden";
   const modeHotkeyUpper = MODE_TOGGLE_HOTKEY_KEY.toUpperCase();
   const modeToggleHint = `Toggle annotate/explore mode (⌘${modeHotkeyUpper} / Ctrl+${modeHotkeyUpper})`;
+  const annotationPressed = ANNOTATION_DEFAULT ? "true" : "false";
   return `<!doctype html>
 <html>
 <head>
@@ -1200,7 +1272,7 @@ ${faviconTag}
 <link rel="stylesheet" href="/chrome.css">
 </head>
 <body class="${bodyClass}">
-<div class="bar"><div class="brand"><span class="brand-mark">Luxe</span><span class="brand-support">Editor</span></div><div class="spacer" aria-hidden="true"></div><button class="annotate-switch" id="annotation" type="button" aria-pressed="true" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="copySnapshot" type="button">${chromeIcons.camera}<span>Copy DOM snapshot</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
+<div class="bar"><div class="brand"><span class="brand-mark">Luxe</span><span class="brand-support">Editor</span></div><div class="spacer" aria-hidden="true"></div><button class="annotate-switch" id="annotation" type="button" aria-pressed="${annotationPressed}" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
 <div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-downloads" data-artifact-src="/artifact/${session.key}/index.html"></iframe><div class="layout-issue-banner" id="layoutIssueBanner" hidden>This surface has a severe layout failure. Your agent has been notified.</div></div><aside class="panel"><h2>Conversation</h2><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer"><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Luxe.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
 <div class="ended-overlay layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden}><div class="ended-card"><div class="ended-title" id="layoutGateTitle">Checking layout.<br>One moment.</div><p class="ended-copy" id="layoutGateCopy">Luxe is waiting for fonts and final geometry before revealing this artifact.</p><button class="button ended-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
 <div class="ended-overlay" id="endedOverlay" hidden><div class="ended-card"><div class="ended-title">Session ended.<br>Return to your agent to continue.</div><p class="ended-copy">${escapeHtml(session.file)}</p></div></div>
@@ -1230,8 +1302,8 @@ export function createWhiteboardFrameHtml(channelToken = "") {
 export function createSdkJs(key) {
   // Serialize every helper exported by mermaid-node.js as a same-scope const so
   // cross-helper calls (e.g. mermaidNodeFrom → mermaidNodeElement) resolve in the
-  // browser. Deriving this from the module's exports — rather than a hand-kept
-  // list — means adding a helper can never silently ReferenceError at runtime.
+  // browser. Deriving this from the module's exports - rather than a hand-kept
+  // list - means adding a helper can never silently ReferenceError at runtime.
   const mermaidHelperEntries = Object.entries(mermaidNode).filter(([, value]) => typeof value === "function");
   const mermaidHelperDecls = mermaidHelperEntries.map(([name, fn]) => `const ${name}=${fn.toString()};`).join("\n");
   const mermaidHelperKeys = mermaidHelperEntries.map(([name]) => name).join(", ");

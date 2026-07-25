@@ -139,6 +139,7 @@ export function createHomeOutput({ bin, sessions, includeSessions = true, agent 
       "Unless the user specifies another location, create HTML artifacts in the current working directory under `.luxe/`",
       "Luxe serves the html file through a local express.js server. If your html needs to reference other filesystem assets such as images, CSS, fonts, and local scripts, copy them into the same directory as the HTML file, then reference them with relative paths from that directory. Never prepend `/` to those asset paths - root paths won't work",
       `Run \`luxe poll <html-file>\` to wait for user feedback or browser-proven severe layout failures. It long-polls and stays silent until the user sends feedback, ends the session, or the real browser proves meaningful content is inaccessible or unusable, so leave it running - never kill it. Repair and re-check every returned layout failure before involving the human; cosmetic, intentional, transient, tiny, and uncertain observations stay silent. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}`,
+      "Every Send from the browser also delivers `dom_snapshot`, a text outline of the rendered artifact, so you have page context for the feedback - it captures whatever the artifact renders as text, including anything sensitive shown in a table, code block, or config listing",
       'Rendered Mermaid diagrams in `.mermaid` containers become embedded, editable Excalidraw whiteboards in the browser (click a diagram to unlock editing; a Fullscreen action opens it over the whole viewport) - flowchart, sequence, class, ER, and state diagrams convert to editable shapes; other types embed as an image to draw on. Scenes autosave locally; when a reload detects a changed Mermaid source, the reviewer explicitly chooses to re-convert and discard saved edits or keep editing the saved scene. Standalone and exported copies still render plain Mermaid. Queue feedback adds a prompt to the Conversation panel; when the user sends it, poll returns a tag "whiteboard" prompt carrying a bounded edit summary plus local scenePath (.excalidraw JSON) and previewPath (PNG) files - read the summary first, open the files only when needed, then apply the edits by updating the Mermaid source in the artifact (never try to write the scene back)',
       "Run `luxe end <html-file>` to end a session as the agent - ending it this way still allows a plain reopen later. When the user ends it from the browser instead, a later `luxe <html-file>` refuses to reopen it without `--reopen`",
       "Run `luxe export <html-file> [--out <path>]` to write a portable copy of the artifact - one HTML file with its LOCAL assets inlined - so it opens with no Luxe server and no sibling files. Remote CDN/font references are left as links, so it needs network to render those. Users can also export from the browser chrome's overflow menu",
@@ -679,7 +680,8 @@ async function startServer(port) {
   const entry = resolveServerEntry();
   let logFd = null;
   try {
-    logFd = openSync(serverLogFile(), "a");
+    // Owner-only like the rest of the state directory: the log records artifact file paths.
+    logFd = openSync(serverLogFile(), "a", 0o600);
   } catch {
     // If logging cannot be initialized, keep the server behavior unchanged.
   }

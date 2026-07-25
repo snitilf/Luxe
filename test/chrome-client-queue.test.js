@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const sourceUrl = new URL("../src/chrome-client.js", import.meta.url);
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, annotationDefault?: boolean }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = { key: "abc", file: "/tmp/artifact.html", modeToggleHotkeyKey: "i" };
 
@@ -645,6 +645,85 @@ test("layout gate stays skipped when the session disables it", async () => {
   assert.equal(chrome.element("layoutIssueBanner").hidden, true);
 });
 
+// The snapshot-request ledger. Artifact JS can postMessage to its parent whenever it likes,
+// so a `luxe:snapshot` the chrome never asked for must not be treated as the answer to a
+// request. The property under test is narrow and exactly that: an unsolicited snapshot on its
+// own is inert. It is NOT "only a human can cause a send" - see the sendQueuedPrompts test
+// below, which pins the documented artifact-initiated path.
+test("a snapshot the chrome never requested does not trigger a send", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: init?.body ? JSON.parse(init.body) : null });
+      return { ok: true };
+    },
+  });
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Use plan B", selector: "input#plan-b", tag: "choice", text: "Plan B" },
+  });
+
+  // No Send happened, so nothing asked the artifact for a snapshot.
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "exfiltrated page text" });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(posts.length, 0);
+  assert.equal(chrome.queued().length, 1, "the queue is untouched, so the next real Send still works");
+
+  // And the gate consumes exactly one request per Send: a second unrequested snapshot after a
+  // legitimate one is dropped too, rather than replaying the send.
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "uid=1 body" });
+  await flushPromises();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.domSnapshot, "uid=1 body");
+
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "exfiltrated page text" });
+  await flushPromises();
+  await flushPromises();
+  assert.equal(posts.length, 1);
+});
+
+// INTENTIONAL PRODUCT BEHAVIOR - do not "harden" this away.
+// `window.luxe.sendQueuedPrompts()` posts `luxe:sendQueuedPrompts` and the chrome sends, with
+// no human click. The input playbook (src/playbooks.js) tells artifact authors to call it when
+// a control should send committed feedback immediately, and the in-page question pattern the
+// owner uses depends on it. Artifact JS is written by the same agent the feedback goes back
+// to, so this is a designed capability, not a bypass of the snapshot ledger. If a future
+// change to that ledger makes this test fail, the change is the bug.
+test("artifact-initiated sendQueuedPrompts DOES send - documented API, not a hole to plug", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: init?.body ? JSON.parse(init.body) : null });
+      return { ok: true };
+    },
+  });
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Use plan B", selector: "input#plan-b", tag: "choice", text: "Plan B" },
+  });
+
+  // The artifact asks for the send itself, exactly as window.luxe.sendQueuedPrompts() does.
+  chrome.sendFrameMessage({ type: "luxe:sendQueuedPrompts" });
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:requestSnapshot");
+
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "uid=1 body" });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(posts.length, 1, "the documented artifact-initiated send must still reach the agent");
+  assert.equal(posts[0].url, "/api/abc/prompts");
+  assert.deepEqual(posts[0].body.prompts, [
+    { prompt: "Use plan B", selector: "input#plan-b", tag: "choice", text: "Plan B" },
+  ]);
+  assert.equal(posts[0].body.domSnapshot, "uid=1 body");
+  assert.equal(chrome.queued().length, 0);
+});
+
 test("chrome client strips the internal queue key before posting prompts", async () => {
   const posts = [];
   const chrome = await createChromeHarness({
@@ -774,17 +853,49 @@ test("chrome send and end during an in-flight submit still ends after the submit
 test("Cmd/Ctrl+I toggles annotation mode from the chrome document, regardless of focus", async () => {
   const chrome = await createChromeHarness();
 
+  // Annotation starts off, so the first press turns it on.
   const metaEvent = chrome.dispatchDocumentKeydown({ key: "i", metaKey: true });
   assert.equal(metaEvent.defaultPrevented, true);
-  assert.equal(chrome.element("annotation")["aria-pressed"], "false");
-  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:setAnnotationMode");
-  assert.equal(chrome.postedToFrame.at(-1).enabled, false);
-
-  const ctrlEvent = chrome.dispatchDocumentKeydown({ key: "I", ctrlKey: true });
-  assert.equal(ctrlEvent.defaultPrevented, true);
   assert.equal(chrome.element("annotation")["aria-pressed"], "true");
   assert.equal(chrome.postedToFrame.at(-1).type, "luxe:setAnnotationMode");
   assert.equal(chrome.postedToFrame.at(-1).enabled, true);
+
+  const ctrlEvent = chrome.dispatchDocumentKeydown({ key: "I", ctrlKey: true });
+  assert.equal(ctrlEvent.defaultPrevented, true);
+  assert.equal(chrome.element("annotation")["aria-pressed"], "false");
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:setAnnotationMode");
+  assert.equal(chrome.postedToFrame.at(-1).enabled, false);
+});
+
+// The default lives in the session bootstrap the server emits, and the chrome reads it from
+// there instead of carrying a literal. Off by default, on after exactly one toggle.
+test("annotation mode defaults off and one toggle turns it on", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", modeToggleHotkeyKey: "i", annotationDefault: false },
+  });
+
+  assert.equal(
+    chrome.postedToFrame.some((message) => message.type === "luxe:setAnnotationMode"),
+    false,
+  );
+
+  chrome.element("annotation").click();
+  assert.equal(chrome.element("annotation")["aria-pressed"], "true");
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:setAnnotationMode");
+  assert.equal(chrome.postedToFrame.at(-1).enabled, true);
+});
+
+// A bootstrap that says annotate-on must be honoured too: the chrome must be reading the
+// field, not hardcoding the answer that happens to be today's default.
+test("annotation mode follows the bootstrap when it says on", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { key: "abc", file: "/tmp/artifact.html", modeToggleHotkeyKey: "i", annotationDefault: true },
+  });
+
+  chrome.element("annotation").click();
+  assert.equal(chrome.element("annotation")["aria-pressed"], "false");
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:setAnnotationMode");
+  assert.equal(chrome.postedToFrame.at(-1).enabled, false);
 });
 
 test("plain 'i' and other modifier combos do not toggle annotation mode", async () => {
@@ -822,9 +933,9 @@ test("chrome client reads the mode toggle hotkey from the session bootstrap", as
 
   const bootstrapHotkeyEvent = chrome.dispatchDocumentKeydown({ key: "K", metaKey: true });
   assert.equal(bootstrapHotkeyEvent.defaultPrevented, true);
-  assert.equal(chrome.element("annotation")["aria-pressed"], "false");
+  assert.equal(chrome.element("annotation")["aria-pressed"], "true");
   assert.equal(chrome.postedToFrame.at(-1).type, "luxe:setAnnotationMode");
-  assert.equal(chrome.postedToFrame.at(-1).enabled, false);
+  assert.equal(chrome.postedToFrame.at(-1).enabled, true);
 });
 
 test("chrome client toggles annotation mode when the artifact SDK requests it via postMessage", async () => {
@@ -832,21 +943,21 @@ test("chrome client toggles annotation mode when the artifact SDK requests it vi
 
   chrome.sendFrameMessage({ type: "luxe:toggleAnnotationMode" });
 
-  assert.equal(chrome.element("annotation")["aria-pressed"], "false");
-  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:setAnnotationMode");
-  assert.equal(chrome.postedToFrame.at(-1).enabled, false);
-
-  chrome.sendFrameMessage({ type: "luxe:toggleAnnotationMode" });
   assert.equal(chrome.element("annotation")["aria-pressed"], "true");
   assert.equal(chrome.postedToFrame.at(-1).type, "luxe:setAnnotationMode");
   assert.equal(chrome.postedToFrame.at(-1).enabled, true);
+
+  chrome.sendFrameMessage({ type: "luxe:toggleAnnotationMode" });
+  assert.equal(chrome.element("annotation")["aria-pressed"], "false");
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:setAnnotationMode");
+  assert.equal(chrome.postedToFrame.at(-1).enabled, false);
 });
 
 test("chrome client ignores annotation mode toggles after the session ends", async () => {
   const chrome = await createChromeHarness();
 
   chrome.dispatchDocumentKeydown({ key: "i", metaKey: true });
-  assert.equal(chrome.element("annotation")["aria-pressed"], "false");
+  assert.equal(chrome.element("annotation")["aria-pressed"], "true");
 
   chrome.sendFrameMessage({ type: "luxe:endSession" });
   await flushPromises();
@@ -855,7 +966,7 @@ test("chrome client ignores annotation mode toggles after the session ends", asy
   chrome.dispatchDocumentKeydown({ key: "i", metaKey: true });
   chrome.sendFrameMessage({ type: "luxe:toggleAnnotationMode" });
 
-  assert.equal(chrome.element("annotation")["aria-pressed"], "false");
+  assert.equal(chrome.element("annotation")["aria-pressed"], "true");
   assert.equal(chrome.postedToFrame.length, afterEndPostCount);
 });
 

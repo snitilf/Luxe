@@ -26,7 +26,6 @@ const moreWrap = /** @type {HTMLDivElement} */ (document.getElementById("moreWra
 const moreButton = /** @type {HTMLButtonElement} */ (document.getElementById("moreButton"));
 const moreMenu = /** @type {HTMLDivElement} */ (document.getElementById("moreMenu"));
 const reloadArtifactButton = /** @type {HTMLButtonElement} */ (document.getElementById("reloadArtifact"));
-const copySnapshotButton = /** @type {HTMLButtonElement} */ (document.getElementById("copySnapshot"));
 const exportArtifactButton = /** @type {HTMLButtonElement} */ (document.getElementById("exportArtifact"));
 const endButton = /** @type {HTMLButtonElement} */ (document.getElementById("end"));
 const copyPathButton = /** @type {HTMLButtonElement} */ (document.getElementById("copyPath"));
@@ -47,7 +46,12 @@ const whiteboardError = /** @type {HTMLDivElement} */ (document.getElementById("
 const artifactSrc = frame.dataset.artifactSrc || frame.getAttribute?.("data-artifact-src") || frame.src || "";
 
 const queued = loadQueuedPrompts();
-let annotation = true;
+// Mode state lives here and nowhere else: the chrome owns annotate/explore and drives the
+// artifact SDK over postMessage. The initial value comes from the session bootstrap the
+// server emitted, which is the same value it rendered the switch's aria-pressed from, so the
+// switch and the state can never disagree at load. Missing or malformed bootstrap falls back
+// to explore mode, matching ANNOTATION_DEFAULT in server.js.
+let annotation = sessionData.annotationDefault === true;
 let ended = false;
 let agentPresence = "waiting";
 let pendingSnapshot = "";
@@ -286,8 +290,23 @@ function postToFrame(message) {
   if (frame.contentWindow) frame.contentWindow.postMessage(message, "*");
 }
 
-function requestSnapshot(action) {
-  snapshotRequests.push(action);
+// Snapshot-request ledger, half one. Artifact JS can postMessage to its parent whenever it
+// likes, so a `luxe:snapshot` message arriving is not evidence that the chrome asked for one.
+// Every chrome-initiated request is recorded here first; the handler below consumes exactly
+// one entry per snapshot it accepts and drops anything it did not ask for. The property this
+// buys is narrow and worth stating exactly: an unsolicited `luxe:snapshot` on its own cannot
+// drive a feedback POST, and a second one cannot overwrite the snapshot of a send already in
+// flight.
+//
+// It is NOT a barrier against artifact JS initiating a send, and must not be described as
+// one. `luxe:sendQueuedPrompts` is a documented product API (`window.luxe.sendQueuedPrompts`,
+// see the input playbook in src/playbooks.js) whose whole purpose is letting an artifact
+// control send committed feedback immediately; it calls sendQueued(), which records its own
+// request on this queue. So artifact JS can queue a prompt and send it with the page outline
+// attached, with no human click. That is by design: artifact JavaScript is written by the
+// same agent the feedback goes back to. See the trust model note in README.md.
+function requestSnapshot() {
+  snapshotRequests.push("submit");
   postToFrame({ type: "luxe:requestSnapshot" });
 }
 
@@ -310,7 +329,7 @@ function sendQueued(endAfter) {
   hideSendHint();
 
   if (endAfter) endAfterSubmit = true;
-  requestSnapshot("submit");
+  requestSnapshot();
 }
 
 async function submitQueued() {
@@ -525,11 +544,6 @@ function copyFilePath() {
     copyHint.classList.remove("copied");
     copyHintText.textContent = "Copy";
   }, 1600);
-}
-
-function copyDomSnapshot() {
-  closeMenus();
-  requestSnapshot("copy");
 }
 
 function exportFileName() {
@@ -1123,10 +1137,14 @@ window.addEventListener("message", (event) => {
     enqueuePrompt(msg.prompt);
   }
   if (msg.type === "luxe:snapshot") {
-    const snapshotAction = snapshotRequests.shift() || "submit";
-    if (snapshotAction === "copy") {
-      copyText(msg.snapshot || "");
-    } else {
+    // Snapshot-request ledger, half two: a snapshot with no outstanding request behind it was
+    // pushed by the artifact page on its own initiative, so drop it. Only a snapshot the
+    // chrome asked for may drive a feedback POST. Note what that does and does not mean: it
+    // means an unsolicited `luxe:snapshot` alone is inert, not that only a human can cause a
+    // send. The chrome also asks for a snapshot when the artifact calls the documented
+    // `luxe:sendQueuedPrompts` API below.
+    if (snapshotRequests.length) {
+      snapshotRequests.shift();
       pendingSnapshot = msg.snapshot || "";
       submitQueued();
     }
@@ -1138,6 +1156,10 @@ window.addEventListener("message", (event) => {
     handleLayoutWarningsForGate(msg.layout_warnings);
     submitLayoutWarnings(msg.layout_warnings).catch(() => {});
   }
+  // Documented, intentional product API. `window.luxe.sendQueuedPrompts()` is what the input
+  // playbook tells artifact authors to call when a control should send committed feedback
+  // immediately instead of waiting for the human to press Send to Agent, so this path is a
+  // feature, not a gap. Do not "harden" it away: the in-page question pattern depends on it.
   if (msg.type === "luxe:sendQueuedPrompts") sendQueued();
   if (msg.type === "luxe:endSession") endSession();
   if (msg.type === "luxe:toggleAnnotationMode") toggleAnnotationMode();
@@ -1166,7 +1188,6 @@ chatInput.addEventListener("keydown", (event) => {
 chatInput.addEventListener("input", hideSendHint);
 copyPathButton.onclick = copyFilePath;
 reloadArtifactButton.onclick = reloadArtifact;
-copySnapshotButton.onclick = copyDomSnapshot;
 exportArtifactButton.onclick = exportArtifact;
 endButton.onclick = () => {
   closeMenus();

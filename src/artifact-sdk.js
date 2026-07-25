@@ -252,7 +252,13 @@ export function createArtifactSdk(
   mermaid = mermaidHelpers,
 ) {
   const { isMermaidSvg, mermaidNodeFrom, mermaidNodeElement } = mermaid;
-  let annotationMode = true;
+  // The SDK has no mode state of its own to decide: the chrome owns annotate/explore and
+  // pushes it here via `luxe:setAnnotationMode` on every frame load. This initial value only
+  // covers the few milliseconds before that message arrives, so it must match the chrome's
+  // default (ANNOTATION_DEFAULT in server.js). Starting it `true` while the chrome starts
+  // `false` is not a wrong-mode bug - it is a flash of annotate cursors and frozen diagrams
+  // on every load and reload.
+  let annotationMode = false;
   let hovered = null;
   let selected = null;
   let ignoreNextClick = false;
@@ -414,7 +420,11 @@ export function createArtifactSdk(
       svg.style.cursor = frozen ? "" : "grab";
       svg.style.touchAction = frozen ? "" : "none";
     }
-    setFrozen(false);
+    // Derive the viewport's initial freeze from the current mode rather than hardcoding
+    // "explore". The caller sets it again immediately, so this never mattered while the
+    // default was annotate-on; it is the fourth place the annotate default was written down,
+    // and the only one no message ever corrects if a future caller forgets to.
+    setFrozen(annotationMode);
 
     return { reset, setFrozen };
   }

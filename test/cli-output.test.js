@@ -378,7 +378,9 @@ test("design output emits a theme-aware Mermaid init that re-renders on page-the
 
 test("theme-aware Mermaid snippet serializes rapid theme-change renders", async () => {
   const snippet = createDesignOutput()
-    .diagram_tooling.mermaid_cdn_snippet.replace(/^<script type="module">\n/, "")
+    // Strip everything up to and including the module opener: the snippet now leads with an
+    // import map carrying the Mermaid SRI digest, and only the module body is evaluable here.
+    .diagram_tooling.mermaid_cdn_snippet.replace(/^[\s\S]*?<script type="module">\n/, "")
     .replace(/\n<\/script>$/, "")
     .replace(/^\s*import mermaid from "[^"]+";\n/m, "");
   let dark = false;
@@ -1234,6 +1236,59 @@ test("spawned poll with piped stderr banners once and leaves re-run guidance whe
       assert.match(stderr, /Poll interrupted/);
       assert.match(stderr, /queued feedback is never lost/);
     }
+  } finally {
+    await server.close();
+    await rm(stateDir, { force: true, recursive: true });
+  }
+});
+
+// Regression net for the D2 same-origin guard on /api/:key/agent-reply. The CLI posts it from
+// Node, which sends neither Origin nor Referer, so a guard that fails closed on missing
+// provenance would 403 here and silently drop every agent reply. Exercised through the real
+// binary rather than the module, because the header behavior belongs to the HTTP client.
+test("spawned poll delivers --agent-reply through the guarded route", async () => {
+  const stateDir = await mkdtemp(`${os.tmpdir()}/luxe-agent-reply-test-`);
+  const artifact = `${stateDir}/artifact.html`;
+  await writeFile(artifact, "<html><body>hello</body></html>", "utf8");
+  const server = await serve({ port: 0, stateFile: `${stateDir}/state.json`, version: VERSION });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const sessionResponse = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    });
+    assert.ok(sessionResponse.ok, "session opens");
+    const key = sessionKey(await canonicalFile(artifact));
+
+    // spawn, never spawnSync: the server under test runs in this process, so a synchronous
+    // spawn would block the event loop that has to answer the child's requests.
+    const child = spawn(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../bin/luxe.js", import.meta.url)),
+        "poll",
+        "--agent-reply",
+        "Built the summary, start with the risks table",
+        "--timeout-ms",
+        "500",
+        artifact,
+      ],
+      {
+        cwd: fileURLToPath(new URL("..", import.meta.url)),
+        env: { ...process.env, LUXE_STATE_DIR: stateDir, LUXE_PORT: String(server.port) },
+      },
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    const exit = await new Promise((resolve) => child.on("close", (code) => resolve(code)));
+
+    assert.equal(exit, 0, stderr);
+    // The reply reached the session: the chrome bootstrap replays it as initial chat.
+    const chrome = await fetch(`${base}/session/${key}`).then((res) => res.text());
+    assert.match(chrome, /Built the summary, start with the risks table/);
   } finally {
     await server.close();
     await rm(stateDir, { force: true, recursive: true });

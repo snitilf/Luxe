@@ -3,12 +3,12 @@
 // Pure Mermaid node-identity helpers shared by the injected artifact SDK and the
 // server-side session store. The SDK ships them to the browser by serializing
 // each one with `.toString()` (see `createSdkJs`), which drops the surrounding
-// module scope — so a helper may reference only its own arguments, browser
+// module scope - so a helper may reference only its own arguments, browser
 // globals, or its sibling exports from this module. `createSdkJs` re-declares
 // every export here as a same-scope `const` before invoking the SDK, so
 // cross-helper calls (e.g. `mermaidNodeFrom` → `mermaidNodeElement`) resolve in
 // the browser exactly as they do here; never close over anything else. Keeping
-// the logic here — instead of inside the `createArtifactSdk` closure — lets us
+// the logic here - instead of inside the `createArtifactSdk` closure - lets us
 // unit test the label/identity logic directly and lets the server reuse the
 // same target-shape contract.
 
@@ -25,7 +25,7 @@ export function isMermaidSvg(svg) {
 }
 
 // Extract a node's visible label as a single line. Mermaid renders multi-line
-// labels (`A<br/>B`) as real <br> elements, which textContent silently drops —
+// labels (`A<br/>B`) as real <br> elements, which textContent silently drops -
 // so we swap <br> for a space before reading, giving "A B" instead of "AB".
 export function readNodeLabel(labelEl) {
   if (!labelEl) return "";

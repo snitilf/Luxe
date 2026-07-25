@@ -193,8 +193,13 @@ export class SessionStore {
     }
   }
 
+  // Owner-only on creation. state.json carries every session's prompts, chat history and the
+  // DOM snapshot of the last send - a text outline of whatever the artifact rendered - for
+  // every project on this machine, so it must not be world-readable. `mode` only applies when
+  // the file is created; a state file that predates this (or was loosened by hand) is
+  // tightened by ensureStateDir() at CLI start. See STATE_FILE_MODE in paths.js.
   async writeState(state) {
-    await writeFile(this.file, `${JSON.stringify(state, null, 2)}\n`);
+    await writeFile(this.file, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   }
 }
 

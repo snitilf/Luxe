@@ -126,7 +126,7 @@ function matchesSelector(node, selector) {
   const tagClass = selector.match(/^([a-z]+)\.([a-z0-9_-]+)$/i);
   if (tagClass)
     return node.tagName.toLowerCase() === tagClass[1].toLowerCase() && classList(node).includes(tagClass[2]);
-  // "g.nodes > g" — treat as: a <g> whose parent has class "nodes"
+  // "g.nodes > g" - treat as: a <g> whose parent has class "nodes"
   if (selector === "g.nodes > g") {
     return node.tagName.toLowerCase() === "g" && node.parentElement && classList(node.parentElement).includes("nodes");
   }

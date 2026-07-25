@@ -10,6 +10,7 @@ process.env.LUXE_LINK_HOST = "127.0.0.1";
 
 import {
   allowsAllHosts,
+  ANNOTATION_DEFAULT,
   buildAllowedHostnames,
   createChromeHtml,
   createSdkJs,
@@ -332,11 +333,28 @@ test("annotation card shadow styles use Luxe design-system variables", () => {
 test("chrome top bar uses an Annotate switch instead of a labeled toggle button", () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
 
-  assert.match(html, /class="annotate-switch" id="annotation"[^>]*aria-pressed="true"/);
+  assert.match(html, /class="annotate-switch" id="annotation"[^>]*aria-pressed="false"/);
   assert.match(html, /class="switch-track"/);
   assert.match(html, />Annotate</);
   assert.doesNotMatch(html, /Annotation: On/);
   assert.doesNotMatch(html, /Inspect/);
+});
+
+// One source of truth for the annotate default: the bootstrap field the chrome client reads
+// and the rendered aria-pressed must be the same value, so they cannot drift.
+test("annotate mode renders off by default from a single bootstrap field", async () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+  const js = await chromeClientSource();
+  const sdk = await readFile(new URL("../src/artifact-sdk.js", import.meta.url), "utf8");
+
+  assert.equal(ANNOTATION_DEFAULT, false);
+  assert.match(html, /"annotationDefault":false/);
+  assert.match(html, /id="annotation"[^>]*aria-pressed="false"/);
+  assert.match(js, /let annotation = sessionData\.annotationDefault === true/);
+  // No independent literal anywhere: the client reads the bootstrap, and the SDK (which owns
+  // no mode state - the chrome drives it) starts in the same mode it will be told to be in.
+  assert.doesNotMatch(js, /let annotation = (true|false)/);
+  assert.match(sdk, /let annotationMode = false/);
 });
 
 test("annotate switch shows a brass track and ink knob when enabled", async () => {
@@ -461,15 +479,45 @@ test("chrome can copy the full file path from the overflow menu", async () => {
   assert.match(js, /copyHintText\.textContent = "Copy"/);
 });
 
-test("overflow menu offers reload, snapshot copy, and end session actions", async () => {
+test("overflow menu offers reload and end session actions", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const js = await chromeClientSource();
 
   assert.match(html, /id="reloadArtifact"[^<]*>.*Reload artifact/);
-  assert.match(html, /id="copySnapshot"[^<]*>.*Copy DOM snapshot/);
   assert.match(html, /class="menu-item danger" id="end"[^<]*>.*End session/);
   assert.doesNotMatch(html, /End Session</);
   assert.match(js, /event\.key === "Escape"/);
+});
+
+// The snapshot has no user-facing surface any more: it only ever leaves the browser as the
+// domSnapshot field of a human-initiated Send. The copy item is gone from the menu and the
+// copy branch is gone from the client, but the snapshot engine itself stays.
+test("the DOM-snapshot copy path is gone from the chrome", async () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+  const js = await chromeClientSource();
+
+  assert.doesNotMatch(html, /copySnapshot/);
+  assert.doesNotMatch(html, /Copy DOM snapshot/);
+  assert.doesNotMatch(js, /copySnapshotButton/);
+  assert.doesNotMatch(js, /copyDomSnapshot/);
+  assert.doesNotMatch(js, /requestSnapshot\("copy"\)/);
+  // What must survive: the request/response snapshot flow that feeds every feedback POST.
+  assert.match(js, /function requestSnapshot\(\)/);
+  assert.match(js, /domSnapshot: pendingSnapshot/);
+});
+
+// The gate that stops artifact-page JS from forcing a feedback send. A `luxe:snapshot`
+// message with no outstanding chrome request behind it must be dropped, not treated as the
+// answer to a request that was never made.
+test("chrome accepts a snapshot only against an outstanding request", async () => {
+  const js = await chromeClientSource();
+
+  assert.match(js, /const snapshotRequests = \[\]/);
+  assert.match(js, /snapshotRequests\.push\("submit"\)/);
+  assert.match(js, /if \(snapshotRequests\.length\) \{\n {6}snapshotRequests\.shift\(\);/);
+  // The upstream `|| "submit"` fallback defeated the queue: an unrequested snapshot fell
+  // through to the send branch. It must not come back.
+  assert.doesNotMatch(js, /snapshotRequests\.shift\(\) \|\| /);
 });
 
 test("overflow menu offers a standalone HTML export that downloads a portable file", async () => {
@@ -482,16 +530,6 @@ test("overflow menu offers a standalone HTML export that downloads a portable fi
   assert.match(js, /fetch\("\/api\/" \+ key \+ "\/export"\)/);
   assert.match(js, /link\.download = exportFileName\(\)/);
   assert.match(js, /exportArtifactButton\.onclick = exportArtifact/);
-});
-
-test("copy DOM snapshot requests a fresh snapshot and copies it to the clipboard", async () => {
-  const js = await chromeClientSource();
-
-  assert.match(js, /const snapshotRequests = \[\]/);
-  assert.match(js, /requestSnapshot\("copy"\)/);
-  assert.match(js, /const snapshotAction = snapshotRequests\.shift\(\) \|\| "submit"/);
-  assert.match(js, /if \(snapshotAction === "copy"\)/);
-  assert.match(js, /copyText\(msg\.snapshot \|\| ""\)/);
 });
 
 test("clipboard copy falls back when navigator clipboard rejects", async () => {

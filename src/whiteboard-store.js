@@ -9,6 +9,10 @@ import { sanitizeWhiteboardScene } from "./whiteboard-core.js";
 // unrelated store write into a large rewrite. Scenes live as one JSON file per
 // (session key, diagram index) under `<state-dir>/whiteboards/`, next to the
 // published `.excalidraw`/`.png` feedback files the agent reads.
+//
+// Scenes are review content, so the sidecar tree is owner-only like the rest of the state
+// directory: it sits under a 0700 parent (see ensureStateDir) and its own directories are
+// created 0700 as well, so the tree stays private even if the parent is ever relaxed.
 
 const KEY_RE = /^[0-9a-f]{16}$/;
 const writeTails = new Map();
@@ -89,7 +93,7 @@ export async function saveWhiteboard(
     baseline: baseline ?? null,
   };
   return queueWhiteboardWrite(stateDir, key, index, async () => {
-    await mkdir(whiteboardDir(stateDir, key), { recursive: true });
+    await mkdir(whiteboardDir(stateDir, key), { recursive: true, mode: 0o700 });
     await writeFileAtomically(workingFile(stateDir, key, index), `${JSON.stringify(record)}\n`);
     return record;
   });
@@ -131,7 +135,7 @@ export async function writeWhiteboardFeedbackFiles(stateDir, key, index, { scene
   };
   const png = decodePngDataUrl(pngDataUrl);
   return queueWhiteboardWrite(stateDir, key, index, async () => {
-    await mkdir(whiteboardDir(stateDir, key), { recursive: true });
+    await mkdir(whiteboardDir(stateDir, key), { recursive: true, mode: 0o700 });
     await writeFileAtomically(scenePath, `${JSON.stringify(sceneJson, null, 2)}\n`);
     if (png) {
       await writeFileAtomically(previewPath, png);

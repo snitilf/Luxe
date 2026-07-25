@@ -12,11 +12,37 @@ export const DESIGN_CDN_URLS = {
 
 export const MERMAID_CDN_URL = `https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VERSION}/dist/mermaid.esm.min.mjs`;
 
-export const DESIGN_CDN_SNIPPET = `<link rel="stylesheet" href="${DESIGN_CDN_URLS.daisyui}">
-<link rel="stylesheet" href="${DESIGN_CDN_URLS.daisyuiThemes}">
-<script src="${DESIGN_CDN_URLS.tailwind}"></script>`;
+// Subresource Integrity for every CDN file this guidance tells agents to load. Artifacts are
+// authored by an agent and reviewed by a human who is not reading the network tab, so a
+// compromised or hijacked CDN response would execute unnoticed inside the artifact. Each hash
+// is the SHA-384 of the exact pinned file above, so the version constants and these digests
+// must be changed together - bumping a version without recomputing its hash makes the browser
+// refuse to load the file (which fails loudly, not silently, and is the safe direction).
+//
+// Recompute with:
+//   curl -sSL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+export const DESIGN_CDN_INTEGRITY = {
+  tailwind: "sha384-v5YF9xS+gLRWdvrQ0u/WRbCkjSIH0NjHIPe8tBL1ZRrmI7PiSH6LLdzs0aAIMCuh",
+  daisyui: "sha384-/NNZlK8J6WoD6FfmmLzhqE1x/aTnlIJzc75uc+dFz8aI+/sD2ArUirQhs3hbeqBe",
+  daisyuiThemes: "sha384-ai6dM6tUdx0lUGOHd8x3eGevvDdj0p+CPoJp7Ve+h+kRkt08XtqX/g3a+1cPYKCm",
+};
 
-export const MERMAID_CDN_SNIPPET = `<script type="module">
+export const MERMAID_CDN_INTEGRITY = "sha384-whY2DyvhZRFfs9hvtGdZaKcgbETgqMlDN+KNlWnXEL2QDa2XQkBOApUT7arfftO9";
+
+export const DESIGN_CDN_SNIPPET = `<link rel="stylesheet" href="${DESIGN_CDN_URLS.daisyui}" integrity="${DESIGN_CDN_INTEGRITY.daisyui}" crossorigin="anonymous">
+<link rel="stylesheet" href="${DESIGN_CDN_URLS.daisyuiThemes}" integrity="${DESIGN_CDN_INTEGRITY.daisyuiThemes}" crossorigin="anonymous">
+<script src="${DESIGN_CDN_URLS.tailwind}" integrity="${DESIGN_CDN_INTEGRITY.tailwind}" crossorigin="anonymous"></script>`;
+
+// An ES module import takes no integrity attribute, so Mermaid's digest is declared through
+// an import map's `integrity` key instead. The import below still names the full URL rather
+// than a bare specifier on purpose: where the import map is honoured the browser enforces the
+// hash, and where it is not (older browsers, or a page that already installed an import map)
+// the module still loads exactly as before. Integrity covers the entry module only; Mermaid
+// loads further chunks by relative URL and those are not hashed here.
+export const MERMAID_CDN_SNIPPET = `<script type="importmap">
+  { "integrity": { "${MERMAID_CDN_URL}": "${MERMAID_CDN_INTEGRITY}" } }
+</script>
+<script type="module">
   import mermaid from "${MERMAID_CDN_URL}";
 
   // Render Mermaid in a theme that matches the artifact page, and re-render when
