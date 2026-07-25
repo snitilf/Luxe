@@ -18,4 +18,4 @@ git push no-mistakes
 
 See the no-mistakes documentation for full setup and usage.
 
-Do not hand-edit `CHANGELOG.md` or `.release-please-manifest.json` — release automation manages them.
+Do not hand-edit `CHANGELOG.md` or `.release-please-manifest.json` - release automation manages them.
