@@ -33,8 +33,18 @@ async function chromeClientSource() {
   return readFile(new URL("../src/chrome-client.js", import.meta.url), "utf8");
 }
 
+// The browser is served chrome.css with the design tokens inlined at the marker,
+// so assertions run against that, not the raw source file.
 async function chromeCssSource() {
-  return normalizeCssForAssertions(await readFile(new URL("../src/chrome.css", import.meta.url), "utf8"));
+  const { inlineLuxeTokens } = await import("../src/chrome-css.js");
+  const css = await readFile(new URL("../src/chrome.css", import.meta.url), "utf8");
+  const tokens = await readFile(new URL("../src/luxe-tokens.css", import.meta.url), "utf8");
+  return normalizeCssForAssertions(inlineLuxeTokens(css, tokens));
+}
+
+async function sdkJsSource() {
+  const { readLuxeTokensCss } = await import("../src/server.js");
+  return createSdkJs("abc", await readLuxeTokensCss());
 }
 
 function normalizeCssForAssertions(css) {
@@ -320,14 +330,20 @@ test("annotation card title renders selected tag as an html element name", () =>
   assert.match(js, /"Annotate &lt;" \+ c\.tag \+ "&gt;"/);
 });
 
-test("annotation card shadow styles use Luxe design-system variables", () => {
-  const js = createSdkJs("abc");
+test("annotation card shadow styles use the Luxe design tokens", async () => {
+  const js = await sdkJsSource();
 
-  assert.match(js, /--ink-900:#0f1115/);
-  assert.match(js, /--accent:#f4c95d/);
-  assert.match(js, /--font-sans:/);
+  // The token block is injected as CSS text and re-scoped from :root to :host.
+  assert.match(js, /--gold: ?#c77f06/);
+  assert.match(js, /--dark-fill: ?#463527/);
+  assert.match(js, /luxeTokensCss\.replace\(/);
   assert.match(js, /font-family:var\(--font-sans\)/);
-  assert.match(js, /:focus-visible\{outline:2px solid var\(--accent\);outline-offset:2px/);
+  assert.match(
+    js,
+    /:focus-visible\{outline:var\(--focus-ring-width\) solid var\(--focus-ring\);outline-offset:var\(--focus-ring-offset\)\}/,
+  );
+  // Light only: the upstream shadow root declared color-scheme: dark.
+  assert.doesNotMatch(js, /color-scheme:dark/);
 });
 
 test("chrome top bar uses an Annotate switch instead of a labeled toggle button", () => {
@@ -357,51 +373,79 @@ test("annotate mode renders off by default from a single bootstrap field", async
   assert.match(sdk, /let annotationMode = false/);
 });
 
-test("annotate switch shows a brass track and ink knob when enabled", async () => {
+test("annotate switch tracks cocoa when on and warm grey when off, knob always white", async () => {
   const js = await chromeClientSource();
   const css = await chromeCssSource();
 
-  assert.match(css, /\.annotate-switch\[aria-pressed="true"\] \.switch-track\{background:var\(--accent\)/);
-  assert.match(css, /\.annotate-switch\[aria-pressed="true"\] \.switch-knob\{[^}]*background:var\(--accent-ink\)/);
+  assert.match(css, /\.switch-track\{[^}]*background:var\(--toggle-track-off\)/);
+  assert.match(css, /\.switch-knob\{[^}]*background:var\(--toggle-knob\)/);
+  assert.match(css, /\.annotate-switch\[aria-pressed="true"\] \.switch-track\{background:var\(--dark-fill\)/);
+  assert.match(css, /\.annotate-switch\[aria-pressed="true"\] \.switch-knob\{[^}]*background:var\(--toggle-knob\)/);
+  assert.match(css, /--toggle-track-off:#d5cfc0/);
+  assert.match(css, /--toggle-knob:#ffffff/);
   assert.match(js, /annotationSwitch\.setAttribute\("aria-pressed", String\(annotation\)\)/);
 });
 
 test("chrome declares the Luxe design-system tokens", async () => {
   const css = await chromeCssSource();
 
-  assert.match(css, /--ink-900:#0f1115/);
-  assert.match(css, /--cream-100:#f7f3ea/);
-  assert.match(css, /--brass-500:#f4c95d/);
-  assert.match(css, /--font-serif:/);
+  assert.match(css, /--canvas:#f7f4ee/);
+  assert.match(css, /--ink-1:#211e17/);
+  assert.match(css, /--dark-fill:#463527/);
+  assert.match(css, /--gold:#c77f06/);
   assert.match(css, /--font-sans:/);
-  assert.match(css, /--text-display:92px/);
-  assert.match(css, /--lh-display:1/);
-  assert.match(css, /--space-32:64px/);
-  assert.match(css, /--shadow-floating:0 20px 70px rgba\(0,0,0,.35\)/);
+  assert.doesNotMatch(css, /--font-serif/);
+  // Geometry and type ship in the same file as colour.
+  assert.match(css, /--radius-nav:8px/);
+  assert.match(css, /--radius-card:16px/);
+  assert.match(css, /--radius-pill:999px/);
+  assert.match(css, /--radius-inner:12px/);
+  assert.match(css, /--radius-bubble:16px/);
+  assert.match(css, /--radius-bubble-speaker:6px/);
+  assert.match(css, /--icon-nav:14px/);
+  assert.match(css, /--icon-card:20px/);
+  assert.match(css, /--text-heading:28px/);
+  assert.match(css, /--text-body:16px/);
+  assert.match(css, /--text-control:15px/);
+  assert.match(css, /--text-label:14px/);
+  assert.match(css, /--weight-regular:400/);
+  assert.match(css, /--weight-medium:500/);
+  assert.match(css, /--tracking-sans:-.15px/);
+  assert.match(css, /--tracking-mono:0/);
+  assert.match(css, /--tracking-micro:.4px/);
   assert.match(css, /--ease:cubic-bezier\(.2,.6,.2,1\)/);
-  assert.match(css, /--dur-slow:320ms/);
   assert.match(css, /--bar-h:56px/);
   assert.match(css, /--panel-w:360px/);
 });
 
-test("artifact SDK uses design-token aliases for annotation highlight and shadow UI", () => {
-  const js = createSdkJs("abc");
+test("artifact SDK annotation surface carries no colour of its own", async () => {
+  const js = await sdkJsSource();
 
-  assert.match(js, /--luxe-accent:#f4c95d/);
+  // Both injections that reach outside the shadow DOM take their value from the
+  // token text rather than a literal.
+  assert.match(js, /--luxe-accent:" \+\s*luxeToken\("gold", "currentColor"\)/);
   assert.match(js, /--luxe-annotate-outline:2px solid var\(--luxe-accent\)/);
-  assert.match(js, /el\.style\.outline\s*=\s*["']var\(--luxe-annotate-outline,2px solid #f4c95d\)["']/);
-  assert.match(js, /el\.style\.outlineOffset\s*=\s*["']var\(--luxe-annotate-offset,2px\)["']/);
-  assert.match(js, /--fg-faint:var\(--steel-300\)/);
-  assert.match(js, /textarea::placeholder\{color:var\(--fg-faint\)\}/);
-  assert.doesNotMatch(js, /placeholder\{color:#aeb6c6\}/);
+  assert.match(js, /el\.style\.outline = "var\(--luxe-annotate-outline\)"/);
+  assert.match(js, /el\.style\.outlineOffset = "var\(--luxe-annotate-offset\)"/);
+  assert.match(js, /textarea::placeholder\{color:var\(--ink-3\)\}/);
+  // The numbered badge is ink on gold: white on gold is 3.25:1 and fails.
+  assert.match(js, /\.luxe-annotation-badge\{[^}]*background:var\(--gold\);color:var\(--ink-1\)/);
+  assert.match(js, /\.luxe-text-highlight\{[^}]*background:var\(--gold-wash\)/);
 });
 
-test("chrome uses the annotation outline as the keyboard focus outline", async () => {
+// The focus ring is the info slate, not the accent: gold is reserved for the
+// annotation stroke and the selected-text wash, and a gold ring reads as a warning.
+test("chrome focus ring is the info slate at 2px with a 2px offset", async () => {
   const css = await chromeCssSource();
 
-  assert.match(css, /:focus-visible\{outline:var\(--annotate-outline\);outline-offset:var\(--annotate-offset\)/);
-  assert.match(css, /--annotate-outline:2px solid var\(--accent\)/);
-  assert.match(css, /--annotate-offset:2px/);
+  assert.match(
+    css,
+    /:focus-visible\{outline:var\(--focus-ring-width\) solid var\(--focus-ring\);outline-offset:var\(--focus-ring-offset\)/,
+  );
+  assert.match(css, /--focus-ring:#3c5f8f/);
+  assert.match(css, /--focus-ring-width:2px/);
+  assert.match(css, /--focus-ring-offset:2px/);
+  assert.match(css, /::selection\{background:var\(--gold-wash\)/);
 });
 
 test("chrome keeps the editor usable on narrow screens", async () => {
@@ -417,9 +461,8 @@ test("chrome top bar follows the design mock wordmark and overflow menu treatmen
   const css = await chromeCssSource();
 
   assert.match(html, /class="brand-mark">Luxe/);
-  assert.match(html, /class="brand-support">Editor/);
-  assert.match(css, /font-family:var\(--font-serif\)/);
-  assert.match(css, /letter-spacing:\.18em/);
+  assert.doesNotMatch(html, /class="brand-support"/);
+  assert.match(css, /\.brand-mark\{[^}]*color:var\(--ink-1\)/);
   assert.match(html, /class="more-button" id="moreButton"/);
   assert.match(html, /class="menu more-menu" id="moreMenu" hidden/);
   assert.doesNotMatch(html, /class="file-input"/);
@@ -435,7 +478,7 @@ test("overflow menu shows the artifact path with a copy affordance", async () =>
   assert.match(html, /class="menu-file" id="copyPath"[^>]*title="Copy path · \/tmp\/artifact\/index\.html"/);
   assert.match(html, /class="copy-hint"/);
   assert.match(css, /\.menu-file\{[^}]*font-family:var\(--font-mono\)/);
-  assert.match(css, /\.copy-hint\.copied\{color:var\(--accent-hover\)/);
+  assert.match(css, /\.copy-hint\.copied\{color:var\(--success-fg\)/);
 });
 
 test("overflow menu path keeps the file name visible and elides the directories", async () => {
@@ -484,7 +527,9 @@ test("overflow menu offers reload and end session actions", async () => {
   const js = await chromeClientSource();
 
   assert.match(html, /id="reloadArtifact"[^<]*>.*Reload artifact/);
-  assert.match(html, /class="menu-item danger" id="end"[^<]*>.*End session/);
+  // Destructive actions carry no colour (spec 2.5), so "End session" is a plain
+  // menu item - no `.danger` class, because chrome.css defines no such rule.
+  assert.match(html, /class="menu-item" id="end"[^<]*>.*End session/);
   assert.doesNotMatch(html, /End Session</);
   assert.match(js, /event\.key === "Escape"/);
 });
@@ -541,30 +586,52 @@ test("clipboard copy falls back when navigator clipboard rejects", async () => {
   assert.doesNotMatch(js, /navigator\.clipboard\.writeText\(text\)\.catch/);
 });
 
-test("chrome centers the top bar row while bottom-aligning the identity cluster", async () => {
+test("chrome top bar is a wordmark, a hairline divider and the file name in mono", async () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact/index.html" });
   const css = await chromeCssSource();
 
   assert.match(css, /\.bar\{[^}]*align-items:center/);
-  assert.match(css, /\.brand\{[^}]*height:22px/);
-  assert.match(css, /\.brand\{[^}]*align-items:flex-end/);
+  assert.match(css, /\.bar\{[^}]*background:var\(--surface-1\)/);
+  assert.match(html, /class="brand-mark">Luxe</);
+  assert.match(html, /class="bar-divider" aria-hidden="true"></);
+  assert.match(html, /class="bar-file" title="\/tmp\/artifact\/index\.html">index\.html</);
+  assert.match(css, /\.brand-mark\{[^}]*font-size:var\(--text-control\)/);
+  assert.match(css, /\.brand-mark\{[^}]*font-weight:var\(--weight-medium\)/);
+  assert.match(css, /\.bar-divider\{[^}]*background:var\(--hair\)/);
+  assert.match(css, /\.bar-file\{[^}]*font-family:var\(--font-mono\)/);
+  assert.match(css, /\.bar-file\{[^}]*color:var\(--ink-2\)/);
 });
 
-test("chrome chat bubbles follow the preview mock shades", async () => {
+// Agent and user are told apart by surface and alignment, not by two hues:
+// upstream's sage/amber pair is dropped.
+test("chrome chat bubbles differ by surface and alignment", async () => {
   const css = await chromeCssSource();
 
-  assert.match(css, /\.bubble\.user\{[^}]*background:var\(--bg-elevated\)/);
-  assert.match(css, /\.bubble\.user\{[^}]*border-color:var\(--border-strong\)/);
-  assert.match(css, /\.bubble\.agent\{[^}]*background:transparent/);
-  assert.match(css, /\.bubble\.agent\{[^}]*border-color:var\(--border-subtle\)/);
-  assert.match(css, /border-top-color:var\(--accent\)/);
+  assert.match(css, /\.bubble\.agent\{[^}]*align-self:flex-start/);
+  assert.match(css, /\.bubble\.agent\{[^}]*background:var\(--surface-2\)/);
+  assert.match(css, /\.bubble\.agent\{[^}]*border-color:var\(--hair\)/);
+  assert.match(css, /\.bubble\.agent\{[^}]*border-bottom-left-radius:var\(--radius-bubble-speaker\)/);
+  assert.match(css, /\.bubble\.user\{[^}]*align-self:flex-end/);
+  assert.match(css, /\.bubble\.user\{[^}]*background:var\(--dark-fill\)/);
+  assert.match(css, /\.bubble\.user\{[^}]*color:var\(--dark-fill-text\)/);
+  assert.match(css, /\.bubble\.user\{[^}]*border-bottom-right-radius:var\(--radius-bubble-speaker\)/);
+  assert.match(css, /\.bubble\{[^}]*border-radius:var\(--radius-bubble\)/);
 });
 
-test("chrome queued-prompt pills use the preview mock steel treatment", async () => {
+test("queued pills are dashed and sent pills are solid", async () => {
   const css = await chromeCssSource();
+  const js = await chromeClientSource();
 
-  assert.match(css, /\.pill\{[^}]*border:1px solid var\(--border-strong\)/);
-  assert.match(css, /\.pill\{[^}]*background:var\(--bg-elevated\)/);
-  assert.doesNotMatch(css, /\.pill\{[^}]*var\(--amber/);
+  assert.match(css, /\.pill\{[^}]*border:var\(--stroke-hair\) dashed var\(--strong\)/);
+  assert.match(css, /\.pill\{[^}]*background:var\(--canvas\)/);
+  assert.match(css, /\.pill\{[^}]*color:var\(--ink-3\)/);
+  assert.match(css, /\.pill\.sent\{[^}]*border-style:solid/);
+  assert.match(css, /\.pill\.sent\{[^}]*border-color:var\(--hair\)/);
+  assert.match(css, /\.pill\.sent\{[^}]*background:var\(--surface-2\)/);
+  assert.match(css, /\.pill\.sent\{[^}]*color:var\(--ink-2\)/);
+  // The queued pill carries a clock glyph, the sent pill a check.
+  assert.match(js, /PILL_CLOCK_ICON/);
+  assert.match(js, /PILL_SENT_ICON/);
 });
 
 test("chrome includes a chat-like prompt composer and agent reply listener", async () => {
@@ -637,16 +704,26 @@ test("composer offers two always-visible top-level send actions", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const css = await chromeCssSource();
 
-  assert.match(html, /class="button" id="send">Send to Agent</);
-  assert.match(html, /class="button button-danger" id="sendAndEnd"[^<]*>.*Send &amp; End</);
+  assert.match(html, /class="button" id="send">Send to agent</);
+  assert.match(html, /class="button button-ghost" id="sendAndEnd"[^<]*>.*Send &amp; End</);
   assert.match(
     html,
-    /<div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first\.<\/div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">.*<button class="button" id="send">Send to Agent<\/button><\/div>/,
+    /<div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first\.<\/div><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button">.*<button class="button" id="send">Send to agent<\/button><\/div>/,
   );
+  // Send & End is a ghost button and carries the 14px caption the spec requires.
+  assert.match(html, /<p class="send-caption">Send &amp; End delivers the feedback and closes the session\.<\/p>/);
+  assert.match(css, /\.send-caption\{[^}]*font-size:var\(--text-label\)/);
+  assert.match(css, /\.send-caption\{[^}]*color:var\(--ink-2\)/);
+  assert.match(css, /\.button\{[^}]*background:var\(--dark-fill\)/);
+  assert.match(css, /\.button\{[^}]*color:var\(--dark-fill-text\)/);
+  assert.match(css, /\.button:hover:not\(:disabled\)\{background:var\(--dark-fill-hover\)/);
+  assert.match(css, /\.button:disabled\{[^}]*background:var\(--disabled-fill\)/);
+  assert.match(css, /\.button-ghost\{[^}]*background:var\(--surface-2\)/);
+  assert.match(css, /\.button-ghost\{[^}]*border-color:var\(--strong\)/);
+  assert.match(css, /\.button-ghost\{[^}]*color:var\(--ink-1\)/);
   assert.doesNotMatch(html, /id="sendCaret"/);
   assert.doesNotMatch(html, /id="sendMenu"/);
   assert.doesNotMatch(html, /id="sendFromMenu"/);
-  assert.match(css, /\.button-danger\{[^}]*color:var\(--danger\)/);
   assert.match(css, /\.actions\{[^}]*min-width:0/);
 });
 
@@ -678,6 +755,33 @@ test("chrome shows a waiting banner when no agent has attached", async () => {
   assert.match(html, /Your agent is not listening/);
   assert.match(js, /presenceBanner\.hidden = ended \|\| agentPresence !== "waiting"/);
   assert.match(css, /\.presence-banner\{/);
+});
+
+// UI-REVAMP 2.6: status always ships with an icon AND a text label, never colour
+// alone. Both status banners carry a card-sized (20px) icon followed by a label
+// span, so a client-side text update cannot wipe the icon out of the DOM.
+test("both status banners render an icon beside a label span", async () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+  const js = await chromeClientSource();
+  const css = await chromeCssSource();
+
+  for (const [id, textId, label] of [
+    ["presenceBanner", "presenceBannerText", "Your agent is not listening"],
+    ["layoutIssueBanner", "layoutIssueBannerText", "severe layout failure"],
+  ]) {
+    const banner = new RegExp(`id="${id}"[^>]*>(<svg[^>]*>.*?</svg>)<span id="${textId}">([^<]*)</span></div>`).exec(
+      html,
+    );
+    assert.ok(banner, `${id} must render <svg> then <span id="${textId}">`);
+    assert.match(banner[1], /width="20" height="20"/, `${id}'s icon must be the 20px card size`);
+    assert.match(banner[2], new RegExp(label));
+  }
+
+  // No write may target the banner element itself.
+  assert.doesNotMatch(js, /(presenceBanner|layoutIssueBanner)\.(textContent|innerHTML)/);
+  assert.match(js, /layoutIssueBannerText\.textContent = text/);
+  assert.match(css, /\.presence-banner\s*>\s*svg\{[^}]*width:var\(--icon-card\)/);
+  assert.match(css, /\.layout-issue-banner\s*>\s*svg\{[^}]*width:var\(--icon-card\)/);
 });
 
 test("chrome puts queued annotations above the chat composer as preview pills", async () => {
@@ -730,7 +834,7 @@ test("annotation pill tooltip separates target and prompt details", async () => 
   assert.match(js, /Prompt/);
   assert.match(js, /pill-tooltip-target/);
   assert.match(js, /pill-tooltip-prompt/);
-  assert.match(css, /\.pill-wrap\{[^}]*width:min\(320px,100%\)/);
+  assert.match(css, /\.pill-wrap\{[^}]*width:100%/);
   assert.match(css, /\.pill-tooltip\{[^}]*position:static/);
   assert.match(css, /\.pill-tooltip\{[^}]*width:100%/);
   assert.doesNotMatch(css, /\.pill-tooltip\{[^}]*position:absolute/);
@@ -1474,7 +1578,7 @@ test("/chrome.css serves the extracted chrome stylesheet", async () => {
 
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") || "", /text\/css/);
-    assert.match(normalizeCssForAssertions(body), /--ink-900:#0f1115/);
+    assert.match(normalizeCssForAssertions(body), /--canvas:#f7f4ee/);
     assert.match(
       normalizeCssForAssertions(body),
       /\.layout\{[^}]*grid-template-columns:minmax\(0,1fr\) ?var\(--panel-w\)/,
@@ -2637,26 +2741,32 @@ test("server debug logger receives session and watcher lifecycle events", async 
   }
 });
 
-test("ended session shows an overlay card over the dimmed chrome", async () => {
+// The ended state is a different interaction model, not a recolour and not a
+// curtain: a toolbar chip, the chrome at 45%, the annotation hue removed, and
+// the artifact still readable underneath.
+test("ended session recedes the chrome behind a toolbar chip", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const js = await chromeClientSource();
   const css = await chromeCssSource();
 
-  assert.match(html, /class="ended-overlay" id="endedOverlay" hidden/);
-  assert.match(html, /class="ended-card"/);
-  assert.match(html, /Session ended\./);
-  assert.match(html, /Return to your agent to continue\./);
-  assert.match(html, /class="ended-copy">\/tmp\/artifact\.html</);
-  assert.doesNotMatch(html, /The agent polling loop can stop\./);
-  assert.match(css, /\.ended-overlay\{[^}]*inset:var\(--bar-h\) 0 0 0/);
-  assert.match(css, /\.ended-overlay\{[^}]*background:rgba\(15,17,21,.86\)/);
-  assert.match(css, /\.ended-title\{[^}]*font-family:var\(--font-serif\)/);
-  assert.match(js, /endedOverlay\.hidden = false/);
+  assert.match(html, /class="ended-chip" id="endedChip" hidden/);
+  assert.match(html, /<span>Session ended<\/span>/);
+  assert.doesNotMatch(html, /id="endedOverlay"/);
+  assert.match(css, /\.ended-chip\{[^}]*background:var\(--disabled-fill\)/);
+  assert.match(css, /\.ended-chip\{[^}]*color:var\(--ink-2\)/);
+  assert.match(css, /body\.session-ended\{--gold:var\(--strong\);--gold-wash:transparent;\}/);
+  assert.match(
+    css,
+    /body\.session-ended \.bar > \*:not\(\.ended-chip\),body\.session-ended \.panel\{opacity:var\(--ended-opacity\);\}/,
+  );
+  assert.match(css, /--ended-opacity:.45/);
+  assert.match(js, /classList\?\.add\("session-ended"\)/);
+  assert.match(js, /endedChip\.hidden = false/);
   assert.match(js, /annotationSwitch\.disabled = true/);
   assert.match(js, /moreButton\.disabled = true/);
 });
 
-test("layout gate curtain reuses the ended overlay card styling", async () => {
+test("layout gate curtain uses the scrim and modal styling", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const noGateHtml = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { layoutGateEnabled: false });
   const js = await chromeClientSource();
@@ -2668,12 +2778,16 @@ test("layout gate curtain reuses the ended overlay card styling", async () => {
     /<iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-downloads" data-artifact-src="\/artifact\/abc\/index\.html"><\/iframe>/,
   );
   assert.doesNotMatch(html, /<iframe id="artifact"[^>]* src=/);
-  assert.match(html, /class="ended-overlay layout-gate-overlay" id="layoutGateOverlay"/);
-  assert.match(html, /<div class="ended-card"><div class="ended-title" id="layoutGateTitle">Checking layout/);
-  assert.match(html, /class="ended-copy" id="layoutGateCopy"/);
-  assert.match(html, /class="button ended-action" id="layoutGateAction" type="button">Show anyway/);
+  assert.match(html, /class="scrim layout-gate-overlay" id="layoutGateOverlay"/);
+  assert.match(html, /<div class="modal"><div class="modal-title" id="layoutGateTitle">Checking layout/);
+  assert.match(html, /class="modal-copy" id="layoutGateCopy"/);
+  assert.match(html, /class="button modal-action" id="layoutGateAction" type="button">Show anyway/);
   assert.match(css, /body\.layout-gate-active iframe#artifact\{[^}]*opacity:0/);
-  assert.match(css, /\.ended-action\{[^}]*margin-top:var\(--space-8\)/);
+  assert.match(css, /\.scrim\{[^}]*background:var\(--scrim\)/);
+  assert.match(css, /--scrim:rgba\(33,30,23,.4\)/);
+  assert.match(css, /\.modal\{[^}]*background:var\(--surface-2\)/);
+  assert.match(css, /\.modal\{[^}]*border-radius:var\(--radius-card\)/);
+  assert.match(css, /\.modal-action\{margin-top:16px;\}/);
   assert.match(js, /layoutGateAction\.onclick = \(\) => forceRevealLayoutGate\("manual"\)/);
   assert.match(noGateHtml, /<body class="luxe">/);
   assert.match(noGateHtml, /id="layoutGateOverlay" hidden/);

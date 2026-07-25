@@ -250,6 +250,11 @@ export function createArtifactSdk(
   deriveQueueKey,
   isNativeInteractive = isNativeInteractiveControl,
   mermaid = mermaidHelpers,
+  // The Luxe design tokens, passed in as CSS text by createSdkJs. The SDK carries
+  // no colour of its own: src/luxe-tokens.css is the only place hex literals live,
+  // and this is how the annotation surface gets them into an artifact page whose
+  // own stylesheet is none of our business.
+  luxeTokensCss = "",
 ) {
   const { isMermaidSvg, mermaidNodeFrom, mermaidNodeElement } = mermaid;
   // The SDK has no mode state of its own to decide: the chrome owns annotate/explore and
@@ -264,7 +269,16 @@ export function createArtifactSdk(
   let ignoreNextClick = false;
   let shadow = null;
   let counter = 0;
+  let annotationSequence = 0;
   const ids = new WeakMap();
+
+  // Read one token value out of the design-token CSS. Used only where a value has
+  // to cross into the artifact's own document, which cannot see the shadow root's
+  // custom properties.
+  function luxeToken(name, fallback) {
+    const match = new RegExp("--" + name + "\\s*:\\s*([^;]+);").exec(luxeTokensCss);
+    return match ? match[1].trim() : fallback;
+  }
 
   function uid(el) {
     if (!ids.has(el)) ids.set(el, String(++counter));
@@ -641,10 +655,14 @@ export function createArtifactSdk(
     return isNativeInteractive(el);
   }
 
+  // Injection 1 of 2 that reaches outside the shadow DOM: an inline style on the
+  // artifact's own element. Both custom properties are defined by injection 2
+  // (the :root block in setAnnotationMode), which always runs first because the
+  // chrome enables annotate mode before any element can be hovered.
   function highlightElement(el) {
     if (!el) return;
-    el.style.outline = "var(--luxe-annotate-outline,2px solid #f4c95d)";
-    el.style.outlineOffset = "var(--luxe-annotate-offset,2px)";
+    el.style.outline = "var(--luxe-annotate-outline)";
+    el.style.outlineOffset = "var(--luxe-annotate-offset)";
   }
 
   function clearHighlight(el) {
@@ -677,8 +695,14 @@ export function createArtifactSdk(
     if (annotationMode && !style) {
       style = document.createElement("style");
       style.id = "luxe-cursor-style";
+      // Injection 2 of 2 outside the shadow DOM: this writes into the artifact
+      // page's own :root. Only the annotation accent crosses over, and its value
+      // comes from the design tokens rather than a literal. currentColor is the
+      // no-colour fallback for the case where the token text never arrived.
       style.textContent =
-        ":root{--luxe-accent:#f4c95d;--luxe-annotate-outline:2px solid var(--luxe-accent);--luxe-annotate-offset:2px}*{cursor:default!important}[data-luxe-action],[data-luxe-action] *{cursor:pointer!important}input,textarea,[contenteditable]:not([contenteditable='false']){cursor:text!important}button,select,label,option,input[type='button'],input[type='submit'],input[type='reset'],input[type='checkbox'],input[type='radio'],input[type='file'],input[type='color'],input[type='range'],input[type='image']{cursor:pointer!important}";
+        ":root{--luxe-accent:" +
+        luxeToken("gold", "currentColor") +
+        ";--luxe-annotate-outline:2px solid var(--luxe-accent);--luxe-annotate-offset:2px}*{cursor:default!important}[data-luxe-action],[data-luxe-action] *{cursor:pointer!important}input,textarea,[contenteditable]:not([contenteditable='false']){cursor:text!important}button,select,label,option,input[type='button'],input[type='submit'],input[type='reset'],input[type='checkbox'],input[type='radio'],input[type='file'],input[type='color'],input[type='range'],input[type='image']{cursor:pointer!important}";
       document.head.appendChild(style);
     }
     if (!annotationMode && style) style.remove();
@@ -706,6 +730,7 @@ export function createArtifactSdk(
     if (options.target) item.target = options.target;
     if (options.data) item.prompt += "\n\nContext data:\n" + JSON.stringify(options.data, null, 2);
 
+    annotationSequence += 1;
     parent.postMessage({ type: "luxe:queuePrompt", prompt: item }, "*");
   }
 
@@ -1456,15 +1481,40 @@ export function createArtifactSdk(
 
     shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;color-scheme:dark;--ink-900:#0f1115;--ink-800:#11141a;--ink-700:#171a21;--ink-600:#1c212b;--steel-700:#2a2f3a;--steel-600:#303745;--steel-500:#3c4557;--steel-400:#8c96aa;--steel-300:#aeb6c6;--steel-200:#b9c0cf;--steel-100:#d8deea;--cream-50:#fffbf3;--cream-100:#f7f3ea;--cream-200:#e8e1cf;--brass-500:#f4c95d;--brass-400:#ffd877;--brass-ink:#17130a;--bg:var(--ink-900);--bg-panel:var(--ink-800);--bg-elevated:var(--ink-600);--fg:var(--cream-100);--fg-faint:var(--steel-300);--border:var(--steel-600);--accent:#f4c95d;--accent-hover:#ffd877;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius-md:10px;--radius-xl:14px;--shadow-floating:0 20px 70px rgba(0,0,0,.35);font-family:var(--font-sans)}*{box-sizing:border-box}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.luxe-text-highlight{position:fixed;pointer-events:none;background:rgba(244,201,93,.28);border-radius:2px;box-shadow:0 0 0 1px rgba(244,201,93,.45)}.luxe-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:12px;border-radius:var(--radius-xl);background:var(--bg-panel);color:var(--fg);border:1px solid var(--accent);box-shadow:var(--shadow-floating);font:14px/1.4 var(--font-sans)}.luxe-heading{font-weight:700;margin-bottom:6px}.luxe-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg);color:var(--fg);padding:9px;font:inherit;font-family:var(--font-sans)}.luxe-annotation-card textarea::placeholder{color:var(--fg-faint)}.luxe-annotation-card .luxe-hint{margin-top:6px;font-size:11px;color:var(--fg-faint)}.luxe-annotation-card .luxe-row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}.luxe-annotation-card button{border:0;border-radius:var(--radius-md);padding:8px 10px;font-family:var(--font-sans);font-size:13px;font-weight:700;cursor:pointer}.luxe-annotation-card button:active{opacity:.85}.luxe-annotation-card .luxe-send{background:var(--accent);color:var(--brass-ink)}.luxe-annotation-card .luxe-send:hover{background:var(--accent-hover)}.luxe-annotation-card .luxe-cancel{background:var(--steel-700);color:var(--fg)}`;
+    // The design tokens arrive as CSS text and are re-scoped from :root to :host,
+    // because `all:initial` cuts the shadow root off from the artifact page (it
+    // does not reset custom properties, so the block below still resolves). Every
+    // rule after it references a token; no colour is written here.
+    style.textContent =
+      luxeTokensCss.replace(/:root(\s*\{)/, ":host$1") +
+      `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;font-family:var(--font-sans);letter-spacing:var(--tracking-sans)}*{box-sizing:border-box}:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ring);outline-offset:var(--focus-ring-offset)}.luxe-text-highlight{position:fixed;pointer-events:none;background:var(--gold-wash);border-radius:2px}.luxe-annotation-badge{position:fixed;display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:var(--radius-pill);background:var(--gold);color:var(--ink-1);border:2px solid var(--canvas);font-size:var(--text-label);font-weight:var(--weight-medium);line-height:1;pointer-events:none}.luxe-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:16px;border-radius:var(--radius-card);background:var(--surface-2);color:var(--ink-1);border:var(--stroke-hair) solid var(--hair);box-shadow:var(--shadow-modal);font-size:var(--text-control);line-height:var(--leading-body)}.luxe-heading{font-weight:var(--weight-medium);margin-bottom:8px}.luxe-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-nav);border:var(--stroke-hair) solid var(--hair);background:var(--surface-2);color:var(--ink-1);padding:10px 12px;font-family:var(--font-sans);font-size:var(--text-control);line-height:var(--leading-body);letter-spacing:var(--tracking-sans)}.luxe-annotation-card textarea::placeholder{color:var(--ink-3)}.luxe-annotation-card .luxe-hint{margin-top:8px;font-size:var(--text-label);color:var(--ink-2)}.luxe-annotation-card .luxe-row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}.luxe-annotation-card button{border:var(--stroke-hair) solid transparent;border-radius:var(--radius-pill);padding:8px 16px;font-family:var(--font-sans);font-size:var(--text-control);font-weight:var(--weight-medium);letter-spacing:var(--tracking-sans);cursor:pointer}.luxe-annotation-card .luxe-send{background:var(--dark-fill);color:var(--dark-fill-text)}.luxe-annotation-card .luxe-send:hover{background:var(--dark-fill-hover)}.luxe-annotation-card .luxe-cancel{background:var(--surface-2);border-color:var(--strong);color:var(--ink-1)}.luxe-annotation-card .luxe-cancel:hover{background:var(--canvas)}`;
     shadow.appendChild(style);
     return shadow;
+  }
+
+  // The numbered badge that marks the element being annotated. --ink-1 on gold:
+  // white on gold is 3.25:1 and fails, which is a fixed deviation of the demo.
+  function showAnnotationBadge(rect, number) {
+    const root = ensureShadow();
+    clearAnnotationBadge();
+    const badge = document.createElement("div");
+    badge.className = "luxe-annotation-badge";
+    badge.textContent = String(number);
+    badge.style.left = Math.max(2, rect.right - 12) + "px";
+    badge.style.top = Math.max(2, rect.top - 12) + "px";
+    root.appendChild(badge);
+  }
+
+  function clearAnnotationBadge() {
+    if (!shadow) return;
+    for (const el of [...shadow.querySelectorAll(".luxe-annotation-badge")]) el.remove();
   }
 
   function closeCard() {
     if (shadow) {
       for (const el of [...shadow.querySelectorAll(".luxe-annotation-card")]) el.remove();
     }
+    clearAnnotationBadge();
     clearHighlight(hovered);
     clearHighlight(selected);
     hovered = null;
@@ -1487,6 +1537,7 @@ export function createArtifactSdk(
     }
 
     const rect = options.range ? options.range.getBoundingClientRect() : anchor.getBoundingClientRect();
+    showAnnotationBadge(rect, annotationSequence + 1);
     const card = document.createElement("div");
     card.className = "luxe-annotation-card";
     const nodeLabel = c.tag === "mermaid-node" ? c.target?.label || c.text || "" : "";

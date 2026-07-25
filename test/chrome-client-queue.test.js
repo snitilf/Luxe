@@ -603,6 +603,11 @@ test("layout gate manual override reveals immediately", async () => {
   assert.equal(chrome.element("layoutGateOverlay").hidden, true);
   assert.equal(chrome.element("body").classList.contains("layout-gate-active"), false);
   assert.equal(chrome.element("layoutIssueBanner").hidden, false);
+  // The label goes into its own span. Writing it onto the banner would delete
+  // the alert icon the server renders beside it, and status never travels as
+  // colour alone (UI-REVAMP 2.6).
+  assert.match(chrome.element("layoutIssueBannerText").textContent, /severe layout failure/);
+  assert.equal(chrome.element("layoutIssueBanner").textContent, "");
 });
 
 test("layout gate manual override stays bypassed on reload", async () => {

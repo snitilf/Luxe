@@ -1,6 +1,8 @@
-import { chmod, copyFile, cp, mkdir, readFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readFile, writeFile } from "node:fs/promises";
 
 import * as esbuild from "esbuild";
+
+import { inlineLuxeTokens } from "../src/chrome-css.js";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -21,7 +23,31 @@ await esbuild.build({
 
 await chmod("dist/cli.mjs", 0o755);
 await copyFile("src/chrome-client.js", "dist/chrome-client.js");
-await copyFile("src/chrome.css", "dist/chrome.css");
+
+// The design tokens are inlined into the shipped stylesheet - see src/chrome-css.js
+// for why this is not an @import.
+await writeFile(
+  "dist/chrome.css",
+  inlineLuxeTokens(await readFile("src/chrome.css", "utf8"), await readFile("src/luxe-tokens.css", "utf8")),
+);
+
+// Chrome fonts. Pre-published latin subsets from the @fontsource packages, not
+// re-subset here: subsetting is a Modified Version under the SIL OFL and drags
+// in each family's Reserved Font Name rules. The full licence text for each
+// family ships beside the files, which the OFL requires.
+await mkdir("dist/fonts", { recursive: true });
+const chromeFonts = [
+  ["@fontsource/inter", "inter-latin-400-normal.woff2"],
+  ["@fontsource/inter", "inter-latin-500-normal.woff2"],
+  ["@fontsource/jetbrains-mono", "jetbrains-mono-latin-400-normal.woff2"],
+  ["@fontsource/jetbrains-mono", "jetbrains-mono-latin-500-normal.woff2"],
+];
+for (const [pkg, file] of chromeFonts) {
+  await copyFile(`node_modules/${pkg}/files/${file}`, `dist/fonts/${file}`);
+}
+await copyFile("node_modules/@fontsource/inter/LICENSE", "dist/fonts/OFL-Inter.txt");
+await copyFile("node_modules/@fontsource/jetbrains-mono/LICENSE", "dist/fonts/OFL-JetBrainsMono.txt");
+
 await mkdir("dist/design", { recursive: true });
 await copyFile("node_modules/daisyui/daisyui.css", "dist/design/daisyui.css");
 await copyFile("node_modules/daisyui/themes.css", "dist/design/daisyui-themes.css");

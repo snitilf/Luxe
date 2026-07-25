@@ -32,12 +32,13 @@ const copyPathButton = /** @type {HTMLButtonElement} */ (document.getElementById
 const copyHint = /** @type {HTMLSpanElement} */ (document.getElementById("copyHint"));
 const copyHintText = /** @type {HTMLSpanElement} */ (document.getElementById("copyHintText"));
 const presenceBanner = /** @type {HTMLDivElement} */ (document.getElementById("presenceBanner"));
-const endedOverlay = /** @type {HTMLDivElement} */ (document.getElementById("endedOverlay"));
+const endedChip = /** @type {HTMLSpanElement} */ (document.getElementById("endedChip"));
 const layoutGateOverlay = /** @type {HTMLDivElement} */ (document.getElementById("layoutGateOverlay"));
 const layoutGateTitle = /** @type {HTMLDivElement} */ (document.getElementById("layoutGateTitle"));
 const layoutGateCopy = /** @type {HTMLParagraphElement} */ (document.getElementById("layoutGateCopy"));
 const layoutGateAction = /** @type {HTMLButtonElement} */ (document.getElementById("layoutGateAction"));
 const layoutIssueBanner = /** @type {HTMLDivElement} */ (document.getElementById("layoutIssueBanner"));
+const layoutIssueBannerText = /** @type {HTMLSpanElement} */ (document.getElementById("layoutIssueBannerText"));
 const sendHint = /** @type {HTMLDivElement} */ (document.getElementById("sendHint"));
 const whiteboardOverlay = /** @type {HTMLDivElement} */ (document.getElementById("whiteboardOverlay"));
 const whiteboardFrame = /** @type {HTMLIFrameElement} */ (document.getElementById("whiteboardFrame"));
@@ -113,15 +114,27 @@ function persistQueuedPrompts() {
   }
 }
 
+// Queued prompts are dashed with a clock glyph; while a send is in flight the
+// same pills go solid, which is the "sent" treatment in the component table.
+const PILL_CLOCK_ICON =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>';
+const PILL_SENT_ICON =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
 function render() {
+  const sending = Boolean(submitQueuedPromise);
   annotationPills.innerHTML = queued
     .map(
       (prompt, index) =>
-        '<div class="pill-wrap"><div class="pill"><span class="pill-preview">' +
+        '<div class="pill-wrap"><div class="pill' +
+        (sending ? " sent" : "") +
+        '"><span class="pill-state">' +
+        (sending ? PILL_SENT_ICON : PILL_CLOCK_ICON) +
+        '</span><span class="pill-preview">' +
         escapeHtml(prompt.prompt) +
         '</span><button class="pill-close" type="button" aria-label="Remove queued prompt" data-index="' +
         index +
-        '"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div><div class="pill-tooltip">' +
+        '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button></div><div class="pill-tooltip">' +
         (prompt.selector
           ? '<div class="tooltip-label">Target</div><div class="pill-tooltip-target">' +
             escapeHtml(prompt.selector) +
@@ -340,12 +353,14 @@ async function submitQueued() {
 
   let succeeded = false;
   submitQueuedPromise = submitQueuedOnce();
+  render(); // repaint the queued pills in their sent treatment
   try {
     const result = await submitQueuedPromise;
     succeeded = true;
     return result;
   } finally {
     submitQueuedPromise = null;
+    render();
     const shouldSubmitAgain = submitQueuedAgain;
     submitQueuedAgain = false;
     if (!succeeded) {
@@ -401,7 +416,10 @@ function setLayoutIssueBanner(
   text = "This surface has a severe layout failure. Your agent has been notified.",
 ) {
   if (!layoutIssueBanner) return;
-  layoutIssueBanner.textContent = text;
+  // Write into the label span, never the banner itself: the banner's first
+  // child is the 20px alert icon, and status ships as icon plus label (spec
+  // 2.6). Setting textContent on the banner would delete the icon at boot.
+  if (layoutIssueBannerText) layoutIssueBannerText.textContent = text;
   layoutIssueBanner.hidden = !visible;
 }
 
@@ -532,7 +550,11 @@ function markSessionEnded() {
   layoutGateManuallyBypassed = true;
   revealLayoutGate();
   postToFrame({ type: "luxe:setAnnotationMode", enabled: false });
-  endedOverlay.hidden = false;
+  // The ended state is a change of interaction model, not a curtain: the chrome
+  // recedes to 45%, drops the annotation hue (body.session-ended maps --gold to
+  // --strong) and stops accepting input, while the artifact stays readable.
+  document.body?.classList?.add("session-ended");
+  endedChip.hidden = false;
 }
 
 function copyFilePath() {
@@ -657,7 +679,8 @@ const whiteboardSaveChains = new Map();
 const inlineWhiteboardChannels = new Map();
 
 function whiteboardTheme() {
-  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  // Luxe is light-only: no theme detection, no OS theme following.
+  return "light";
 }
 
 function postToWhiteboardOverlay(message) {

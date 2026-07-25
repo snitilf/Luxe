@@ -30,6 +30,8 @@ import {
   saveWhiteboard,
   writeWhiteboardFeedbackFiles,
 } from "./whiteboard-store.js";
+import { inlineLuxeTokens, LUXE_TOKENS_MARKER } from "./chrome-css.js";
+import { LUXE_FAVICON_SVG } from "./luxe-brand.js";
 import { buildSelfContainedHtml, exportFileName, splitExportWarnings } from "./export-bundle.js";
 import { injectLuxeSdk } from "./html-transform.js";
 import { bindHost, extraAllowedHosts, hostForUrl, IPV6_LOOPBACK_HOST, linkHost, LOOPBACK_HOST } from "./paths.js";
@@ -37,6 +39,7 @@ import { canonicalFile, SessionStore, sessionKey } from "./session-store.js";
 
 const chromeClientUrl = new URL("./chrome-client.js", import.meta.url);
 const chromeCssUrl = new URL("./chrome.css", import.meta.url);
+const luxeTokensCssUrl = new URL("./luxe-tokens.css", import.meta.url);
 const designAssetUrls = {
   "daisyui.css": {
     packaged: new URL("./design/daisyui.css", import.meta.url),
@@ -62,6 +65,12 @@ const WHITEBOARD_CHANNEL_TOKEN_TTL_MS = 5 * 60_000;
 // produced by `scripts/build.js` into dist/whiteboard. Packaged runs find it
 // next to the served bundle; source runs (node bin/luxe.js) fall back to
 // the repo's dist output, so `pnpm run build` must have run at least once.
+export function defaultFontsDir() {
+  const packaged = fileURLToPath(new URL("./fonts", import.meta.url));
+  if (existsSync(packaged)) return packaged;
+  return fileURLToPath(new URL("../dist/fonts", import.meta.url));
+}
+
 export function defaultWhiteboardAssetsDir() {
   const packaged = fileURLToPath(new URL("./whiteboard", import.meta.url));
   if (existsSync(packaged)) return packaged;
@@ -119,6 +128,7 @@ export async function serve({
   linkHost: linkHostName = linkHost(),
   allowedHosts = extraAllowedHosts(),
   whiteboardAssetsDir = defaultWhiteboardAssetsDir(),
+  fontsDir = defaultFontsDir(),
 }) {
   const app = express();
   const store = new SessionStore(stateFile);
@@ -531,9 +541,48 @@ export async function serve({
     }
   });
 
+  // The packaged dist/chrome.css already has the design tokens baked in by the
+  // build, so the marker is gone and the substitution below is a no-op. Source
+  // runs serve src/chrome.css, which still carries the marker; inlining here
+  // keeps one token source without adding a second route for it.
   app.get("/chrome.css", async (req, res, next) => {
     try {
-      res.type("text/css").send(await readFile(chromeCssUrl, "utf8"));
+      const css = await readFile(chromeCssUrl, "utf8");
+      if (!css.includes(LUXE_TOKENS_MARKER)) {
+        res.type("text/css").send(css);
+        return;
+      }
+      res.type("text/css").send(inlineLuxeTokens(css, await readLuxeTokensCss()));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Chrome fonts: latin-subset Inter and JetBrains Mono, vendored into
+  // dist/fonts/ by the build. Access-Control-Allow-Origin is required because
+  // the whiteboard frame runs in an opaque origin and font fetches from an
+  // opaque origin are CORS-gated - the same lesson as /whiteboard-assets.
+  app.get(/^\/fonts\/(.+)$/, (req, res, next) => {
+    try {
+      const file = resolveArtifactAsset(fontsDir, req.params[0]);
+      if (!file) {
+        res.status(403).send("Forbidden");
+        return;
+      }
+      if (!existsSync(file)) {
+        res.status(404).send(existsSync(fontsDir) ? "Not found" : "Font bundle missing - run `npm run build`");
+        return;
+      }
+      // Express does not know woff2; without this the browser gets
+      // application/octet-stream and refuses the face.
+      if (file.endsWith(".woff2")) res.type("font/woff2");
+      res.setHeader("access-control-allow-origin", "*");
+      // Same reasoning as the whiteboard bundle: the URLs are unversioned, so
+      // revalidate (304 via Last-Modified/ETag) rather than cache blind.
+      res.setHeader("cache-control", "no-cache");
+      // Traversal is already rejected by resolveArtifactAsset; "allow" keeps a
+      // checkout under a dot-directory from 403ing every font.
+      res.sendFile(file, { dotfiles: "allow" });
     } catch (error) {
       next(error);
     }
@@ -552,8 +601,12 @@ export async function serve({
     }
   });
 
-  app.get("/sdk.js", (req, res) => {
-    res.type("application/javascript").send(createSdkJs(String(req.query.key || "")));
+  app.get("/sdk.js", async (req, res, next) => {
+    try {
+      res.type("application/javascript").send(createSdkJs(String(req.query.key || ""), await readLuxeTokensCss()));
+    } catch (error) {
+      next(error);
+    }
   });
 
   // The whiteboard frame page. Hosted by the chrome in a dedicated sandboxed
@@ -1104,7 +1157,7 @@ export function computePresence(key, activePolls, deliveredFeedback) {
   return "waiting";
 }
 
-function chromeIcon(paths, size = 16, strokeWidth = 1.7) {
+function chromeIcon(paths, size = 14, strokeWidth = 1.7) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 }
 
@@ -1114,28 +1167,30 @@ const chromeIcons = {
   ),
   file: chromeIcon(
     '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
-    13,
   ),
   copy: chromeIcon(
     '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
-    12,
   ),
-  check: chromeIcon('<polyline points="20 6 9 17 4 12"/>', 12),
+  check: chromeIcon('<polyline points="20 6 9 17 4 12"/>'),
   refresh: chromeIcon(
     '<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>',
-    15,
   ),
   download: chromeIcon(
     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
-    15,
   ),
   globe: chromeIcon(
     '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14.5 14.5 0 0 1 0 18a14.5 14.5 0 0 1 0-18z"/>',
-    15,
   ),
   exit: chromeIcon(
     '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
-    15,
+  ),
+  // Card-sized (spec 2.2): status never travels as colour alone, so both status
+  // banners - the layout failure banner and the presence banner - carry this
+  // icon beside a label span. The label lives in its own span so client-side
+  // text updates cannot overwrite the icon.
+  alert: chromeIcon(
+    '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+    20,
   ),
 };
 
@@ -1191,8 +1246,9 @@ function normalizeFlagValue(value) {
   return value === undefined || value === null ? "" : String(value).trim().toLowerCase();
 }
 
-const LUXE_DEFAULT_FAVICON =
-  "<link rel=\"icon\" href=\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\u{1F48E}</text></svg>\">";
+// The mark carries hex fills, and `#` opens a fragment inside a data: URL, so
+// the SVG is percent-encoded rather than embedded raw.
+const LUXE_DEFAULT_FAVICON = `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(LUXE_FAVICON_SVG)}">`;
 
 function readTagAttr(tag, name) {
   // Tokenize real attributes rather than searching for the bare name anywhere in
@@ -1272,10 +1328,9 @@ ${faviconTag}
 <link rel="stylesheet" href="/chrome.css">
 </head>
 <body class="${bodyClass}">
-<div class="bar"><div class="brand"><span class="brand-mark">Luxe</span><span class="brand-support">Editor</span></div><div class="spacer" aria-hidden="true"></div><button class="annotate-switch" id="annotation" type="button" aria-pressed="${annotationPressed}" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><div class="menu-rule"></div><button class="menu-item danger" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
-<div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-downloads" data-artifact-src="/artifact/${session.key}/index.html"></iframe><div class="layout-issue-banner" id="layoutIssueBanner" hidden>This surface has a severe layout failure. Your agent has been notified.</div></div><aside class="panel"><h2>Conversation</h2><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer"><div class="presence-banner" id="presenceBanner" hidden>Your agent is not listening. If this persists, ask your agent to poll for updates from Luxe.</div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-danger" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to Agent</button></div></div></aside></div>
-<div class="ended-overlay layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden}><div class="ended-card"><div class="ended-title" id="layoutGateTitle">Checking layout.<br>One moment.</div><p class="ended-copy" id="layoutGateCopy">Luxe is waiting for fonts and final geometry before revealing this artifact.</p><button class="button ended-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
-<div class="ended-overlay" id="endedOverlay" hidden><div class="ended-card"><div class="ended-title">Session ended.<br>Return to your agent to continue.</div><p class="ended-copy">${escapeHtml(session.file)}</p></div></div>
+<div class="bar"><div class="brand"><span class="brand-mark">Luxe</span><span class="bar-divider" aria-hidden="true"></span><span class="bar-file" title="${escapeHtml(session.file)}">${escapeHtml(pathTail)}</span></div><div class="spacer" aria-hidden="true"></div><span class="ended-chip" id="endedChip" hidden>${chromeIcons.check}<span>Session ended</span></span><button class="annotate-switch" id="annotation" type="button" aria-pressed="${annotationPressed}" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><div class="menu-rule"></div><button class="menu-item" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
+<div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-downloads" data-artifact-src="/artifact/${session.key}/index.html"></iframe><div class="layout-issue-banner" id="layoutIssueBanner" hidden>${chromeIcons.alert}<span id="layoutIssueBannerText">This surface has a severe layout failure. Your agent has been notified.</span></div></div><aside class="panel"><h2>Conversation</h2><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer"><div class="presence-banner" id="presenceBanner" hidden>${chromeIcons.alert}<span id="presenceBannerText">Your agent is not listening. If this persists, ask your agent to poll for updates from Luxe.</span></div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first.</div><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send">Send to agent</button></div><p class="send-caption">Send &amp; End delivers the feedback and closes the session.</p></div></aside></div>
+<div class="scrim layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden}><div class="modal"><div class="modal-title" id="layoutGateTitle">Checking layout. One moment.</div><p class="modal-copy" id="layoutGateCopy">Luxe is waiting for fonts and final geometry before revealing this artifact.</p><button class="button modal-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
 <div class="whiteboard-overlay" id="whiteboardOverlay" hidden><div class="whiteboard-shell"><div class="whiteboard-error" id="whiteboardError" hidden></div><button class="whiteboard-close" id="whiteboardClose" type="button" aria-label="Close whiteboard"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button><iframe id="whiteboardFrame" title="Excalidraw whiteboard" sandbox="allow-scripts allow-popups"></iframe></div></div>
 <script id="luxe-session" type="application/json">${sessionJson}</script>
 <script src="/chrome-client.js"></script>
@@ -1299,7 +1354,22 @@ export function createWhiteboardFrameHtml(channelToken = "") {
 </html>`;
 }
 
-export function createSdkJs(key) {
+// The design tokens as CSS text. Source runs read src/luxe-tokens.css; the
+// published bundle has no such file, because the build already inlined the
+// tokens into dist/chrome.css - so read them back out of the first :root block
+// there. Either way there is exactly one source.
+export async function readLuxeTokensCss() {
+  try {
+    return await readFile(luxeTokensCssUrl, "utf8");
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  }
+  const css = await readFile(chromeCssUrl, "utf8");
+  const match = /:root\s*\{[\s\S]*?\n\}/.exec(css);
+  return match ? match[0] : "";
+}
+
+export function createSdkJs(key, luxeTokensCss = "") {
   // Serialize every helper exported by mermaid-node.js as a same-scope const so
   // cross-helper calls (e.g. mermaidNodeFrom → mermaidNodeElement) resolve in the
   // browser. Deriving this from the module's exports - rather than a hand-kept
@@ -1321,7 +1391,7 @@ const findStableLayoutFindings=${findStableLayoutFindings.toString()};
 const isNearTotalOcclusion=${isNearTotalOcclusion.toString()};
 ${mermaidHelperDecls}
 const mermaidHelpers={ ${mermaidHelperKeys} };
-(${createArtifactSdk.toString()})(deriveQueueKey, isNativeInteractiveControl, mermaidHelpers);
+(${createArtifactSdk.toString()})(deriveQueueKey, isNativeInteractiveControl, mermaidHelpers, ${JSON.stringify(luxeTokensCss)});
 })();`;
 }
 

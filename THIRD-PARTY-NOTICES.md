@@ -56,12 +56,21 @@ The Xiaolai family (CJK glyphs) is intentionally not vendored; Excalidraw falls 
 
 ## Chrome fonts vendored into `dist/fonts/`
 
-| Family         | License                   |
-| -------------- | ------------------------- |
-| Inter          | SIL Open Font License 1.1 |
-| JetBrains Mono | SIL Open Font License 1.1 |
+| File                                    | Family         | License                   |
+| --------------------------------------- | -------------- | ------------------------- |
+| `inter-latin-400-normal.woff2`          | Inter          | SIL Open Font License 1.1 |
+| `inter-latin-500-normal.woff2`          | Inter          | SIL Open Font License 1.1 |
+| `jetbrains-mono-latin-400-normal.woff2` | JetBrains Mono | SIL Open Font License 1.1 |
+| `jetbrains-mono-latin-500-normal.woff2` | JetBrains Mono | SIL Open Font License 1.1 |
 
-The full SIL Open Font License 1.1 text for each family ships alongside the font files in `dist/fonts/`.
+These are the pre-published latin subsets distributed by the `@fontsource/inter` and
+`@fontsource/jetbrains-mono` packages, copied verbatim by `scripts/build.js`. They are not
+re-subset or otherwise modified here: subsetting produces a Modified Version under the SIL Open
+Font License and brings each project's Reserved Font Name clause into play.
+
+The full SIL Open Font License 1.1 text for each family ships alongside the font files, as
+`dist/fonts/OFL-Inter.txt` (Copyright 2016 The Inter Project Authors) and
+`dist/fonts/OFL-JetBrainsMono.txt` (Copyright 2020 The JetBrains Mono Project Authors).
 
 ## Bundled into `dist/design/`
 
