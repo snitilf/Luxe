@@ -303,6 +303,19 @@ function postToFrame(message) {
   if (frame.contentWindow) frame.contentWindow.postMessage(message, "*");
 }
 
+// Clicking away from an open annotation card should dismiss it, but the card lives
+// inside the sandboxed artifact frame and this document never sees clicks that land
+// there (and vice versa). The frame handles its own backdrop clicks; the chrome
+// forwards its own, so clicking the conversation panel, the toolbar, or the composer
+// puts the card away. The frame ignores this while the card holds an unsent draft.
+document.addEventListener(
+  "pointerdown",
+  () => {
+    postToFrame({ type: "luxe:dismissAnnotationCard" });
+  },
+  true,
+);
+
 // Snapshot-request ledger, half one. Artifact JS can postMessage to its parent whenever it
 // likes, so a `luxe:snapshot` message arriving is not evidence that the chrome asked for one.
 // Every chrome-initiated request is recorded here first; the handler below consumes exactly

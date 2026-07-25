@@ -1510,6 +1510,30 @@ export function createArtifactSdk(
     for (const el of [...shadow.querySelectorAll(".luxe-annotation-badge")]) el.remove();
   }
 
+  // True while a card is open with text the reviewer typed but has not queued.
+  // Dismiss-on-outside-click respects this so a stray click never destroys a draft;
+  // Cancel and Queue still close unconditionally, because those are explicit intent.
+  function cardHasDraft() {
+    if (!shadow) return false;
+    const textarea = shadow.querySelector(".luxe-annotation-card textarea");
+    return Boolean(textarea && String(textarea.value || "").trim());
+  }
+
+  function isPageBackdrop(el) {
+    return el === document.body || el === document.documentElement;
+  }
+
+  function cardIsOpen() {
+    return Boolean(shadow && shadow.querySelector(".luxe-annotation-card"));
+  }
+
+  // Dismiss without discarding work. Returns true when the card actually closed.
+  function dismissCard() {
+    if (!cardIsOpen() || cardHasDraft()) return false;
+    closeCard();
+    return true;
+  }
+
   function closeCard() {
     if (shadow) {
       for (const el of [...shadow.querySelectorAll(".luxe-annotation-card")]) el.remove();
@@ -1603,6 +1627,10 @@ export function createArtifactSdk(
   window.addEventListener("message", (event) => {
     const msg = event.data || {};
     if (msg.type === "luxe:setAnnotationMode") setAnnotationMode(msg.enabled);
+    // The chrome and this document cannot see each other's clicks (the iframe is
+    // sandboxed without same-origin), so the chrome forwards clicks that land on
+    // itself and we treat them the same as clicking the page backdrop.
+    if (msg.type === "luxe:dismissAnnotationCard") dismissCard();
     if (msg.type === "luxe:requestSnapshot") {
       parent.postMessage({ type: "luxe:snapshot", snapshot: snapshot() }, "*");
     }
@@ -1618,9 +1646,16 @@ export function createArtifactSdk(
   document.addEventListener(
     "keydown",
     (event) => {
-      if (!isModeToggleHotkeyEvent(event)) return;
-      event.preventDefault();
-      parent.postMessage({ type: "luxe:toggleAnnotationMode" }, "*");
+      if (isModeToggleHotkeyEvent(event)) {
+        event.preventDefault();
+        parent.postMessage({ type: "luxe:toggleAnnotationMode" }, "*");
+        return;
+      }
+      // Escape is the keyboard form of clicking away. It closes an empty card and
+      // leaves a card carrying a draft alone, matching the click behaviour.
+      if (event.key === "Escape" && cardIsOpen()) {
+        if (dismissCard()) event.preventDefault();
+      }
     },
     true,
   );
@@ -1689,6 +1724,13 @@ export function createArtifactSdk(
       event.stopPropagation();
       if (ignoreNextClick) {
         ignoreNextClick = false;
+        return;
+      }
+      // The page backdrop is not an annotation target: a click that lands on <html>
+      // or <body> itself hit empty space, not content. Treat it as "dismiss", which
+      // is what a reviewer means by clicking away from an open card.
+      if (isPageBackdrop(event.target)) {
+        dismissCard();
         return;
       }
       showAnnotationCard(event.target);

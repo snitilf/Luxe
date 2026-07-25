@@ -237,14 +237,16 @@ test("artifact SDK registers a capture-phase document keydown listener for the m
 
   assert.match(js, /const MODE_TOGGLE_HOTKEY_KEY="i"/);
   assert.match(js, /function isModeToggleHotkeyEvent\(event\)/);
-  assert.match(js, /if \(!isModeToggleHotkeyEvent\(event\)\) return;/);
+  assert.match(js, /if \(isModeToggleHotkeyEvent\(event\)\) \{/);
   assert.match(js, /parent\.postMessage\(\{ type: "luxe:toggleAnnotationMode" \}, "\*"\);/);
   // Registered with the capture flag so it fires regardless of where focus is inside the
-  // sandboxed artifact document, without a duplicate call sneaking in un-captured.
+  // sandboxed artifact document. The handler also owns Escape-to-dismiss, so the hotkey
+  // branch must return rather than fall through to it.
   assert.match(
     js,
-    /document\.addEventListener\(\s*"keydown",\s*\(event\) => \{\s*if \(!isModeToggleHotkeyEvent\(event\)\) return;\s*event\.preventDefault\(\);\s*parent\.postMessage\(\{ type: "luxe:toggleAnnotationMode" \}, "\*"\);\s*\},\s*true,?\s*\);/,
+    /document\.addEventListener\(\s*"keydown",\s*\(event\) => \{\s*if \(isModeToggleHotkeyEvent\(event\)\) \{\s*event\.preventDefault\(\);\s*parent\.postMessage\(\{ type: "luxe:toggleAnnotationMode" \}, "\*"\);\s*return;\s*\}/,
   );
+  assert.match(js, /\},\s*true,?\s*\);/);
 });
 
 test("chrome client toggles annotation mode via Cmd/Ctrl+I and on request from the artifact SDK", async () => {
@@ -2913,4 +2915,38 @@ test("extractArtifactHead reads the real href, not one hidden in another attribu
     '<head><link rel="icon" title="see href=data:image/png,decoy" href="https://cdn.example.com/logo.png"></head>',
   );
   assert.equal(inValue.faviconTag, '<link rel="icon" href="https://cdn.example.com/logo.png">');
+});
+
+test("clicking the page backdrop dismisses an open annotation card instead of annotating the body", () => {
+  const js = createSdkJs("abc");
+
+  // <html> and <body> are not annotation targets: a click that lands on them hit
+  // empty space, which is what a reviewer means by clicking away from the card.
+  assert.match(js, /function isPageBackdrop/);
+  assert.match(js, /el === document\.body \|\| el === document\.documentElement/);
+  assert.match(js, /if \(isPageBackdrop\(event\.target\)\) \{\s*dismissCard\(\);/);
+});
+
+test("dismissing never discards a draft the reviewer has typed", () => {
+  const js = createSdkJs("abc");
+
+  // Cancel and Queue close unconditionally because they are explicit intent.
+  // A stray click elsewhere must not destroy unsent text.
+  assert.match(js, /function cardHasDraft/);
+  assert.match(js, /if \(!cardIsOpen\(\) \|\| cardHasDraft\(\)\) return false;/);
+});
+
+test("the artifact frame accepts a dismiss request from the chrome", () => {
+  const js = createSdkJs("abc");
+
+  // The chrome and this document cannot see each other's clicks, so clicking the
+  // conversation panel reaches the card only through this message.
+  assert.match(js, /luxe:dismissAnnotationCard/);
+});
+
+test("Escape closes an empty annotation card and leaves a draft alone", () => {
+  const js = createSdkJs("abc");
+
+  assert.match(js, /event\.key === "Escape" && cardIsOpen\(\)/);
+  assert.match(js, /if \(dismissCard\(\)\) event\.preventDefault\(\);/);
 });

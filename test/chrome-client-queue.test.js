@@ -271,6 +271,19 @@ async function createChromeHarness({
       for (const { handler } of handlers) handler(event);
       return event;
     },
+    dispatchDocumentEvent(type, eventProps = {}) {
+      const handlers = documentListeners.get(type) || [];
+      assert.ok(handlers.length > 0, `chrome-client registered a document ${type} handler`);
+      const event = {
+        defaultPrevented: false,
+        ...eventProps,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+      };
+      for (const { handler } of handlers) handler(event);
+      return event;
+    },
     queued() {
       return JSON.parse(storage.get("luxe:queued:abc") || "[]");
     },
@@ -1337,4 +1350,25 @@ test("whiteboard close stays responsive while overlay initialization is pending"
 
   releaseOverlaySources?.();
   await flushPromises();
+});
+
+test("clicking anywhere in the chrome asks the artifact frame to dismiss an open annotation card", async () => {
+  const chrome = await createChromeHarness();
+  const before = chrome.postedToFrame.length;
+
+  chrome.dispatchDocumentEvent("pointerdown", {});
+
+  const dismissals = chrome.postedToFrame
+    .slice(before)
+    .filter((message) => message.type === "luxe:dismissAnnotationCard");
+  assert.equal(dismissals.length, 1);
+});
+
+test("the dismiss request is advisory: the chrome never assumes the card closed", async () => {
+  const chrome = await createChromeHarness();
+
+  // The frame owns the decision, because only it knows whether the card holds an
+  // unsent draft. The chrome must not mirror card state or act on the outcome.
+  const event = chrome.dispatchDocumentEvent("pointerdown", {});
+  assert.equal(event.defaultPrevented, false);
 });
