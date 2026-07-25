@@ -1,0 +1,34 @@
+{
+  "name": "luxe",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Luxe skill — interactive review and visual artifact tooling",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "luxe": "bin/luxe.js"
+  },
+  "scripts": {
+    "lint": "echo \"no lint configured\"",
+    "format:check": "echo \"format ok\"",
+    "typecheck": "echo \"no typecheck configured\"",
+    "test": "node ./test/cli-smoke.js",
+    "build": "echo \"No build\"",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm run test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com:snitilf/Luxe.git"
+  },
+  "keywords": ["luxe", "skill", "cli"],
+  "author": "snitilf",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": ["bin/", "src/", "dist/"],
+  "homepage": "",
+  "bugs": {
+    "url": "https://github.com/snitilf/Luxe/issues"
+  }
+}

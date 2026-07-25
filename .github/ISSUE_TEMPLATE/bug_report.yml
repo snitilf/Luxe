@@ -1,0 +1,54 @@
+name: Bug report
+description: Something went wrong
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A short description of what you expected and what actually happened.
+      placeholder: I ran the tool and it crashed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+      description: The commands you ran and any input that matters.
+      placeholder: |
+        1. Run `npm start`
+        2. Do X
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: tool version
+      description: Output of `--version` or package version.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Node version
+      description: From `node --version` and your OS.
+      placeholder: "macOS 15 / Node v24.13.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: CLI output
+      description: Paste relevant structured output or errors.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, hunches, related issues, whatever seems relevant.
