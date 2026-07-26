@@ -291,7 +291,7 @@ test("chrome client toggles annotation mode via Cmd/Ctrl+I and on request from t
   assert.match(js, /function isModeToggleHotkeyEvent\(event\)/);
   assert.match(js, /function toggleAnnotationMode\(\)/);
   assert.match(js, /annotationSwitch\.onclick = toggleAnnotationMode;/);
-  assert.match(js, /if \(msg\.type === "luxe:toggleAnnotationMode"\) toggleAnnotationMode\(\);/);
+  assert.match(js, /case "luxe:toggleAnnotationMode":\s*toggleAnnotationMode\(\);\s*return;/);
   assert.match(
     js,
     /document\.addEventListener\(\s*"keydown",\s*\(event\) => \{\s*if \(!isModeToggleHotkeyEvent\(event\)\) return;\s*event\.preventDefault\(\);\s*toggleAnnotationMode\(\);\s*\},\s*true,?\s*\);/,
@@ -802,7 +802,7 @@ test("both status banners render an icon beside a label span", async () => {
 
   for (const [id, textId, label] of [
     ["presenceBanner", "presenceBannerText", "Your agent is not listening"],
-    ["layoutIssueBanner", "layoutIssueBannerText", "severe layout failure"],
+    ["layoutIssueBanner", "layoutIssueBannerText", "reported warning"],
   ]) {
     const banner = new RegExp(`id="${id}"[^>]*>(<svg[^>]*>.*?</svg>)<span id="${textId}">([^<]*)</span></div>`).exec(
       html,
@@ -971,7 +971,7 @@ test("chrome remembers the artifact scroll position across reloads", async () =>
   const js = await chromeClientSource();
 
   assert.match(js, /let lastScroll = \{ x: 0, y: 0 \}/);
-  assert.match(js, /msg\.type === ["']luxe:scroll["']/);
+  assert.match(js, /case ["']luxe:scroll["']:/);
   assert.match(js, /type:\s*["']luxe:restoreScroll["']/);
   assert.match(js, /x:\s*lastScroll\.x,\s*y:\s*lastScroll\.y/);
 });
@@ -1467,6 +1467,7 @@ test("layout warnings wake the same long-poll feedback channel as human prompts"
           {
             selector: "html",
             kind: "page-horizontal-overflow",
+            axis: "horizontal",
             overflowPx: 12,
             viewportWidth: 720,
             severity: "error",
@@ -1484,8 +1485,8 @@ test("layout warnings wake the same long-poll feedback channel as human prompts"
         {
           selector: "html",
           kind: "page-horizontal-overflow",
+          axis: "horizontal",
           overflowPx: 12,
-          viewportWidth: 720,
           severity: "error",
           persistent: false,
         },
@@ -1497,7 +1498,7 @@ test("layout warnings wake the same long-poll feedback channel as human prompts"
   }
 });
 
-test("warning-only layout observations do not wake the long-poll feedback channel", async () => {
+test("invalid layout observations are rejected and do not wake the long-poll feedback channel", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
   const artifact = path.join(dir, "artifact.html");
   await writeFile(artifact, "<!doctype html><html><body></body></html>");
@@ -1527,7 +1528,8 @@ test("warning-only layout observations do not wake the long-poll feedback channe
       }),
     });
 
-    assert.deepEqual(await response.json(), { status: "recorded", layout_warnings: 0 });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /layout_warnings/);
     const poll = await pollRequest(base, artifact, { timeoutMs: 25 }).then((res) => res.json());
     assert.deepEqual(poll, { status: "waiting" });
   } finally {

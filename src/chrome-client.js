@@ -405,19 +405,42 @@ async function submitQueuedOnce() {
 }
 
 function normalizeLayoutWarningsPayload(value) {
-  return Array.isArray(value)
-    ? value.filter((item) => item && typeof item === "object" && String(item.severity || "").toLowerCase() === "error")
-    : [];
+  const kinds = new Set([
+    "page-horizontal-overflow",
+    "clipped-text",
+    "viewport-unreachable-content",
+    "clipped-control",
+    "viewport-unreachable-control",
+    "overlapping-text",
+  ]);
+  const segment = "[a-z][a-z0-9-]*(#[A-Za-z_][A-Za-z0-9_-]{0,127})?(:nth-of-type\\([1-9][0-9]{0,5}\\))?";
+  const selectorPattern = new RegExp(`^${segment}( > ${segment}){0,4}$`);
+  if (!Array.isArray(value) || value.length > 50) return null;
+  const normalized = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    if (typeof item.selector !== "string" || item.selector.length > 512 || !selectorPattern.test(item.selector)) {
+      return null;
+    }
+    if (!kinds.has(item.kind) || item.severity !== "error") return null;
+    if (item.axis !== "horizontal" && item.axis !== "vertical") return null;
+    if (typeof item.overflowPx !== "number" || !Number.isFinite(item.overflowPx) || item.overflowPx < 0) return null;
+    normalized.push({
+      selector: item.selector,
+      kind: item.kind,
+      severity: "error",
+      axis: item.axis,
+      overflowPx: item.overflowPx,
+    });
+  }
+  return normalized;
 }
 
 function isErrorLayoutWarning(warning) {
-  return String(warning?.severity || "").toLowerCase() === "error";
+  return warning?.severity === "error";
 }
 
-function setLayoutIssueBanner(
-  visible,
-  text = "This surface has a severe layout failure. Your agent has been notified.",
-) {
+function setLayoutIssueBanner(visible, text = "Luxe received a reported warning. Your agent has been notified.") {
   if (!layoutIssueBanner) return;
   // Write into the label span, never the banner itself: the banner's first
   // child is the 20px alert icon, and status ships as icon plus label (spec
@@ -437,7 +460,7 @@ function setLayoutGateCard(state) {
   if (state === "held") {
     layoutGateTitle.innerHTML = "Fixing a layout issue...";
     layoutGateCopy.textContent =
-      "The browser found inaccessible or unusable content. Your agent has been notified and this will reveal after the next clean reload.";
+      "Luxe received a reported warning. Your agent has been notified and this will reveal after the next clean reload.";
     return;
   }
 
@@ -468,7 +491,7 @@ function forceRevealLayoutGate(reason) {
   if (reason === "manual") layoutGateManuallyBypassed = true;
   revealLayoutGate({
     showBanner: true,
-    bannerText: "This surface has a severe layout failure. You chose to show it before the layout check passed.",
+    bannerText: "Luxe received a reported warning. You chose to show the artifact before the layout check passed.",
   });
 }
 
@@ -492,6 +515,7 @@ function startLayoutGateCycle() {
 
 function handleLayoutWarningsForGate(layoutWarnings) {
   const warnings = normalizeLayoutWarningsPayload(layoutWarnings);
+  if (warnings === null) return;
   const hasErrors = warnings.some(isErrorLayoutWarning);
 
   if (!layoutGateEnabled) return;
@@ -525,10 +549,12 @@ function initializeLayoutGate() {
 }
 
 async function submitLayoutWarnings(layoutWarnings) {
+  const normalized = normalizeLayoutWarningsPayload(layoutWarnings);
+  if (normalized === null) return;
   const response = await fetch("/api/" + key + "/layout-warnings", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ layout_warnings: normalizeLayoutWarningsPayload(layoutWarnings) }),
+    body: JSON.stringify({ layout_warnings: normalized }),
   });
   if (!response.ok) throw new Error("failed to submit layout warnings");
 }
@@ -1128,38 +1154,50 @@ window.addEventListener("message", (event) => {
   if (event.source !== frame.contentWindow) return;
 
   const msg = event.data || {};
-  if (msg.type === "luxe:queuePrompt") {
-    enqueuePrompt(msg.prompt);
-  }
-  if (msg.type === "luxe:snapshot") {
-    // Snapshot-request ledger, half two: a snapshot with no outstanding chrome request behind
-    // it was pushed by the artifact page on its own initiative, so drop it.
-    if (snapshotRequests.length) {
-      const request = snapshotRequests.shift();
-      pendingSnapshot = msg.snapshot || "";
-      pendingSubmitPrompts = request.prompts;
-      endAfterSubmit = request.endAfter;
-      submitQueued();
+  switch (msg.type) {
+    case "luxe:queuePrompt":
+      enqueuePrompt(msg.prompt);
+      return;
+    case "luxe:snapshot":
+      // Snapshot-request ledger, half two: a snapshot with no outstanding chrome request behind
+      // it was pushed by the artifact page on its own initiative, so drop it.
+      if (snapshotRequests.length && typeof msg.snapshot === "string") {
+        const request = snapshotRequests.shift();
+        pendingSnapshot = msg.snapshot;
+        pendingSubmitPrompts = request.prompts;
+        endAfterSubmit = request.endAfter;
+        submitQueued();
+      }
+      return;
+    case "luxe:layoutWarnings":
+      handleLayoutWarningsForGate(msg.layout_warnings);
+      submitLayoutWarnings(msg.layout_warnings).catch(() => {});
+      return;
+    case "luxe:openWhiteboard": {
+      // This request has UI authority only. The server corroborates the strict index against
+      // its own artifact source, and the overlay authenticates separately before any write.
+      const index = validWhiteboardIndex(msg.diagramIndex);
+      if (index !== null) openWhiteboardOverlay(index);
+      return;
     }
+    case "luxe:toggleAnnotationMode":
+      toggleAnnotationMode();
+      return;
+    case "luxe:scroll":
+      if (
+        typeof msg.x === "number" &&
+        Number.isFinite(msg.x) &&
+        msg.x >= 0 &&
+        typeof msg.y === "number" &&
+        Number.isFinite(msg.y) &&
+        msg.y >= 0
+      ) {
+        lastScroll = { x: msg.x, y: msg.y };
+      }
+      return;
+    default:
+      return;
   }
-  if (msg.type === "luxe:scroll") {
-    lastScroll = { x: Number(msg.x) || 0, y: Number(msg.y) || 0 };
-  }
-  if (msg.type === "luxe:layoutWarnings") {
-    handleLayoutWarningsForGate(msg.layout_warnings);
-    submitLayoutWarnings(msg.layout_warnings).catch(() => {});
-  }
-  // The Edit affordance the SDK draws over a rendered Mermaid diagram. This
-  // message asks for a UI, nothing more: the index is range-checked here,
-  // resolved against the server's own reading of the artifact file inside
-  // openWhiteboardOverlay, and the editor it opens still has to authenticate
-  // its own channel before it may write anything. See the trust boundary note
-  // above the whiteboard section.
-  if (msg.type === "luxe:openWhiteboard") {
-    const index = validWhiteboardIndex(msg.diagramIndex);
-    if (index !== null) openWhiteboardOverlay(index);
-  }
-  if (msg.type === "luxe:toggleAnnotationMode") toggleAnnotationMode();
 });
 
 loadFrame();

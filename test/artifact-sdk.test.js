@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   buildDomSnapshot,
+  buildStructuralSelector,
   classifyMaterialRectEscape,
   classifySevereTextOverflow,
   DOM_SNAPSHOT_TRUNCATION_MARKER,
@@ -437,6 +438,30 @@ test("isModeToggleHotkeyEvent ignores other keys even with a modifier held", () 
 // each of them is a regression that would otherwise land silently.
 // ---------------------------------------------------------------------------
 const sdkSource = await readFile(new URL("../src/artifact-sdk.js", import.meta.url), "utf8");
+
+test("the SDK selector generator stays inside the server grammar for hostile valid tag names", () => {
+  const parent = node("main", { id: "content" });
+  const invalidTag = node("foo_bar");
+  invalidTag.parentElement = parent;
+  parent.children = [invalidTag];
+  const longTag = node(`x-${"a".repeat(600)}`);
+  longTag.parentElement = parent;
+  parent.children.push(longTag);
+  const cappedTagName = `x${"a".repeat(509)}`;
+  const cappedWithId = node(cappedTagName, { id: "safe" });
+  cappedWithId.parentElement = parent;
+  parent.children.push(cappedWithId);
+  const cappedSibling = node(cappedTagName);
+  cappedSibling.parentElement = parent;
+  parent.children.push(cappedSibling);
+
+  assert.equal(buildStructuralSelector(invalidTag), "main#content");
+  assert.equal(buildStructuralSelector(longTag), "main#content");
+  assert.equal(buildStructuralSelector(cappedWithId), cappedTagName);
+  assert.equal(buildStructuralSelector(cappedSibling), cappedTagName);
+  assert.equal(buildStructuralSelector(node("article", { id: "safe_id" })), "article#safe_id");
+  assert.match(sdkSource, /siblingIndex <= 999999/);
+});
 
 test("the SDK embeds no whiteboard editor and hides no diagram", () => {
   assert.doesNotMatch(sdkSource, /whiteboard-frame\?/, "the SDK still builds a whiteboard frame URL");

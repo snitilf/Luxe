@@ -98,14 +98,14 @@ npm link
 ┌────────────────────────┐
 │ Human annotates text   │
 │ or elements, sends     │
-│ chat, or browser audit │
-│ proves severe failures │
+│ chat, or Luxe reports  │
+│ a layout warning       │
 └───────┬────────────────┘
         ▼
 ┌────────────────────────┐
 │ luxe poll waits and    │
 │ returns prompts or     │
-│ severe failures        │
+│ reported warnings      │
 └────────────────────────┘
 ```
 
@@ -113,13 +113,13 @@ npm link
 - **Portable artifacts** - The artifact runs in an iframe while Luxe injects a small SDK for annotations, snapshots, feedback controls, and render-time layout checks.
   Luxe does not inject any design system, so the saved HTML file renders identically whether you open it through `luxe` or directly in a browser.
   Run `luxe design` for the single source of agent-facing design guidance and optional CDN or Mermaid snippets.
-- **Open-time layout gate** - The browser chrome masks an artifact only while the real in-iframe audit checks for a stable, proven severe layout failure.
-  A severe failure notifies the agent through the `layout_warnings` poll path and keeps the curtain up until a clean reload, while cosmetic, intentional, transient, tiny, and uncertain observations stay silent.
-  The user can click **Show anyway**, and a bounded safety timeout fails open without an issue banner when no severe failure has been proven.
-- **Layout failures** - After fonts and finite animations settle, the injected SDK confirms severe failures from direct rendered evidence such as materially escaped meaningful content or required controls, clipped text fragments, viewport reachability, or near-total semantic occlusion.
+- **Open-time layout gate** - The browser chrome masks an artifact while the in-iframe audit checks for a stable report from its fixed warning set.
+  A reported warning notifies the agent through the `layout_warnings` poll path and keeps the curtain up until a clean reload, while cosmetic, intentional, transient, tiny, and uncertain observations stay silent.
+  The user can click **Show anyway**, and a bounded safety timeout fails open without an issue banner when no warning has been reported.
+- **Layout warnings** - After fonts and finite animations settle, the injected SDK reports warnings from its fixed checks for materially escaped meaningful content or required controls, clipped text fragments, viewport reachability, and near-total semantic occlusion.
   Explicit ellipsis and line clamp, standard visually hidden accessibility text, intentional scrollers or masks, parent overhang, generic element scroll geometry, decorative overlap, and uncertain motion do not produce findings by themselves.
-  Proven failures are returned from `luxe poll` in `layout_warnings` with `selector`, `kind`, `axis`, `overflowPx`, `viewportWidth`, `severity`, and `persistent`.
-  Every returned failure should be fixed and rechecked before asking the human to review.
+  Reported warnings are returned from `luxe poll` in `layout_warnings` with `selector`, `kind`, `axis`, `overflowPx`, `severity`, and server-computed `persistent`.
+  The agent must verify every reported locator in the browser before repair, then recheck before asking the human to review.
 - **Local assets** - Copy local images, CSS, fonts, and scripts next to the HTML artifact and reference them with relative paths from that directory; root-prefixed paths such as `/assets/logo.png` will not resolve through Luxe's artifact route.
 - **Export** - `luxe export` writes `<name>.export.html` by inlining local assets only, stripping the annotation SDK, and leaving remote CDN/font references as links that still need network access.
   Bundling never fetches remote URLs, Luxe itself does not set a CSP, local reads stay confined and size-capped, and absolute `file://` paths outside safe inlined asset references are redacted before output.
@@ -136,7 +136,7 @@ npm link
   In the annotation card, Enter queues the annotation and Shift+Enter inserts a newline.
   Cmd+I or Ctrl+I toggles between annotate and explore mode from either the browser chrome or the artifact iframe, including while focus is in a textarea or control.
   A session opens in explore mode, so the artifact behaves like an ordinary page until you turn **Annotate** on with the toolbar switch or that shortcut.
-- **Agent presence** - The browser shows when no agent is listening, keeps queued feedback and proven severe layout failures for the next successful `luxe poll` send even across reloads, and only blocks human sends while the agent is working on delivered feedback; the agent's reply (`--agent-reply`) concludes that work and re-enables sends.
+- **Agent presence** - The browser shows when no agent is listening, keeps queued feedback and reported layout warnings for the next successful `luxe poll` send even across reloads, and only blocks human sends while the agent is working on delivered feedback; the agent's reply (`--agent-reply`) concludes that work and re-enables sends.
   The no-timeout poll always writes an immediate stderr banner so it is visibly not hung; it adds the periodic stderr wait ticks only in an interactive terminal, so when stderr is piped (as under agent harnesses) the captured output carries no tick noise. Stdout always stays reserved for the final response; if the poll is interrupted or times out, re-run it because queued feedback is never lost.
   Codex-specific guidance keeps that poll attached to the active turn instead of hiding it in a background task, because completed background tasks may not resume the agent.
 - **Session end etiquette** - Luxe tracks who ended a session: a human clicking **End session** (or **Send & end session**) in the browser is a user-initiated end, while `luxe end <html-file>` is agent-initiated.
@@ -172,18 +172,18 @@ npm link
 
 ## CLI Reference
 
-| Command                   | Description                                                                                                                                                                                                                                                                                    |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `luxe`                    | Show current sessions and usage guidance.                                                                                                                                                                                                                                                      |
-| `luxe update`             | Check for or apply the latest npm release through the AXI SDK self-updater.                                                                                                                                                                                                                    |
-| `luxe <html-file>`        | Open or resume a Luxe Editor session, with the open-time layout gate enabled by default. Refuses to reopen a session the user explicitly ended from the browser unless `--reopen` is passed.                                                                                                   |
-| `luxe poll <html-file>`   | Long-poll until the user sends feedback, ends the session, or the browser proves a severe layout failure; leave no-timeout polls running, or re-run them if interrupted. Codex guidance keeps polls attached to the active turn. On `status: ended`, stop polling and do not reopen uninvited. |
-| `luxe end <html-file>`    | End a session as the agent; unlike a user-initiated end from the browser, this still allows a plain reopen later.                                                                                                                                                                              |
-| `luxe export <html-file>` | Write a portable copy of the artifact: one HTML file with its local assets inlined, so it opens with no server and no sibling files. Remote CDN/font references are left as links.                                                                                                             |
-| `luxe stop`               | Shut down the background server.                                                                                                                                                                                                                                                               |
-| `luxe playbook [id]`      | List focused artifact guidance or show one playbook; agents must open each matching playbook before writing HTML.                                                                                                                                                                              |
-| `luxe design`             | Show agent-facing design guidance, including optional CDN and Mermaid snippets.                                                                                                                                                                                                                |
-| `luxe server`             | Run the local Luxe Editor server.                                                                                                                                                                                                                                                              |
+| Command                   | Description                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `luxe`                    | Show current sessions and usage guidance.                                                                                                                                                                                                                                                                                                    |
+| `luxe update`             | Check for or apply the latest npm release through the AXI SDK self-updater.                                                                                                                                                                                                                                                                  |
+| `luxe <html-file>`        | Open or resume a Luxe Editor session, with the open-time layout gate enabled by default. Refuses to reopen a session the user explicitly ended from the browser unless `--reopen` is passed.                                                                                                                                                 |
+| `luxe poll <html-file>`   | Long-poll until the user sends feedback, ends the session, or Luxe reports a layout warning; verify each reported locator in the browser before repair. Leave no-timeout polls running, or re-run them if interrupted. Codex guidance keeps polls attached to the active turn. On `status: ended`, stop polling and do not reopen uninvited. |
+| `luxe end <html-file>`    | End a session as the agent; unlike a user-initiated end from the browser, this still allows a plain reopen later.                                                                                                                                                                                                                            |
+| `luxe export <html-file>` | Write a portable copy of the artifact: one HTML file with its local assets inlined, so it opens with no server and no sibling files. Remote CDN/font references are left as links.                                                                                                                                                           |
+| `luxe stop`               | Shut down the background server.                                                                                                                                                                                                                                                                                                             |
+| `luxe playbook [id]`      | List focused artifact guidance or show one playbook; agents must open each matching playbook before writing HTML.                                                                                                                                                                                                                            |
+| `luxe design`             | Show agent-facing design guidance, including optional CDN and Mermaid snippets.                                                                                                                                                                                                                                                              |
+| `luxe server`             | Run the local Luxe Editor server.                                                                                                                                                                                                                                                                                                            |
 
 Known playbook IDs: `diagram`, `table`, `comparison`, `plan`, `code`, `input`.
 One artifact often combines several playbooks, such as a plan that includes a comparison and a diagram, so agents must match against each `use_when` trigger and open every matching playbook before writing HTML.

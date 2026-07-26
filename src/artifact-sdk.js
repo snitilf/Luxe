@@ -1,4 +1,4 @@
-/* global CSS, Element, MutationObserver, ResizeObserver, document, getComputedStyle, parent, window */
+/* global Element, MutationObserver, ResizeObserver, document, getComputedStyle, parent, window */
 
 import * as mermaidHelpers from "./mermaid-node.js";
 
@@ -353,6 +353,47 @@ export function isNearTotalOcclusion({ occludedSamples, totalSamples, minSamples
   return Number.isFinite(occluded) && Number.isFinite(total) && total >= minSamples && occluded / total >= minRatio;
 }
 
+export function buildStructuralSelector(element) {
+  let leaf = element;
+  while (leaf && leaf.nodeType === 1) {
+    const leafTag = String(leaf.tagName || "").toLowerCase();
+    if (/^[a-z][a-z0-9-]*$/.test(leafTag) && leafTag.length <= 512) break;
+    leaf = leaf.parentElement;
+  }
+  if (!leaf || leaf.nodeType !== 1) return "";
+
+  const parts = [];
+  let node = leaf;
+  while (node && node.nodeType === 1 && parts.length < 5) {
+    const tag = String(node.tagName || "").toLowerCase();
+    if (!/^[a-z][a-z0-9-]*$/.test(tag)) break;
+    let part = tag;
+    const safeId = String(node.id || "");
+    if (/^[A-Za-z_][A-Za-z0-9_-]{0,127}$/.test(safeId)) {
+      const idPart = part + "#" + safeId;
+      if (idPart.length <= 512) {
+        parts.unshift(idPart);
+        break;
+      }
+    }
+
+    const parent = node.parentElement;
+    if (parent) {
+      const same = [...parent.children].filter((candidate) => candidate.tagName === node.tagName);
+      const siblingIndex = same.indexOf(node) + 1;
+      if (same.length > 1 && siblingIndex > 0 && siblingIndex <= 999999) {
+        const indexedPart = part + ":nth-of-type(" + siblingIndex + ")";
+        if (indexedPart.length <= 512) part = indexedPart;
+      }
+    }
+    parts.unshift(part);
+    node = parent;
+  }
+
+  while (parts.length > 1 && parts.join(" > ").length > 512) parts.shift();
+  return parts.join(" > ");
+}
+
 export function createArtifactSdk(
   deriveQueueKey,
   isNativeInteractive = isNativeInteractiveControl,
@@ -363,6 +404,7 @@ export function createArtifactSdk(
   // own stylesheet is none of our business.
   luxeTokensCss = "",
   snapshotBuilder = buildDomSnapshot,
+  selectorBuilder = buildStructuralSelector,
 ) {
   const { isMermaidSvg, mermaidNodeFrom, mermaidNodeElement } = mermaid;
   // The SDK has no mode state of its own to decide: the chrome owns annotate/explore and
@@ -401,28 +443,7 @@ export function createArtifactSdk(
   }
 
   function selector(el) {
-    if (!el || !el.tagName) return "";
-
-    const parts = [];
-    let node = el;
-    while (node && node.nodeType === 1 && parts.length < 5) {
-      let part = node.tagName.toLowerCase();
-      if (node.id) {
-        part += "#" + CSS.escape(node.id);
-        parts.unshift(part);
-        break;
-      }
-
-      const parent = node.parentElement;
-      if (parent) {
-        const same = [...parent.children].filter((x) => x.tagName === node.tagName);
-        if (same.length > 1) part += ":nth-of-type(" + (same.indexOf(node) + 1) + ")";
-      }
-      parts.unshift(part);
-      node = parent;
-    }
-
-    return parts.join(" > ");
+    return selectorBuilder(el);
   }
 
   function context(el) {

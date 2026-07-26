@@ -874,7 +874,7 @@ test("feedback next step is Codex-aware when requested", () => {
   assert.match(output.next_step, /keep the poll attached to the active turn/);
 });
 
-test("layout warning feedback tells agents to fix layout before involving the human", () => {
+test("layout warning feedback identifies a report that agents must verify before repair", () => {
   const output = createPollOutput({
     file: "/tmp/report.html",
     response: {
@@ -885,8 +885,8 @@ test("layout warning feedback tells agents to fix layout before involving the hu
         {
           selector: "html",
           kind: "page-horizontal-overflow",
+          axis: "horizontal",
           overflowPx: 16,
-          viewportWidth: 720,
           severity: "error",
         },
       ],
@@ -895,9 +895,10 @@ test("layout warning feedback tells agents to fix layout before involving the hu
 
   assert.ok("layout_warnings" in output);
   assert.equal(output.layout_warnings.length, 1);
-  assert.match(output.next_step, /1 proven severe layout failure detected/);
-  assert.match(output.next_step, /repair the inaccessible or unusable content/);
+  assert.match(output.next_step, /1 reported warning/);
+  assert.match(output.next_step, /verify each reported locator in the browser before repairing/i);
   assert.match(output.next_step, /before involving the human/);
+  assert.doesNotMatch(output.next_step, /\bproven\b|browser found/i);
   assert.doesNotMatch(output.next_step, /reload or re-open/);
 });
 
@@ -1023,14 +1024,16 @@ test("final user-ended feedback still requires severe layout repair without reop
     response: {
       status: "feedback",
       prompts: [],
-      layout_warnings: [{ selector: "button", kind: "clipped-control", severity: "error" }],
+      layout_warnings: [
+        { selector: "button", kind: "clipped-control", axis: "horizontal", overflowPx: 1, severity: "error" },
+      ],
       session_ended: true,
       ended_by: "user",
     },
   });
 
-  assert.match(output.next_step, /Repair the inaccessible or unusable content/);
-  assert.match(output.next_step, /open it directly at the affected viewport/);
+  assert.match(output.next_step, /Verify each reported locator in the browser before repairing/);
+  assert.match(output.next_step, /open the artifact directly at the affected viewport/);
   assert.match(output.next_step, /without reopening this ended Luxe session/);
   assert.doesNotMatch(output.next_step, /--reopen/);
 });
@@ -1041,14 +1044,16 @@ test("final agent-ended feedback requires repair in a fresh audit session", () =
     response: {
       status: "feedback",
       prompts: [],
-      layout_warnings: [{ selector: "button", kind: "clipped-control", severity: "error" }],
+      layout_warnings: [
+        { selector: "button", kind: "clipped-control", axis: "horizontal", overflowPx: 1, severity: "error" },
+      ],
       session_ended: true,
       ended_by: "agent",
     },
   });
 
-  assert.match(output.next_step, /Repair the inaccessible or unusable content/);
-  assert.match(output.next_step, /open a fresh session and re-check the real-browser audit/);
+  assert.match(output.next_step, /Verify each reported locator in the browser before repairing/);
+  assert.match(output.next_step, /open a fresh session and re-check the audit/);
 });
 
 test("persistent severe layout failures still require repair before review", () => {
@@ -1062,6 +1067,7 @@ test("persistent severe layout failures still require repair before review", () 
         {
           selector: "html",
           kind: "page-horizontal-overflow",
+          axis: "horizontal",
           overflowPx: 120,
           viewportWidth: 390,
           severity: "error",
@@ -1071,7 +1077,7 @@ test("persistent severe layout failures still require repair before review", () 
     },
   });
 
-  assert.match(output.next_step, /proven severe layout failure/);
+  assert.match(output.next_step, /reported warning/);
   assert.match(output.next_step, /before involving the human/);
   assert.doesNotMatch(output.next_step, /fine to proceed/);
 });
@@ -1118,14 +1124,16 @@ test("a mix of fresh and persistent severe failures still mandates a fix pass", 
         {
           selector: "html",
           kind: "page-horizontal-overflow",
+          axis: "horizontal",
           overflowPx: 16,
           viewportWidth: 720,
           severity: "error",
           persistent: false,
         },
         {
-          selector: ".badge",
+          selector: "span#badge",
           kind: "clipped-text",
+          axis: "horizontal",
           overflowPx: 12,
           viewportWidth: 720,
           severity: "error",
@@ -1135,7 +1143,8 @@ test("a mix of fresh and persistent severe failures still mandates a fix pass", 
     },
   });
 
-  assert.match(output.next_step, /2 proven severe layout failures detected/);
+  assert.match(output.next_step, /2 reported warnings/);
+  assert.match(output.next_step, /Verify each reported locator/);
   assert.match(output.next_step, /before involving the human/);
 });
 

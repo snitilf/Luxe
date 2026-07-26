@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { normalizeLayoutWarningReport } from "./layout-warnings.js";
 import { normalizeMermaidNodeTarget } from "./mermaid-node.js";
 import { EXCALIDRAW_SCENE_TARGET_TYPE, normalizeExcalidrawSceneTarget } from "./whiteboard-core.js";
 
@@ -90,10 +91,12 @@ export class SessionStore {
       }
       const deliveredWarningKeys = session.delivered_layout_warning_keys || [];
       const deliveredKeys = new Set(deliveredWarningKeys);
-      const layoutWarnings = normalizeLayoutWarnings(
-        payload.layout_warnings || payload.layoutWarnings || [],
-        deliveredKeys,
-      );
+      const layoutWarningsValue = Object.hasOwn(payload, "layout_warnings")
+        ? payload.layout_warnings
+        : Object.hasOwn(payload, "layoutWarnings")
+          ? payload.layoutWarnings
+          : undefined;
+      const layoutWarnings = normalizeLayoutWarnings(layoutWarningsValue, deliveredKeys);
       const activeWarningKeys = new Set(layoutWarnings.map(layoutWarningKey));
       const nextDeliveredWarningKeys = deliveredWarningKeys.filter((key) => activeWarningKeys.has(key)).slice(-200);
       const deliveredKeysChanged =
@@ -128,7 +131,10 @@ export class SessionStore {
       // Prompts queued before the session ended (a browser send-and-end) must still reach the
       // agent, so deliver them before reporting the ended state; the next poll then sees ended.
       const prompts = session.prompts || [];
-      const layoutWarnings = session.layout_warnings || [];
+      const layoutWarnings = normalizeStoredLayoutWarnings(
+        session.layout_warnings,
+        new Set(session.delivered_layout_warning_keys || []),
+      );
       const alreadyEnded = session.status === "ended";
       if (prompts.length === 0 && layoutWarnings.length === 0) {
         return alreadyEnded ? { status: "ended", ended_by: session.ended_by } : { status: "waiting" };
@@ -255,9 +261,7 @@ function normalizePrompt(prompt) {
 }
 
 function layoutWarningKey(warning) {
-  const viewportWidth = normalizeFiniteNumber(warning.viewportWidth);
-  const viewportClass = viewportWidth <= 640 ? "mobile" : viewportWidth <= 1024 ? "compact" : "desktop";
-  const overflowPx = normalizeFiniteNumber(warning.overflowPx);
+  const overflowPx = warning.overflowPx;
   const magnitude =
     overflowPx <= 0
       ? "none"
@@ -268,49 +272,31 @@ function layoutWarningKey(warning) {
           : overflowPx < 160
             ? "large"
             : "extreme";
-  return `${warning.kind}:${warning.selector}:${warning.axis || ""}:${viewportClass}:${magnitude}`;
+  return `${warning.kind}:${warning.selector}:${warning.axis}:${magnitude}`;
 }
 
 // A finding whose key was already delivered to the agent in a prior poll is marked persistent
 // so the agent can tell a fix attempt didn't clear it, instead of treating a reload's re-report
 // of the identical warning as fresh.
 function normalizeLayoutWarnings(layoutWarnings, deliveredKeys = new Set()) {
-  if (!Array.isArray(layoutWarnings)) return [];
-  return layoutWarnings
-    .filter(
-      (warning) =>
-        warning &&
-        typeof warning === "object" &&
-        !Array.isArray(warning) &&
-        String(warning.severity || "").toLowerCase() === "error",
-    )
-    .map((warning) => {
-      const selector = String(warning.selector || "");
-      const kind = String(warning.kind || "layout-failure");
-      const axis = warning.axis === "vertical" ? "vertical" : warning.axis === "horizontal" ? "horizontal" : undefined;
-      return {
-        selector,
-        kind,
-        ...(axis ? { axis } : {}),
-        overflowPx: normalizeFiniteNumber(warning.overflowPx),
-        viewportWidth: normalizeFiniteNumber(warning.viewportWidth),
-        severity: "error",
-        persistent: deliveredKeys.has(
-          layoutWarningKey({
-            kind,
-            selector,
-            axis,
-            overflowPx: warning.overflowPx,
-            viewportWidth: warning.viewportWidth,
-          }),
-        ),
-      };
-    });
+  return normalizeLayoutWarningReport(layoutWarnings).map((warning) => ({
+    ...warning,
+    persistent: deliveredKeys.has(layoutWarningKey(warning)),
+  }));
 }
 
-function normalizeFiniteNumber(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
+function normalizeStoredLayoutWarnings(layoutWarnings, deliveredKeys = new Set()) {
+  if (!Array.isArray(layoutWarnings) || layoutWarnings.length > 50) return [];
+  const normalized = [];
+  for (const warning of layoutWarnings) {
+    try {
+      normalized.push(...normalizeLayoutWarnings([warning], deliveredKeys));
+    } catch {
+      // State from an older build is untrusted input. Invalid legacy warnings are discarded
+      // rather than allowed to bypass the current artifact-to-agent policy.
+    }
+  }
+  return normalized;
 }
 
 function normalizeTarget(target) {
