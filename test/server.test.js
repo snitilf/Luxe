@@ -123,11 +123,11 @@ test("export content disposition uses a safe fallback and encoded UTF-8 filename
   );
 });
 
-test("artifact assets resolve within the artifact directory", () => {
+test("artifact assets resolve within the artifact directory", async () => {
   const root = path.resolve("/tmp/luxe-artifact");
 
-  assert.equal(resolveArtifactAsset(root, "style.css"), path.join(root, "style.css"));
-  assert.equal(resolveArtifactAsset(root, "../secret.txt"), null);
+  assert.equal(await resolveArtifactAsset(root, "style.css"), path.join(root, "style.css"));
+  assert.equal(await resolveArtifactAsset(root, "../secret.txt"), null);
 });
 
 test("chrome sandbox does not grant modal prompts", () => {

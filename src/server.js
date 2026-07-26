@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -492,7 +492,7 @@ export async function serve({
         return;
       }
       const root = path.dirname(session.file);
-      const file = resolveArtifactAsset(root, assetPath);
+      const file = await resolveArtifactAsset(root, assetPath);
       if (!file) {
         res.status(403).send("Forbidden");
         return;
@@ -576,9 +576,9 @@ export async function serve({
   // dist/fonts/ by the build. Access-Control-Allow-Origin is required because
   // the whiteboard frame runs in an opaque origin and font fetches from an
   // opaque origin are CORS-gated - the same lesson as /whiteboard-assets.
-  app.get(/^\/fonts\/(.+)$/, (req, res, next) => {
+  app.get(/^\/fonts\/(.+)$/, async (req, res, next) => {
     try {
-      const file = resolveArtifactAsset(fontsDir, req.params[0]);
+      const file = await resolveArtifactAsset(fontsDir, req.params[0]);
       if (!file) {
         res.status(403).send("Forbidden");
         return;
@@ -638,9 +638,9 @@ export async function serve({
   // runs in an opaque origin, and font fetches from an opaque origin are
   // CORS-gated, so this static, public-content route must answer with
   // Access-Control-Allow-Origin: * or every canvas font falls back.
-  app.get(/^\/whiteboard-assets\/(.+)$/, (req, res, next) => {
+  app.get(/^\/whiteboard-assets\/(.+)$/, async (req, res, next) => {
     try {
-      const file = resolveArtifactAsset(whiteboardAssetsDir, req.params[0]);
+      const file = await resolveArtifactAsset(whiteboardAssetsDir, req.params[0]);
       if (!file) {
         res.status(403).send("Forbidden");
         return;
@@ -1197,13 +1197,26 @@ function normalizeOrigin(value) {
   }
 }
 
-export function resolveArtifactAsset(root, assetPath) {
-  const file = path.resolve(root, assetPath);
-  const relative = path.relative(root, file);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+export async function resolveArtifactAsset(root, assetPath) {
+  const lexicalRoot = path.resolve(root);
+  const lexicalCandidate = path.resolve(lexicalRoot, assetPath);
+  if (isOutsideRoot(lexicalRoot, lexicalCandidate)) {
     return null;
   }
-  return file;
+  try {
+    const [realRoot, realCandidate] = await Promise.all([realpath(lexicalRoot), realpath(lexicalCandidate)]);
+    return isOutsideRoot(realRoot, realCandidate) ? null : realCandidate;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return lexicalCandidate;
+    }
+    throw error;
+  }
+}
+
+function isOutsideRoot(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }
 
 async function watchSession(session, watchers, events, logEvent) {

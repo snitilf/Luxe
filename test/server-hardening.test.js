@@ -7,7 +7,7 @@
 // window.luxe API (see the trust model note in README.md). The guards here are about a
 // foreign page driving your session, which is a different threat.
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -82,6 +82,25 @@ test("artifact routes allow same-origin framing and nothing else", async () => {
     assert.equal(redirect.headers.get("content-security-policy"), "frame-ancestors 'self'");
   } finally {
     await ctx.close();
+  }
+});
+
+test("live artifact assets reject symlinks that escape the real artifact root", async () => {
+  const ctx = await startServer();
+  const outside = await mkdtemp(path.join(tmpdir(), "luxe-outside-"));
+  try {
+    await writeFile(path.join(outside, "secret.txt"), "outside secret");
+    await symlink(outside, path.join(ctx.dir, "linked-assets"), "junction");
+
+    const escaped = await fetch(`${ctx.base}/artifact/${ctx.key}/linked-assets/secret.txt`);
+    const legitimate = await fetch(`${ctx.base}/artifact/${ctx.key}/logo.svg`);
+
+    assert.equal(escaped.status, 403);
+    assert.doesNotMatch(await escaped.text(), /outside secret/);
+    assert.equal(legitimate.status, 200);
+  } finally {
+    await ctx.close();
+    await rm(outside, { recursive: true, force: true });
   }
 });
 
