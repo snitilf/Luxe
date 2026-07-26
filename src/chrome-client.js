@@ -40,6 +40,7 @@ const layoutGateAction = /** @type {HTMLButtonElement} */ (document.getElementBy
 const layoutIssueBanner = /** @type {HTMLDivElement} */ (document.getElementById("layoutIssueBanner"));
 const layoutIssueBannerText = /** @type {HTMLSpanElement} */ (document.getElementById("layoutIssueBannerText"));
 const sendHint = /** @type {HTMLDivElement} */ (document.getElementById("sendHint"));
+const defaultSendHintText = sendHint.textContent;
 const whiteboardOverlay = /** @type {HTMLDivElement} */ (document.getElementById("whiteboardOverlay"));
 const whiteboardFrame = /** @type {HTMLIFrameElement} */ (document.getElementById("whiteboardFrame"));
 const whiteboardCloseButton = /** @type {HTMLButtonElement} */ (document.getElementById("whiteboardClose"));
@@ -57,6 +58,9 @@ let ended = false;
 let agentPresence = "waiting";
 let pendingSnapshot = "";
 let pendingSubmitPrompts = [];
+let pointerdownSendFreeze = null;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let pointerdownSendFreezeTimer;
 const layoutGateEnabled = sessionData.layoutGateEnabled !== false;
 const configuredLayoutGateMaxHoldMs = Number(sessionData.layoutGateMaxHoldMs);
 const layoutGateMaxHoldMs =
@@ -97,7 +101,11 @@ function escapeHtml(value) {
 function loadQueuedPrompts() {
   try {
     const parsed = JSON.parse(sessionStorage.getItem(queueStorageKey) || "[]");
-    return Array.isArray(parsed) ? parsed.filter((prompt) => prompt && typeof prompt === "object") : [];
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((prompt) => prompt && typeof prompt === "object")
+          .map((prompt) => normalizeQueuedPrompt(prompt, { preserveBrowserMetadata: true }))
+      : [];
   } catch {
     return [];
   }
@@ -122,6 +130,82 @@ const PILL_CLOCK_ICON =
 const PILL_SENT_ICON =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
 
+function promptInlineHtml(prompt) {
+  const context = [];
+  if (prompt.text) {
+    context.push(
+      '<span class="pill-text" aria-label="Text: ' +
+        escapeHtml(prompt.text) +
+        '">“' +
+        escapeHtml(prompt.text) +
+        "”</span>",
+    );
+  }
+  if (prompt.selector) {
+    context.push(
+      '<span class="pill-selector"><span class="visually-hidden">Selector: </span><code>' +
+        escapeHtml(prompt.selector) +
+        "</code></span>",
+    );
+  }
+  if (prompt.tag) {
+    context.push(
+      '<span class="pill-tag" aria-label="Tag: ' + escapeHtml(prompt.tag) + '">' + escapeHtml(prompt.tag) + "</span>",
+    );
+  }
+  return (
+    (prompt.prompt ? '<div class="pill-preview">' + escapeHtml(prompt.prompt) + "</div>" : "") +
+    (context.length ? '<div class="pill-context">' + context.join("") + "</div>" : "")
+  );
+}
+
+function targetFieldHtml(label, value) {
+  return "<div><dt>" + escapeHtml(label) + "</dt><dd>" + escapeHtml(value === "" ? "(empty)" : value) + "</dd></div>";
+}
+
+function targetDisclosureHtml(target) {
+  if (!target) return "";
+  const rows = [["Type", target.type]];
+  if (target.type === "mermaid-node") {
+    rows.push(
+      ["Diagram ID", target.diagramId],
+      ["Node ID", target.nodeId],
+      ["Label", target.label],
+      ["Selector", target.selector],
+    );
+  } else if (target.type === "text-range") {
+    rows.push(
+      ["Text", target.text],
+      ["Selector", target.selector],
+      ["Start selector", target.start.selector],
+      ["Start path", "[" + target.start.path.join(", ") + "]"],
+      ["Start offset", target.start.offset],
+      ["End selector", target.end.selector],
+      ["End path", "[" + target.end.path.join(", ") + "]"],
+      ["End offset", target.end.offset],
+    );
+  } else if (target.type === "excalidraw-scene") {
+    rows.push(
+      ["Diagram index", target.diagramIndex],
+      ["Diagram ID", target.diagramId],
+      ["Source hash", target.sourceHash],
+      ["Scene path", target.scenePath],
+      ["Preview path", target.previewPath],
+      ["Image fallback", String(target.imageFallback)],
+      ["Added", target.stats.added],
+      ["Removed", target.stats.removed],
+      ["Moved", target.stats.moved],
+      ["Relabeled", target.stats.relabeled],
+      ["Drawn", target.stats.drawn],
+    );
+  }
+  return (
+    '<details class="pill-target-details"><summary>Target details</summary><dl>' +
+    rows.map(([label, value]) => targetFieldHtml(label, value)).join("") +
+    "</dl></details>"
+  );
+}
+
 function render() {
   const sending = Boolean(submitQueuedPromise);
   annotationPills.innerHTML = queued
@@ -131,19 +215,14 @@ function render() {
         (sending ? " sent" : "") +
         '"><span class="pill-state">' +
         (sending ? PILL_SENT_ICON : PILL_CLOCK_ICON) +
-        '</span><span class="pill-preview">' +
-        escapeHtml(prompt.prompt) +
-        '</span><button class="pill-close" type="button" aria-label="Remove queued prompt" data-index="' +
+        '</span><div class="pill-fields">' +
+        promptInlineHtml(prompt) +
+        '</div><button class="pill-close" type="button" aria-label="Remove queued prompt" data-index="' +
         index +
-        '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button></div><div class="pill-tooltip">' +
-        (prompt.selector
-          ? '<div class="tooltip-label">Target</div><div class="pill-tooltip-target">' +
-            escapeHtml(prompt.selector) +
-            "</div>"
-          : "") +
-        '<div class="tooltip-label">Prompt</div><div class="pill-tooltip-prompt">' +
-        escapeHtml(prompt.prompt) +
-        "</div></div></div>",
+        '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button></div>' +
+        targetDisclosureHtml(prompt.target) +
+        (prompt._luxeQueueError ? '<div class="pill-error">' + escapeHtml(prompt._luxeQueueError) + "</div>" : "") +
+        "</div>",
     )
     .join("");
 
@@ -161,12 +240,19 @@ function updateSendState() {
 }
 
 function showSendHint() {
+  sendHint.textContent = defaultSendHintText;
   sendHint.hidden = false;
   clearTimeout(sendHintTimer);
   sendHintTimer = setTimeout(() => {
     sendHint.hidden = true;
   }, 2600);
   chatInput.focus();
+}
+
+function showSendStatus(text) {
+  clearTimeout(sendHintTimer);
+  sendHint.textContent = text;
+  sendHint.hidden = false;
 }
 
 function hideSendHint() {
@@ -274,19 +360,95 @@ function promptQueueKey(prompt) {
   return prompt && typeof prompt[internalQueueKeyField] === "string" ? prompt[internalQueueKeyField].trim() : "";
 }
 
+function boundedQueueInteger(value, max = 10_000) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return 0;
+  return Math.min(Math.round(number), max);
+}
+
+function normalizeQueueAnchor(anchor) {
+  return {
+    selector: String(anchor?.selector || ""),
+    path: Array.isArray(anchor?.path)
+      ? Array.from(anchor.path, (segment) => boundedQueueInteger(segment, Number.MAX_SAFE_INTEGER))
+      : [],
+    offset: boundedQueueInteger(anchor?.offset, Number.MAX_SAFE_INTEGER),
+  };
+}
+
+function normalizeQueueTarget(target) {
+  if (!target || typeof target !== "object" || Array.isArray(target)) return null;
+  if (target.type === "mermaid-node") {
+    return {
+      type: "mermaid-node",
+      diagramId: String(target.diagramId || ""),
+      nodeId: String(target.nodeId || ""),
+      label: String(target.label || ""),
+      selector: String(target.selector || ""),
+    };
+  }
+  if (target.type === "text-range") {
+    return {
+      type: "text-range",
+      text: String(target.text || ""),
+      selector: String(target.selector || ""),
+      start: normalizeQueueAnchor(target.start),
+      end: normalizeQueueAnchor(target.end),
+    };
+  }
+  if (target.type === "excalidraw-scene") {
+    const stats = target.stats && typeof target.stats === "object" && !Array.isArray(target.stats) ? target.stats : {};
+    return {
+      type: "excalidraw-scene",
+      diagramIndex: boundedQueueInteger(target.diagramIndex, 999),
+      diagramId: String(target.diagramId || ""),
+      sourceHash: String(target.sourceHash || ""),
+      scenePath: String(target.scenePath || ""),
+      previewPath: String(target.previewPath || ""),
+      imageFallback: Boolean(target.imageFallback),
+      stats: {
+        added: boundedQueueInteger(stats.added),
+        removed: boundedQueueInteger(stats.removed),
+        moved: boundedQueueInteger(stats.moved),
+        relabeled: boundedQueueInteger(stats.relabeled),
+        drawn: boundedQueueInteger(stats.drawn),
+      },
+    };
+  }
+  return null;
+}
+
+function normalizeQueuedPrompt(prompt, { preserveBrowserMetadata = false } = {}) {
+  const normalized = {
+    prompt: String(prompt?.prompt || ""),
+    text: String(prompt?.text || ""),
+    selector: String(prompt?.selector || ""),
+    tag: String(prompt?.tag || ""),
+  };
+  const target = normalizeQueueTarget(prompt?.target);
+  if (target) normalized.target = target;
+  const queueKey = promptQueueKey(prompt);
+  if (queueKey) normalized[internalQueueKeyField] = queueKey;
+  if (preserveBrowserMetadata && typeof prompt?._luxeQueueError === "string" && prompt._luxeQueueError) {
+    normalized._luxeQueueError = prompt._luxeQueueError;
+  }
+  return normalized;
+}
+
 function enqueuePrompt(prompt) {
   if (!prompt || typeof prompt !== "object") return;
 
-  const queueKey = promptQueueKey(prompt);
+  const normalized = normalizeQueuedPrompt(prompt);
+  const queueKey = promptQueueKey(normalized);
   if (queueKey) {
     const index = queued.findIndex((item) => promptQueueKey(item) === queueKey);
     if (index !== -1) {
-      queued[index] = prompt;
+      queued[index] = normalized;
     } else {
-      queued.push(prompt);
+      queued.push(normalized);
     }
   } else {
-    queued.push(prompt);
+    queued.push(normalized);
   }
 
   persistQueuedPrompts();
@@ -294,9 +456,14 @@ function enqueuePrompt(prompt) {
 }
 
 function stripInternalPromptFields(prompt) {
-  if (!prompt || typeof prompt !== "object") return prompt;
-  const clean = { ...prompt };
-  delete clean[internalQueueKeyField];
+  const normalized = normalizeQueuedPrompt(prompt);
+  const clean = {
+    prompt: normalized.prompt,
+    text: normalized.text,
+    selector: normalized.selector,
+    tag: normalized.tag,
+  };
+  if (normalized.target) clean.target = normalized.target;
   return clean;
 }
 
@@ -311,11 +478,58 @@ function postToFrame(message) {
 // puts the card away. The frame ignores this while the card holds an unsent draft.
 document.addEventListener(
   "pointerdown",
-  () => {
+  (event) => {
+    clearPointerdownSendFreeze();
+    const endAfter = sendIntentForTarget(event.target);
+    if (endAfter !== null && !ended && agentPresence !== "working") {
+      pointerdownSendFreeze = freezeDisplayedBatch(endAfter);
+      pointerdownSendFreezeTimer = setTimeout(clearPointerdownSendFreeze, 5_000);
+    }
     postToFrame({ type: "luxe:dismissAnnotationCard" });
   },
   true,
 );
+
+document.addEventListener(
+  "pointerup",
+  () => {
+    if (!pointerdownSendFreeze) return;
+    clearTimeout(pointerdownSendFreezeTimer);
+    pointerdownSendFreezeTimer = setTimeout(clearPointerdownSendFreeze, 0);
+  },
+  true,
+);
+
+document.addEventListener("pointercancel", clearPointerdownSendFreeze, true);
+
+function sendIntentForTarget(target) {
+  if (target === sendButton || sendButton.contains?.(target)) return false;
+  if (target === sendAndEndButton || sendAndEndButton.contains?.(target)) return true;
+  return null;
+}
+
+function freezeDisplayedBatch(endAfter) {
+  return {
+    endAfter,
+    prompts: queued.slice(),
+    composerText: chatInput.value.trim(),
+  };
+}
+
+function clearPointerdownSendFreeze() {
+  clearTimeout(pointerdownSendFreezeTimer);
+  pointerdownSendFreezeTimer = undefined;
+  pointerdownSendFreeze = null;
+}
+
+function consumeSendFreeze(endAfter) {
+  const frozen =
+    pointerdownSendFreeze && pointerdownSendFreeze.endAfter === endAfter
+      ? pointerdownSendFreeze
+      : freezeDisplayedBatch(endAfter);
+  clearPointerdownSendFreeze();
+  return frozen;
+}
 
 // Snapshot-request ledger, half one. Artifact JS can postMessage to its parent whenever it
 // likes, so a `luxe:snapshot` message arriving is not evidence that the chrome asked for one.
@@ -331,21 +545,29 @@ function sendQueued(endAfter) {
   if (ended || agentPresence === "working") return;
   closeMenus();
 
-  const text = chatInput.value.trim();
+  const frozen = consumeSendFreeze(endAfter);
+  const text = frozen.composerText;
   if (text) {
-    queued.push({ uid: "", prompt: text, selector: "", tag: "message", text: "Freeform message" });
+    const composerPrompt = normalizeQueuedPrompt({
+      prompt: text,
+      selector: "",
+      tag: "message",
+      text: "Freeform message",
+    });
+    queued.push(composerPrompt);
+    frozen.prompts.push(composerPrompt);
     persistQueuedPrompts();
     addChat("user", text);
-    chatInput.value = "";
+    if (chatInput.value.trim() === text) chatInput.value = "";
     render();
   }
-  if (!queued.length) {
+  if (!frozen.prompts.length) {
     showSendHint();
     return;
   }
   hideSendHint();
 
-  requestSnapshot(queued.slice(), endAfter);
+  requestSnapshot(frozen.prompts, endAfter);
 }
 
 async function submitQueued() {
@@ -361,6 +583,8 @@ async function submitQueued() {
     const result = await submitQueuedPromise;
     succeeded = true;
     return result;
+  } catch (error) {
+    showSendStatus(error instanceof Error ? error.message : "Feedback was not sent. Please try again.");
   } finally {
     submitQueuedPromise = null;
     render();
@@ -389,35 +613,114 @@ async function submitQueuedOnce() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error("failed to submit queued prompts");
-  for (const prompt of prompts) {
+  if (!response.ok) {
+    throw new Error(
+      response.status === 413
+        ? "Feedback was not sent - the batch or page snapshot exceeds Luxe's limits."
+        : "Feedback was not sent - the request is invalid.",
+    );
+  }
+  const result =
+    typeof response.json === "function"
+      ? await response.json()
+      : {
+          status: "queued",
+          accepted_prompt_indices: prompts.map((_, index) => index),
+          rejected_prompts: [],
+          session_ended: shouldEndSession,
+        };
+  const acceptedIndices = new Set(
+    Array.isArray(result.accepted_prompt_indices)
+      ? result.accepted_prompt_indices.filter(
+          (index) => Number.isInteger(index) && index >= 0 && index < prompts.length,
+        )
+      : prompts.map((_, index) => index),
+  );
+  const rejectedByIndex = new Map(
+    Array.isArray(result.rejected_prompts)
+      ? result.rejected_prompts
+          .filter((rejection) =>
+            ["invalid_whiteboard_target", "invalid_prompt", "prompt_too_large"].includes(rejection?.code),
+          )
+          .map((rejection) => [rejection.index, rejection.code])
+      : [],
+  );
+  for (const [promptIndex, prompt] of prompts.entries()) {
     const index = queued.indexOf(prompt);
-    if (index !== -1) queued.splice(index, 1);
+    if (acceptedIndices.has(promptIndex)) {
+      if (index !== -1) queued.splice(index, 1);
+    } else if (rejectedByIndex.has(promptIndex)) {
+      const rejectedPrompt = {
+        ...prompt,
+        _luxeQueueError:
+          rejectedByIndex.get(promptIndex) === "invalid_whiteboard_target"
+            ? "Not sent - this whiteboard target is not a Luxe session file. Remove this item before sending again."
+            : rejectedByIndex.get(promptIndex) === "prompt_too_large"
+              ? "Not sent - this feedback item exceeds Luxe's limits. Remove or shorten it before sending again."
+              : "Not sent - this feedback item is invalid. Remove it before sending again.",
+      };
+      if (index !== -1) {
+        queued[index] = rejectedPrompt;
+      } else {
+        delete rejectedPrompt[internalQueueKeyField];
+        queued.push(rejectedPrompt);
+      }
+    }
   }
   persistQueuedPrompts();
   render();
-  if (shouldEndSession) {
+  if (shouldEndSession && rejectedByIndex.size > 0) {
+    showSendStatus(
+      acceptedIndices.size > 0
+        ? "Valid feedback sent. Session not ended - remove the rejected item before sending again."
+        : "Nothing sent. Session not ended - remove the rejected item before sending again.",
+    );
+  }
+  if (shouldEndSession && result.session_ended === true) {
     endAfterSubmit = false;
     markSessionEnded();
     return;
   }
-  if (agentPresence === "listening") setAgentPresence("working");
+  if (acceptedIndices.size > 0 && agentPresence === "listening") setAgentPresence("working");
 }
 
 function normalizeLayoutWarningsPayload(value) {
-  return Array.isArray(value)
-    ? value.filter((item) => item && typeof item === "object" && String(item.severity || "").toLowerCase() === "error")
-    : [];
+  const kinds = new Set([
+    "page-horizontal-overflow",
+    "clipped-text",
+    "viewport-unreachable-content",
+    "clipped-control",
+    "viewport-unreachable-control",
+    "overlapping-text",
+  ]);
+  const segment = "[a-z][a-z0-9-]*(#[A-Za-z_][A-Za-z0-9_-]{0,127})?(:nth-of-type\\([1-9][0-9]{0,5}\\))?";
+  const selectorPattern = new RegExp(`^${segment}( > ${segment}){0,4}$`);
+  if (!Array.isArray(value) || value.length > 50) return null;
+  const normalized = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    if (typeof item.selector !== "string" || item.selector.length > 512 || !selectorPattern.test(item.selector)) {
+      return null;
+    }
+    if (!kinds.has(item.kind) || item.severity !== "error") return null;
+    if (item.axis !== "horizontal" && item.axis !== "vertical") return null;
+    if (typeof item.overflowPx !== "number" || !Number.isFinite(item.overflowPx) || item.overflowPx < 0) return null;
+    normalized.push({
+      selector: item.selector,
+      kind: item.kind,
+      severity: "error",
+      axis: item.axis,
+      overflowPx: item.overflowPx,
+    });
+  }
+  return normalized;
 }
 
 function isErrorLayoutWarning(warning) {
-  return String(warning?.severity || "").toLowerCase() === "error";
+  return warning?.severity === "error";
 }
 
-function setLayoutIssueBanner(
-  visible,
-  text = "This surface has a severe layout failure. Your agent has been notified.",
-) {
+function setLayoutIssueBanner(visible, text = "Luxe received a reported warning. Your agent has been notified.") {
   if (!layoutIssueBanner) return;
   // Write into the label span, never the banner itself: the banner's first
   // child is the 20px alert icon, and status ships as icon plus label (spec
@@ -437,7 +740,7 @@ function setLayoutGateCard(state) {
   if (state === "held") {
     layoutGateTitle.innerHTML = "Fixing a layout issue...";
     layoutGateCopy.textContent =
-      "The browser found inaccessible or unusable content. Your agent has been notified and this will reveal after the next clean reload.";
+      "Luxe received a reported warning. Your agent has been notified and this will reveal after the next clean reload.";
     return;
   }
 
@@ -468,7 +771,7 @@ function forceRevealLayoutGate(reason) {
   if (reason === "manual") layoutGateManuallyBypassed = true;
   revealLayoutGate({
     showBanner: true,
-    bannerText: "This surface has a severe layout failure. You chose to show it before the layout check passed.",
+    bannerText: "Luxe received a reported warning. You chose to show the artifact before the layout check passed.",
   });
 }
 
@@ -492,6 +795,7 @@ function startLayoutGateCycle() {
 
 function handleLayoutWarningsForGate(layoutWarnings) {
   const warnings = normalizeLayoutWarningsPayload(layoutWarnings);
+  if (warnings === null) return;
   const hasErrors = warnings.some(isErrorLayoutWarning);
 
   if (!layoutGateEnabled) return;
@@ -525,10 +829,12 @@ function initializeLayoutGate() {
 }
 
 async function submitLayoutWarnings(layoutWarnings) {
+  const normalized = normalizeLayoutWarningsPayload(layoutWarnings);
+  if (normalized === null) return;
   const response = await fetch("/api/" + key + "/layout-warnings", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ layout_warnings: normalizeLayoutWarningsPayload(layoutWarnings) }),
+    body: JSON.stringify({ layout_warnings: normalized }),
   });
   if (!response.ok) throw new Error("failed to submit layout warnings");
 }
@@ -1128,38 +1434,50 @@ window.addEventListener("message", (event) => {
   if (event.source !== frame.contentWindow) return;
 
   const msg = event.data || {};
-  if (msg.type === "luxe:queuePrompt") {
-    enqueuePrompt(msg.prompt);
-  }
-  if (msg.type === "luxe:snapshot") {
-    // Snapshot-request ledger, half two: a snapshot with no outstanding chrome request behind
-    // it was pushed by the artifact page on its own initiative, so drop it.
-    if (snapshotRequests.length) {
-      const request = snapshotRequests.shift();
-      pendingSnapshot = msg.snapshot || "";
-      pendingSubmitPrompts = request.prompts;
-      endAfterSubmit = request.endAfter;
-      submitQueued();
+  switch (msg.type) {
+    case "luxe:queuePrompt":
+      enqueuePrompt(msg.prompt);
+      return;
+    case "luxe:snapshot":
+      // Snapshot-request ledger, half two: a snapshot with no outstanding chrome request behind
+      // it was pushed by the artifact page on its own initiative, so drop it.
+      if (snapshotRequests.length && typeof msg.snapshot === "string") {
+        const request = snapshotRequests.shift();
+        pendingSnapshot = msg.snapshot;
+        pendingSubmitPrompts = request.prompts;
+        endAfterSubmit = request.endAfter;
+        submitQueued();
+      }
+      return;
+    case "luxe:layoutWarnings":
+      handleLayoutWarningsForGate(msg.layout_warnings);
+      submitLayoutWarnings(msg.layout_warnings).catch(() => {});
+      return;
+    case "luxe:openWhiteboard": {
+      // This request has UI authority only. The server corroborates the strict index against
+      // its own artifact source, and the overlay authenticates separately before any write.
+      const index = validWhiteboardIndex(msg.diagramIndex);
+      if (index !== null) openWhiteboardOverlay(index);
+      return;
     }
+    case "luxe:toggleAnnotationMode":
+      toggleAnnotationMode();
+      return;
+    case "luxe:scroll":
+      if (
+        typeof msg.x === "number" &&
+        Number.isFinite(msg.x) &&
+        msg.x >= 0 &&
+        typeof msg.y === "number" &&
+        Number.isFinite(msg.y) &&
+        msg.y >= 0
+      ) {
+        lastScroll = { x: msg.x, y: msg.y };
+      }
+      return;
+    default:
+      return;
   }
-  if (msg.type === "luxe:scroll") {
-    lastScroll = { x: Number(msg.x) || 0, y: Number(msg.y) || 0 };
-  }
-  if (msg.type === "luxe:layoutWarnings") {
-    handleLayoutWarningsForGate(msg.layout_warnings);
-    submitLayoutWarnings(msg.layout_warnings).catch(() => {});
-  }
-  // The Edit affordance the SDK draws over a rendered Mermaid diagram. This
-  // message asks for a UI, nothing more: the index is range-checked here,
-  // resolved against the server's own reading of the artifact file inside
-  // openWhiteboardOverlay, and the editor it opens still has to authenticate
-  // its own channel before it may write anything. See the trust boundary note
-  // above the whiteboard section.
-  if (msg.type === "luxe:openWhiteboard") {
-    const index = validWhiteboardIndex(msg.diagramIndex);
-    if (index !== null) openWhiteboardOverlay(index);
-  }
-  if (msg.type === "luxe:toggleAnnotationMode") toggleAnnotationMode();
 });
 
 loadFrame();

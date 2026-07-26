@@ -1,4 +1,5 @@
 import { chmod, mkdir, readdir, stat } from "node:fs/promises";
+import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -18,6 +19,47 @@ const WILDCARD_BIND_LOOPBACK = new Map([
 // (0.0.0.0 or ::) binds every interface.
 export function bindHost(env = process.env) {
   return env.LUXE_HOST?.trim() || LOOPBACK_HOST;
+}
+
+export function isLoopbackHost(value) {
+  const host = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (host === "localhost" || host === "localhost.") return true;
+
+  if (isIP(host) === 6) {
+    let canonical;
+    try {
+      canonical = new URL(`http://[${host}]/`).hostname.slice(1, -1);
+    } catch {
+      return false;
+    }
+    if (canonical === "::1") return true;
+    const mapped = /^::ffff:([0-9a-f]{1,4}):[0-9a-f]{1,4}$/.exec(canonical);
+    return Boolean(mapped && Number.parseInt(mapped[1], 16) >> 8 === 127);
+  }
+
+  // URL parsing canonicalizes legacy numeric IPv4 spellings such as 127.1, but
+  // it also accepts userinfo, ports, and paths. A bind host is not a URL, so
+  // keep only numeric-address characters before canonicalizing.
+  if (!/^[0-9a-f.x]+$/i.test(host)) return false;
+  // WHATWG parses leading-zero IPv4 components as octal while Node's listener
+  // resolves them as decimal on supported platforms. Reject that ambiguous
+  // spelling so a WAN address can never inherit loopback trust.
+  if (/^[0-9.]+$/.test(host) && host.split(".").some((part) => part.length > 1 && part.startsWith("0"))) {
+    return false;
+  }
+  let canonical;
+  try {
+    canonical = new URL(`http://${host}/`).hostname;
+  } catch {
+    return false;
+  }
+  return isIP(canonical) === 4 && Number(canonical.split(".")[0]) === 127;
+}
+
+export function remoteBindingAllowed(host, env = process.env) {
+  return isLoopbackHost(host) || env.LUXE_ALLOW_REMOTE === "1";
 }
 
 // Host the CLI uses to reach the server it spawned. A wildcard bind address can't be

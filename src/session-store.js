@@ -2,8 +2,15 @@ import crypto from "node:crypto";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { normalizeMermaidNodeTarget } from "./mermaid-node.js";
+import { normalizeLayoutWarningReport } from "./layout-warnings.js";
+import {
+  PROMPT_BATCH_MAX,
+  normalizePromptPayload,
+  validateDomSnapshot,
+  validatePromptBatchPayload,
+} from "./payload-limits.js";
 import { EXCALIDRAW_SCENE_TARGET_TYPE, normalizeExcalidrawSceneTarget } from "./whiteboard-core.js";
+import { isValidDiagramIndex, whiteboardFeedbackPaths } from "./whiteboard-store.js";
 
 const mutationTails = new Map();
 
@@ -62,22 +69,49 @@ export class SessionStore {
       if (!session) {
         return null;
       }
-      const prompts = Array.isArray(payload.prompts) ? payload.prompts : [];
-      const shouldEndSession = Boolean(payload.endSession || payload.end_session);
+      const batch = validatePromptBatchPayload(payload);
+      const prompts = batch.prompts;
+      const shouldEndSession = batch.endSession;
       const alreadyEnded = session.status === "ended";
-      const normalizedPrompts = prompts.map(normalizePrompt);
+      const acceptedPromptIndices = [];
+      const rejectedPrompts = [];
+      const normalizedPrompts = [];
+      for (const [index, prompt] of prompts.entries()) {
+        const result = normalizePrompt(prompt, { stateDir: path.dirname(this.file), key });
+        if (result.code) {
+          rejectedPrompts.push({ index, code: result.code });
+        } else {
+          acceptedPromptIndices.push(index);
+          normalizedPrompts.push(result.prompt);
+        }
+      }
+      const sessionEnded = (shouldEndSession && rejectedPrompts.length === 0) || alreadyEnded;
+      if (normalizedPrompts.length === 0) {
+        return {
+          session,
+          acceptedPromptIndices,
+          rejectedPrompts,
+          sessionEnded: alreadyEnded,
+          hasWhiteboardFeedback: (session.prompts || []).some(
+            (prompt) => prompt.target?.type === EXCALIDRAW_SCENE_TARGET_TYPE,
+          ),
+        };
+      }
       const userMessages = normalizedPrompts
         .filter((prompt) => prompt.tag === "message" && prompt.prompt)
         .map((prompt) => ({ role: "user", text: prompt.prompt, at: new Date().toISOString() }));
       session.prompts = [...(session.prompts || []), ...normalizedPrompts];
+      const hasWhiteboardFeedback = session.prompts.some(
+        (prompt) => prompt.target?.type === EXCALIDRAW_SCENE_TARGET_TYPE,
+      );
       session.chat = [...(session.chat || []), ...userMessages];
       session.pending_prompts = session.prompts.length;
-      session.dom_snapshot = String(payload.domSnapshot || payload.dom_snapshot || "");
-      session.status = shouldEndSession || alreadyEnded ? "ended" : "feedback";
-      if (shouldEndSession) session.ended_by = "user";
+      session.dom_snapshot = batch.domSnapshot;
+      session.status = sessionEnded ? "ended" : "feedback";
+      if (shouldEndSession && sessionEnded) session.ended_by = "user";
       session.updated_at = new Date().toISOString();
       await this.writeState(state);
-      return session;
+      return { session, acceptedPromptIndices, rejectedPrompts, sessionEnded, hasWhiteboardFeedback };
     });
   }
 
@@ -90,10 +124,12 @@ export class SessionStore {
       }
       const deliveredWarningKeys = session.delivered_layout_warning_keys || [];
       const deliveredKeys = new Set(deliveredWarningKeys);
-      const layoutWarnings = normalizeLayoutWarnings(
-        payload.layout_warnings || payload.layoutWarnings || [],
-        deliveredKeys,
-      );
+      const layoutWarningsValue = Object.hasOwn(payload, "layout_warnings")
+        ? payload.layout_warnings
+        : Object.hasOwn(payload, "layoutWarnings")
+          ? payload.layoutWarnings
+          : undefined;
+      const layoutWarnings = normalizeLayoutWarnings(layoutWarningsValue, deliveredKeys);
       const activeWarningKeys = new Set(layoutWarnings.map(layoutWarningKey));
       const nextDeliveredWarningKeys = deliveredWarningKeys.filter((key) => activeWarningKeys.has(key)).slice(-200);
       const deliveredKeysChanged =
@@ -127,32 +163,56 @@ export class SessionStore {
       }
       // Prompts queued before the session ended (a browser send-and-end) must still reach the
       // agent, so deliver them before reporting the ended state; the next poll then sees ended.
-      const prompts = session.prompts || [];
-      const layoutWarnings = session.layout_warnings || [];
+      const storedPrompts = session.prompts || [];
+      const normalizedPrompts = normalizeStoredPrompts(storedPrompts, {
+        stateDir: path.dirname(this.file),
+        key,
+      });
+      const prompts = normalizedPrompts.slice(0, PROMPT_BATCH_MAX);
+      const remainingPrompts = normalizedPrompts.slice(PROMPT_BATCH_MAX);
+      let domSnapshot = "";
+      try {
+        domSnapshot = validateDomSnapshot(session.dom_snapshot || "");
+      } catch {
+        // Persisted state predates the current request boundary and is untrusted.
+        // Reject an oversized or malformed snapshot rather than truncating it.
+      }
+      const layoutWarnings = normalizeStoredLayoutWarnings(
+        session.layout_warnings,
+        new Set(session.delivered_layout_warning_keys || []),
+      );
       const alreadyEnded = session.status === "ended";
       if (prompts.length === 0 && layoutWarnings.length === 0) {
+        if (storedPrompts.length > 0) {
+          session.prompts = [];
+          session.pending_prompts = 0;
+          session.dom_snapshot = "";
+          if (!alreadyEnded) session.status = "open";
+          session.updated_at = new Date().toISOString();
+          await this.writeState(state);
+        }
         return alreadyEnded ? { status: "ended", ended_by: session.ended_by } : { status: "waiting" };
       }
       const result = {
         status: "feedback",
-        dom_snapshot: session.dom_snapshot || "",
+        dom_snapshot: domSnapshot,
         prompts,
         ...(layoutWarnings.length > 0 ? { layout_warnings: layoutWarnings } : {}),
         // This is the final delivery before the session shows as ended - flag it so the agent
         // knows not to expect (or force) a reopened browser afterward.
-        ...(alreadyEnded ? { session_ended: true, ended_by: session.ended_by } : {}),
+        ...(alreadyEnded && remainingPrompts.length === 0 ? { session_ended: true, ended_by: session.ended_by } : {}),
       };
-      session.prompts = [];
+      session.prompts = remainingPrompts;
       session.layout_warnings = [];
-      session.pending_prompts = 0;
-      session.dom_snapshot = "";
+      session.pending_prompts = remainingPrompts.length;
+      session.dom_snapshot = remainingPrompts.length > 0 ? domSnapshot : "";
       if (layoutWarnings.length > 0) {
         const deliveredKeys = new Set(session.delivered_layout_warning_keys || []);
         for (const warning of layoutWarnings) deliveredKeys.add(layoutWarningKey(warning));
         session.delivered_layout_warning_keys = [...deliveredKeys].slice(-200);
       }
       if (!alreadyEnded) {
-        session.status = "open";
+        session.status = remainingPrompts.length > 0 ? "feedback" : "open";
       }
       session.updated_at = new Date().toISOString();
       await this.writeState(state);
@@ -241,23 +301,40 @@ export function sessionKey(file) {
   return crypto.createHash("sha256").update(file).digest("hex").slice(0, 16);
 }
 
-function normalizePrompt(prompt) {
-  const normalized = {
-    uid: String(prompt.uid || ""),
-    prompt: String(prompt.prompt || ""),
-    selector: String(prompt.selector || ""),
-    tag: String(prompt.tag || ""),
-    text: String(prompt.text || ""),
-  };
-  const target = normalizeTarget(prompt.target);
-  if (target) normalized.target = target;
+function normalizePrompt(prompt, sessionRef) {
+  let normalized;
+  try {
+    normalized = normalizePromptPayload(prompt);
+  } catch (error) {
+    const target = prompt && typeof prompt === "object" ? prompt.target : null;
+    const hasWhiteboardPath =
+      target &&
+      typeof target === "object" &&
+      ["scenePath", "previewPath", "scene_path", "preview_path"].some((field) => Object.hasOwn(target, field));
+    if (error?.code !== "prompt_too_large" && (target?.type === EXCALIDRAW_SCENE_TARGET_TYPE || hasWhiteboardPath)) {
+      return { code: "invalid_whiteboard_target" };
+    }
+    return { code: error?.code === "prompt_too_large" ? "prompt_too_large" : "invalid_prompt" };
+  }
+  const targetResult = normalizeTarget(normalized.target, sessionRef);
+  if (targetResult.code) return targetResult;
+  if (targetResult.target) normalized.target = targetResult.target;
+  return { prompt: normalized };
+}
+
+function normalizeStoredPrompts(prompts, sessionRef) {
+  if (!Array.isArray(prompts)) return [];
+  const normalized = [];
+  for (const prompt of prompts) {
+    if (!prompt || typeof prompt !== "object" || Array.isArray(prompt)) continue;
+    const result = normalizePrompt(prompt, sessionRef);
+    if (result.prompt) normalized.push(result.prompt);
+  }
   return normalized;
 }
 
 function layoutWarningKey(warning) {
-  const viewportWidth = normalizeFiniteNumber(warning.viewportWidth);
-  const viewportClass = viewportWidth <= 640 ? "mobile" : viewportWidth <= 1024 ? "compact" : "desktop";
-  const overflowPx = normalizeFiniteNumber(warning.overflowPx);
+  const overflowPx = warning.overflowPx;
   const magnitude =
     overflowPx <= 0
       ? "none"
@@ -268,55 +345,59 @@ function layoutWarningKey(warning) {
           : overflowPx < 160
             ? "large"
             : "extreme";
-  return `${warning.kind}:${warning.selector}:${warning.axis || ""}:${viewportClass}:${magnitude}`;
+  return `${warning.kind}:${warning.selector}:${warning.axis}:${magnitude}`;
 }
 
 // A finding whose key was already delivered to the agent in a prior poll is marked persistent
 // so the agent can tell a fix attempt didn't clear it, instead of treating a reload's re-report
 // of the identical warning as fresh.
 function normalizeLayoutWarnings(layoutWarnings, deliveredKeys = new Set()) {
-  if (!Array.isArray(layoutWarnings)) return [];
-  return layoutWarnings
-    .filter(
-      (warning) =>
-        warning &&
-        typeof warning === "object" &&
-        !Array.isArray(warning) &&
-        String(warning.severity || "").toLowerCase() === "error",
-    )
-    .map((warning) => {
-      const selector = String(warning.selector || "");
-      const kind = String(warning.kind || "layout-failure");
-      const axis = warning.axis === "vertical" ? "vertical" : warning.axis === "horizontal" ? "horizontal" : undefined;
-      return {
-        selector,
-        kind,
-        ...(axis ? { axis } : {}),
-        overflowPx: normalizeFiniteNumber(warning.overflowPx),
-        viewportWidth: normalizeFiniteNumber(warning.viewportWidth),
-        severity: "error",
-        persistent: deliveredKeys.has(
-          layoutWarningKey({
-            kind,
-            selector,
-            axis,
-            overflowPx: warning.overflowPx,
-            viewportWidth: warning.viewportWidth,
-          }),
-        ),
-      };
-    });
+  return normalizeLayoutWarningReport(layoutWarnings).map((warning) => ({
+    ...warning,
+    persistent: deliveredKeys.has(layoutWarningKey(warning)),
+  }));
 }
 
-function normalizeFiniteNumber(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
+function normalizeStoredLayoutWarnings(layoutWarnings, deliveredKeys = new Set()) {
+  if (!Array.isArray(layoutWarnings) || layoutWarnings.length > 50) return [];
+  const normalized = [];
+  for (const warning of layoutWarnings) {
+    try {
+      normalized.push(...normalizeLayoutWarnings([warning], deliveredKeys));
+    } catch {
+      // State from an older build is untrusted input. Invalid legacy warnings are discarded
+      // rather than allowed to bypass the current artifact-to-agent policy.
+    }
+  }
+  return normalized;
 }
 
-function normalizeTarget(target) {
-  if (!target || typeof target !== "object" || Array.isArray(target)) return null;
-  if (target.type === "mermaid-node") return normalizeMermaidNodeTarget(target);
-  if (target.type === EXCALIDRAW_SCENE_TARGET_TYPE) return normalizeExcalidrawSceneTarget(target);
-  // text-range and any other/legacy target shapes pass through unchanged.
-  return JSON.parse(JSON.stringify(target));
+function normalizeTarget(target, sessionRef) {
+  if (!target || typeof target !== "object" || Array.isArray(target)) return { target: null };
+  if (target.type === "mermaid-node" || target.type === "text-range") return { target };
+  if (target.type === EXCALIDRAW_SCENE_TARGET_TYPE) {
+    if (!isValidDiagramIndex(target.diagramIndex)) return { code: "invalid_whiteboard_target" };
+    const diagramIndex = Number(target.diagramIndex);
+    const expected = whiteboardFeedbackPaths(sessionRef.stateDir, sessionRef.key, diagramIndex);
+    if (typeof target.scenePath !== "string" || target.scenePath !== expected.scenePath) {
+      return { code: "invalid_whiteboard_target" };
+    }
+    const previewPath = target.previewPath === undefined ? "" : target.previewPath;
+    if (typeof previewPath !== "string" || (previewPath !== "" && previewPath !== expected.previewPath)) {
+      return { code: "invalid_whiteboard_target" };
+    }
+    return {
+      target: normalizeExcalidrawSceneTarget({
+        ...target,
+        diagramIndex,
+        scenePath: expected.scenePath,
+        previewPath,
+      }),
+    };
+  }
+  if (["scenePath", "previewPath", "scene_path", "preview_path"].some((field) => Object.hasOwn(target, field))) {
+    return { code: "invalid_whiteboard_target" };
+  }
+  // Unknown targets cannot survive normalizePromptPayload's closed union.
+  return { target: null };
 }

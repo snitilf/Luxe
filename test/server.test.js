@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { homedir, tmpdir } from "node:os";
@@ -16,6 +16,7 @@ import {
   createChromeHtml,
   createSdkJs,
   displayPathParts,
+  emitRemoteBindingWarning,
   exportContentDisposition,
   extractArtifactHead,
   hasLiveReloadRootOptIn,
@@ -28,6 +29,7 @@ import {
   resolveFontAssetPath,
   resolveIdleTimeoutMs,
   resolveWatchTarget,
+  remoteBindingWarning,
   serve,
 } from "../src/server.js";
 import { canonicalFile, sessionKey } from "../src/session-store.js";
@@ -291,7 +293,7 @@ test("chrome client toggles annotation mode via Cmd/Ctrl+I and on request from t
   assert.match(js, /function isModeToggleHotkeyEvent\(event\)/);
   assert.match(js, /function toggleAnnotationMode\(\)/);
   assert.match(js, /annotationSwitch\.onclick = toggleAnnotationMode;/);
-  assert.match(js, /if \(msg\.type === "luxe:toggleAnnotationMode"\) toggleAnnotationMode\(\);/);
+  assert.match(js, /case "luxe:toggleAnnotationMode":\s*toggleAnnotationMode\(\);\s*return;/);
   assert.match(
     js,
     /document\.addEventListener\(\s*"keydown",\s*\(event\) => \{\s*if \(!isModeToggleHotkeyEvent\(event\)\) return;\s*event\.preventDefault\(\);\s*toggleAnnotationMode\(\);\s*\},\s*true,?\s*\);/,
@@ -728,7 +730,10 @@ test("sending with an empty composer nudges instead of blocking", async () => {
   const js = await chromeClientSource();
   const css = await chromeCssSource();
 
-  assert.match(html, /class="send-hint" id="sendHint" hidden>Write a message or annotate an element first\.<\/div>/);
+  assert.match(
+    html,
+    /class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first\.<\/div>/,
+  );
   assert.match(js, /function showSendHint\(\)/);
   assert.match(js, /sendHint\.hidden = false/);
   assert.match(js, /chatInput\.focus\(\)/);
@@ -743,7 +748,7 @@ test("composer offers two always-visible top-level send actions", async () => {
   assert.match(html, /class="button button-ghost" id="sendAndEnd"[^<]*>.*Send &amp; End</);
   assert.match(
     html,
-    /<div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first\.<\/div><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button">.*<button class="button" id="send">Send to agent<\/button><\/div>/,
+    /<div class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first\.<\/div><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button">.*<button class="button" id="send">Send to agent<\/button><\/div>/,
   );
   // Send & End is a ghost button and carries the 14px caption the spec requires.
   assert.match(html, /<p class="send-caption">Send &amp; End delivers the feedback and closes the session\.<\/p>/);
@@ -768,7 +773,10 @@ test("send and end submits queued prompts before ending the session", async () =
   assert.match(js, /let endAfterSubmit = false/);
   assert.match(js, /sendQueued\(true\)/);
   assert.match(js, /if \(shouldEndSession\) body\.endSession = true/);
-  assert.match(js, /if \(shouldEndSession\) \{\n {4}endAfterSubmit = false;\n {4}markSessionEnded\(\)/);
+  assert.match(
+    js,
+    /if \(shouldEndSession && result\.session_ended === true\) \{\n {4}endAfterSubmit = false;\n {4}markSessionEnded\(\)/,
+  );
   assert.match(js, /if \(!succeeded\) \{\n {6}endAfterSubmit = false/);
   assert.doesNotMatch(js, /await endSession\(\)/);
 });
@@ -802,7 +810,7 @@ test("both status banners render an icon beside a label span", async () => {
 
   for (const [id, textId, label] of [
     ["presenceBanner", "presenceBannerText", "Your agent is not listening"],
-    ["layoutIssueBanner", "layoutIssueBannerText", "severe layout failure"],
+    ["layoutIssueBanner", "layoutIssueBannerText", "reported warning"],
   ]) {
     const banner = new RegExp(`id="${id}"[^>]*>(<svg[^>]*>.*?</svg>)<span id="${textId}">([^<]*)</span></div>`).exec(
       html,
@@ -832,10 +840,9 @@ test("chrome puts queued annotations above the chat composer as preview pills", 
   assert.match(js, /class="pill/);
   assert.match(js, /pill-preview/);
   assert.match(js, /removeQueuedPrompt/);
-  assert.match(js, /pill-tooltip/);
-  assert.match(css, /text-overflow:ellipsis/);
+  assert.match(js, /pill-context/);
+  assert.match(css, /\.pill-fields\{[^}]*flex-direction:column/);
   assert.doesNotMatch(js, /togglePill/);
-  assert.doesNotMatch(js, /pill-detail/);
   assert.doesNotMatch(html, /<h2>Queued Annotations<\/h2>/);
 });
 
@@ -860,19 +867,22 @@ test("chrome omits clear queue button because pills can be removed individually"
   assert.doesNotMatch(js, /id="clear"/);
 });
 
-test("annotation pill tooltip separates target and prompt details", async () => {
+test("annotation pills show human fields inline and disclose structured target fields before send", async () => {
   const js = await chromeClientSource();
   const css = await chromeCssSource();
 
-  assert.match(js, /tooltip-label/);
-  assert.match(js, /Target/);
-  assert.match(js, /Prompt/);
-  assert.match(js, /pill-tooltip-target/);
-  assert.match(js, /pill-tooltip-prompt/);
+  assert.match(js, /prompt\.prompt \? '<div class="pill-preview">/);
+  assert.match(js, /prompt\.text/);
+  assert.match(js, /prompt\.selector/);
+  assert.match(js, /prompt\.tag/);
+  assert.match(js, /aria-label="Text: /);
+  assert.match(js, /class="visually-hidden">Selector: <\/span><code>/);
+  assert.match(js, /aria-label="Tag: /);
+  assert.match(js, /<details class="pill-target-details"><summary>Target details<\/summary><dl>/);
   assert.match(css, /\.pill-wrap\{[^}]*width:100%/);
-  assert.match(css, /\.pill-tooltip\{[^}]*position:static/);
-  assert.match(css, /\.pill-tooltip\{[^}]*width:100%/);
-  assert.doesNotMatch(css, /\.pill-tooltip\{[^}]*position:absolute/);
+  assert.match(css, /\.pill-target-details\{[^}]*width:100%/);
+  assert.match(css, /\.pill-target-details summary\{[^}]*cursor:pointer/);
+  assert.doesNotMatch(js, /JSON\.stringify\(prompt\.target\)/);
 });
 
 test("chrome client script is valid JavaScript", async () => {
@@ -971,7 +981,7 @@ test("chrome remembers the artifact scroll position across reloads", async () =>
   const js = await chromeClientSource();
 
   assert.match(js, /let lastScroll = \{ x: 0, y: 0 \}/);
-  assert.match(js, /msg\.type === ["']luxe:scroll["']/);
+  assert.match(js, /case ["']luxe:scroll["']:/);
   assert.match(js, /type:\s*["']luxe:restoreScroll["']/);
   assert.match(js, /x:\s*lastScroll\.x,\s*y:\s*lastScroll\.y/);
 });
@@ -1006,8 +1016,9 @@ test("chrome keeps queued prompts persisted until submit succeeds", async () => 
   assert.doesNotMatch(js, /const prompts = queued\.splice\(0, queued\.length\)/);
   assert.match(js, /await fetch\("\/api\/" \+ key \+ "\/prompts", \{/);
   assert.doesNotMatch(js, /queued\.splice\(0, prompts\.length\)/);
-  assert.match(js, /for \(const prompt of prompts\) \{/);
+  assert.match(js, /for \(const \[promptIndex, prompt\] of prompts\.entries\(\)\) \{/);
   assert.match(js, /const index = queued\.indexOf\(prompt\)/);
+  assert.match(js, /if \(acceptedIndices\.has\(promptIndex\)\) \{/);
   assert.match(js, /if \(index !== -1\) queued\.splice\(index, 1\)/);
 });
 
@@ -1379,6 +1390,33 @@ test("buildAllowedHostnames covers loopback, bind/link host, and explicit extras
   assert.equal(extras.has("*"), false);
 });
 
+test("mapped-loopback bind and Host spellings share one canonical allowlist entry", async () => {
+  const allowed = buildAllowedHostnames({
+    host: "::ffff:127.0.0.1",
+    linkHost: "::ffff:127.0.0.1",
+  });
+  assert.equal(isAllowedHostHeader("[::ffff:7f00:1]:4387", allowed), true);
+
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  let server;
+  try {
+    server = await serve({
+      port: 0,
+      stateFile: path.join(dir, "state.json"),
+      version: "9.9.9-test",
+      host: "::ffff:127.0.0.1",
+      linkHost: "::ffff:127.0.0.1",
+    });
+    const response = await rawRequest(server.port, "/health", {
+      host: `[::ffff:7f00:1]:${server.port}`,
+    });
+    assert.equal(response.status, 200);
+  } finally {
+    await server?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("allowsAllHosts detects the '*' opt-out sentinel", () => {
   assert.equal(allowsAllHosts(["*"]), true);
   assert.equal(allowsAllHosts([" * "]), true);
@@ -1388,7 +1426,9 @@ test("allowsAllHosts detects the '*' opt-out sentinel", () => {
 
 test("serve rejects fast when the bind host is unavailable", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const previousAllowRemote = process.env.LUXE_ALLOW_REMOTE;
   try {
+    process.env.LUXE_ALLOW_REMOTE = "1";
     await assert.rejects(
       serve({
         port: 0,
@@ -1402,6 +1442,132 @@ test("serve rejects fast when the bind host is unavailable", async () => {
       },
     );
   } finally {
+    if (previousAllowRemote === undefined) delete process.env.LUXE_ALLOW_REMOTE;
+    else process.env.LUXE_ALLOW_REMOTE = previousAllowRemote;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("serve refuses a remote bind before listening unless explicitly allowed", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const previousAllowRemote = process.env.LUXE_ALLOW_REMOTE;
+  try {
+    delete process.env.LUXE_ALLOW_REMOTE;
+    await assert.rejects(
+      serve({
+        port: 0,
+        stateFile: path.join(dir, "state.json"),
+        host: "192.0.2.1",
+        allowedHosts: ["*"],
+      }),
+      /LUXE_ALLOW_REMOTE=1/,
+    );
+  } finally {
+    if (previousAllowRemote === undefined) delete process.env.LUXE_ALLOW_REMOTE;
+    else process.env.LUXE_ALLOW_REMOTE = previousAllowRemote;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("authorized remote binding warning reaches stderr and server.log with every exposure", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  try {
+    let stderr = "";
+    const stateFile = path.join(dir, "nested-state", "state.json");
+    const warning = remoteBindingWarning("0.0.0.0");
+    await emitRemoteBindingWarning({
+      host: "0.0.0.0",
+      stateFile,
+      stderr: {
+        write: (text) => {
+          stderr += text;
+          return true;
+        },
+      },
+    });
+
+    const log = await readFile(path.join(path.dirname(stateFile), "server.log"), "utf8");
+    for (const phrase of [
+      "REMOTE BINDING WARNING",
+      "file exposure",
+      "agent instruction injection",
+      "forged agent replies",
+      "session ending",
+      "server shutdown",
+    ]) {
+      assert.match(warning, new RegExp(phrase, "i"));
+      assert.match(stderr, new RegExp(phrase, "i"));
+      assert.match(log, new RegExp(phrase, "i"));
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("remote warning is not duplicated when stderr already targets server.log", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const logPath = path.join(dir, "server.log");
+  const stderr = createWriteStream(logPath, { flags: "a", mode: 0o600 });
+  try {
+    await new Promise((resolve, reject) => {
+      stderr.once("open", resolve);
+      stderr.once("error", reject);
+    });
+    await emitRemoteBindingWarning({
+      host: "0.0.0.0",
+      stateFile: path.join(dir, "state.json"),
+      stderr,
+    });
+    await new Promise((resolve, reject) => {
+      stderr.end(resolve);
+      stderr.once("error", reject);
+    });
+    const log = await readFile(logPath, "utf8");
+    assert.equal(log.match(/LUXE REMOTE BINDING WARNING/g)?.length, 1);
+  } finally {
+    stderr.destroy();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("serve emits the remote warning before an authorized listener starts", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const previousAllowRemote = process.env.LUXE_ALLOW_REMOTE;
+  process.env.LUXE_ALLOW_REMOTE = "1";
+  let server;
+  try {
+    server = await serve({
+      port: 0,
+      stateFile: path.join(dir, "state.json"),
+      host: "0.0.0.0",
+    });
+    assert.match(await readFile(path.join(dir, "server.log"), "utf8"), /LUXE REMOTE BINDING WARNING/);
+  } finally {
+    if (previousAllowRemote === undefined) delete process.env.LUXE_ALLOW_REMOTE;
+    else process.env.LUXE_ALLOW_REMOTE = previousAllowRemote;
+    await server?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("authorized remote binding refuses before listen when server.log cannot be written", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const blockedDirectory = path.join(dir, "not-a-directory");
+  await writeFile(blockedDirectory, "block");
+  const previousAllowRemote = process.env.LUXE_ALLOW_REMOTE;
+  process.env.LUXE_ALLOW_REMOTE = "1";
+  try {
+    await assert.rejects(
+      serve({
+        port: 0,
+        stateFile: path.join(blockedDirectory, "state.json"),
+        host: "192.0.2.1",
+      }),
+      (error) => ["EEXIST", "ENOTDIR"].includes(/** @type {NodeJS.ErrnoException} */ (error).code || ""),
+    );
+  } finally {
+    if (previousAllowRemote === undefined) delete process.env.LUXE_ALLOW_REMOTE;
+    else process.env.LUXE_ALLOW_REMOTE = previousAllowRemote;
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -1467,6 +1633,7 @@ test("layout warnings wake the same long-poll feedback channel as human prompts"
           {
             selector: "html",
             kind: "page-horizontal-overflow",
+            axis: "horizontal",
             overflowPx: 12,
             viewportWidth: 720,
             severity: "error",
@@ -1484,8 +1651,8 @@ test("layout warnings wake the same long-poll feedback channel as human prompts"
         {
           selector: "html",
           kind: "page-horizontal-overflow",
+          axis: "horizontal",
           overflowPx: 12,
-          viewportWidth: 720,
           severity: "error",
           persistent: false,
         },
@@ -1497,7 +1664,7 @@ test("layout warnings wake the same long-poll feedback channel as human prompts"
   }
 });
 
-test("warning-only layout observations do not wake the long-poll feedback channel", async () => {
+test("invalid layout observations are rejected and do not wake the long-poll feedback channel", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
   const artifact = path.join(dir, "artifact.html");
   await writeFile(artifact, "<!doctype html><html><body></body></html>");
@@ -1527,7 +1694,8 @@ test("warning-only layout observations do not wake the long-poll feedback channe
       }),
     });
 
-    assert.deepEqual(await response.json(), { status: "recorded", layout_warnings: 0 });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /layout_warnings/);
     const poll = await pollRequest(base, artifact, { timeoutMs: 25 }).then((res) => res.json());
     assert.deepEqual(poll, { status: "waiting" });
   } finally {
