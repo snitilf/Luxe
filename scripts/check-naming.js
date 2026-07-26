@@ -12,8 +12,9 @@ const BANNED = [
   ["ht-ml", ".app"].join(""),
 ];
 
-// Files where an upstream identifier legitimately survives. Exactly these.
-const CARVE_OUTS = new Set(["LICENSE", "THIRD-PARTY-NOTICES.md", ".github/workflows/no-mistakes-required.yml"]);
+// Files where an upstream identifier legitimately survives, because the MIT licence
+// requires the copyright notice to be retained. Exactly these.
+const CARVE_OUTS = new Set(["LICENSE", "THIRD-PARTY-NOTICES.md"]);
 
 const BINARY_EXTENSIONS = /\.(woff2?|ttf|otf|png|jpe?g|gif|webp|ico|zip|gz|tgz)$/i;
 
