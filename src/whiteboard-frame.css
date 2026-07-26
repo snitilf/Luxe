@@ -38,6 +38,32 @@ body {
   height: 100%;
 }
 
+/* Scrollbars, matching the chrome. This is a separate document in a sandboxed
+   frame, so it does not inherit the chrome's stylesheet and would otherwise be
+   the one surface still showing the OS default. Excalidraw's own scrollable
+   panels are inside this document and pick these up. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: var(--text-control);

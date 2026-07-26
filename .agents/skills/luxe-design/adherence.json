@@ -612,6 +612,24 @@
       "group": "Chrome-only surfaces"
     },
     {
+      "name": "--scrollbar-thumb",
+      "value": "#9c8b7a",
+      "kind": "color",
+      "group": "Chrome-only surfaces"
+    },
+    {
+      "name": "--scrollbar-thumb-hover",
+      "value": "#463527",
+      "kind": "color",
+      "group": "Chrome-only surfaces"
+    },
+    {
+      "name": "--scrollbar-size",
+      "value": "10px",
+      "kind": "length",
+      "group": "Chrome-only surfaces"
+    },
+    {
       "name": "--scrim",
       "value": "rgba(33, 30, 23, 0.4)",
       "kind": "color",

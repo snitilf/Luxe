@@ -37,6 +37,12 @@
 :root {
   --bar-h: 56px;
   --panel-w: 360px;
+  /* The conversation column's single inset and vertical rhythm. Every region in the
+   * panel - heading, chat, pills, composer - measures from these, so the column has
+   * one spacing system instead of four near-identical ones. */
+  --panel-inset: 16px;
+  --panel-gap: 16px;
+  --panel-gap-tight: 8px;
 }
 
 * {
@@ -63,6 +69,40 @@ body {
 ::selection {
   background: var(--gold-wash);
   color: var(--ink-1);
+}
+
+/* ---- Scrollbars --------------------------------------------------------
+ * Two mechanisms because no single one is supported everywhere: the standard
+ * properties drive Firefox and recent Chromium, the -webkit- pseudo-elements
+ * drive Safari and older Chromium. Both name the same tokens, so they cannot
+ * drift into two different scrollbars.
+ *
+ * The thumb is inset with a transparent border and background-clip rather than
+ * sized down, which keeps the hit target the full track width while the visible
+ * handle stays slim. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 :focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring);
@@ -409,11 +449,17 @@ body {
   min-width: 0;
   min-height: 0;
 }
+/* One inset and one rhythm for the whole column. All four regions already shared a
+ * 16px horizontal inset; what drifted was the vertical spacing, and the heading used
+ * a margin on a flex item where its neighbours used padding - two mechanisms doing
+ * one job, which is what made the panel read as very slightly off rather than
+ * visibly wrong. */
 .panel h2 {
   font-size: var(--text-control);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
-  margin: 16px 16px 8px;
+  margin: 0;
+  padding: var(--panel-gap) var(--panel-inset) var(--panel-gap-tight);
   flex: 0 0 auto;
 }
 .panel-scroll {
@@ -431,7 +477,7 @@ body {
   flex: 0 0 auto;
   min-height: 0;
   overflow: visible;
-  padding: 0 16px 12px;
+  padding: 0 var(--panel-inset) var(--panel-gap-tight);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -505,7 +551,7 @@ body {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  padding: 0 16px 12px;
+  padding: 0 var(--panel-inset) var(--panel-gap-tight);
   flex: 0 0 auto;
 }
 .annotation-pills:empty {
@@ -659,8 +705,8 @@ body {
 /* ---- Composer ---------------------------------------------------------- */
 .composer {
   display: grid;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: var(--panel-gap-tight);
+  padding: var(--panel-gap-tight) var(--panel-inset) var(--panel-gap);
   border-top: var(--stroke-hair) solid var(--hair);
   background: var(--surface-1);
   min-width: 0;

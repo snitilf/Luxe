@@ -194,6 +194,17 @@
    * in the palette sections above. */
   --toggle-track-off: #d5cfc0;
   --toggle-knob: #ffffff;
+
+  /* Scrollbars. The default OS scrollbar is the one piece of grey-blue chrome the
+   * system never got to state an opinion about, and it sits inside every panel.
+   * The thumb is the cocoa muted against the paper rather than the dark fill at
+   * full strength: a scrollbar is a persistent, always-visible affordance, and
+   * cocoa at full weight next to a hairline border reads as a UI element rather
+   * than a handle. The hover state is the dark fill, so the control resolves to
+   * the real brand colour on contact. */
+  --scrollbar-thumb: #9c8b7a;
+  --scrollbar-thumb-hover: #463527;
+  --scrollbar-size: 10px;
   --scrim: rgba(33, 30, 23, 0.4);
   --shadow-modal: 0 18px 48px rgba(33, 30, 23, 0.14);
   --ended-opacity: 0.45;

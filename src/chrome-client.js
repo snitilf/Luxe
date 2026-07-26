@@ -87,6 +87,11 @@ let lastScroll = { x: 0, y: 0 };
 let copyHintTimer;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let sendHintTimer;
+// Who last wrote the send hint. Three writers share that one line - the empty-composer
+// nudge, send status/errors, and the "agent is working" reason - and they have different
+// priorities, so the line records its owner instead of being guessed at from its text.
+/** @type {"nudge" | "status" | "working" | null} */
+let sendHintOwner = null;
 // The live event stream, held here rather than only in the const at the bottom of the
 // file so `markSessionEnded` can close it without reaching into the boot section.
 /** @type {EventSource | null} */
@@ -242,17 +247,48 @@ function render() {
   scrollPanelToBottom();
 }
 
+const WORKING_SEND_REASON = "Waiting for the agent to finish before sending.";
+
+// Both send buttons are disabled while the agent is working, which is deliberate - but it
+// used to give no reason at all, so the UI simply stopped responding and the reviewer was
+// left to guess. The reason goes on `title` for a pointer, on `aria-describedby` (wired in
+// the markup) for a screen reader, and into the existing live region so it is visible
+// without hovering anything.
 function updateSendState() {
-  sendButton.disabled = ended || agentPresence === "working";
+  const waitingOnAgent = !ended && agentPresence === "working";
+  sendButton.disabled = ended || waitingOnAgent;
   sendAndEndButton.disabled = sendButton.disabled;
+
+  const reason = waitingOnAgent ? WORKING_SEND_REASON : "";
+  for (const button of [sendButton, sendAndEndButton]) {
+    if (reason) button.title = reason;
+    else button.removeAttribute("title");
+  }
+
+  // The hint is shared with the empty-composer nudge and with send errors, and those
+  // matter more than explaining a greyed button. Ownership is tracked explicitly rather
+  // than inferred from `hidden` or from the current text: both are things another writer
+  // can change, which would let this quietly stop showing - or, worse, let it overwrite
+  // a failure the reviewer still needs to read.
+  if (waitingOnAgent && (sendHintOwner === null || sendHintOwner === "working")) {
+    clearTimeout(sendHintTimer);
+    sendHint.textContent = WORKING_SEND_REASON;
+    sendHint.hidden = false;
+    sendHintOwner = "working";
+  } else if (!waitingOnAgent && sendHintOwner === "working") {
+    sendHint.hidden = true;
+    sendHintOwner = null;
+  }
 }
 
 function showSendHint() {
   sendHint.textContent = defaultSendHintText;
   sendHint.hidden = false;
+  sendHintOwner = "nudge";
   clearTimeout(sendHintTimer);
   sendHintTimer = setTimeout(() => {
     sendHint.hidden = true;
+    sendHintOwner = null;
   }, 2600);
   chatInput.focus();
 }
@@ -261,11 +297,13 @@ function showSendStatus(text) {
   clearTimeout(sendHintTimer);
   sendHint.textContent = text;
   sendHint.hidden = false;
+  sendHintOwner = "status";
 }
 
 function hideSendHint() {
   clearTimeout(sendHintTimer);
   sendHint.hidden = true;
+  sendHintOwner = null;
 }
 
 function setMenuOpen(button, menu, open) {

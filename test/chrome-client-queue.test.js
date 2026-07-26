@@ -91,6 +91,9 @@ async function createChromeHarness({
       setAttribute(name, value) {
         this[name] = String(value);
       },
+      removeAttribute(name) {
+        delete this[name];
+      },
       addEventListener(type, handler) {
         listeners.set(type, handler);
       },
@@ -130,6 +133,12 @@ async function createChromeHarness({
     return el;
   }
 
+  // These four ship with the `hidden` attribute in createChromeHtml. The fake defaulted
+  // every element to visible, which let a bug hide: code gated on `sendHint.hidden` never
+  // ran under test because the hint looked visible from boot.
+  for (const id of ["sendHint", "presenceBanner", "endedChip", "layoutIssueBanner"]) {
+    element(id).hidden = true;
+  }
   element("luxe-session").textContent = JSON.stringify(sessionData);
   const frame = element("artifact");
   frame.dataset.artifactSrc = artifactSrc;
@@ -2069,4 +2078,52 @@ test("ending tells the artifact the session is over, not that annotation is off"
   // SDK disables it while annotation mode is ON.
   const annotationOff = chrome.postedToFrame.filter((m) => m.type === "luxe:setAnnotationMode" && m.enabled === false);
   assert.equal(annotationOff.length, 0, "the end is not signalled by turning annotation off");
+});
+
+// P6: the send buttons are disabled while the agent works, which is intended - but the
+// disabled state used to give no reason at all, so the panel just stopped responding.
+test("the disabled send buttons say why while the agent is working", async () => {
+  const chrome = await createChromeHarness();
+  const presence = chrome.eventSource().listeners.get("agent-presence");
+  const send = chrome.element("send");
+  const sendAndEnd = chrome.element("sendAndEnd");
+  const hint = chrome.element("sendHint");
+
+  presence({ data: JSON.stringify({ state: "listening" }) });
+  assert.equal(send.disabled, false);
+  assert.equal(send.title, undefined, "no reason is offered while sending is possible");
+
+  presence({ data: JSON.stringify({ state: "working" }) });
+  assert.equal(send.disabled, true);
+  assert.equal(sendAndEnd.disabled, true);
+  assert.match(send.title, /Waiting for the agent/);
+  assert.match(sendAndEnd.title, /Waiting for the agent/);
+  assert.equal(hint.hidden, false, "the reason is visible without hovering");
+
+  presence({ data: JSON.stringify({ state: "listening" }) });
+  assert.equal(send.disabled, false);
+  assert.equal(send.title, undefined, "the reason is withdrawn once sending works again");
+  assert.equal(hint.hidden, true);
+});
+
+test("the working reason never overwrites a send error", async () => {
+  const chrome = await createChromeHarness({ fetchImpl: async () => ({ ok: false, status: 413 }) });
+  const presence = chrome.eventSource().listeners.get("agent-presence");
+  presence({ data: JSON.stringify({ state: "listening" }) });
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Keep this queued", selector: "h1", tag: "annotation" },
+  });
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+  await flushPromises();
+
+  const hint = chrome.element("sendHint");
+  assert.match(hint.textContent, /not sent/i);
+
+  // The agent going back to work must not replace the failure the reviewer needs to read.
+  presence({ data: JSON.stringify({ state: "working" }) });
+  assert.match(hint.textContent, /not sent/i, "the send error survived the presence change");
 });

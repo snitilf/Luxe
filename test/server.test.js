@@ -720,9 +720,20 @@ test("chrome disables sending only while working or ended", async () => {
 
   assert.match(js, /let agentPresence = "waiting"/);
   assert.match(js, /function updateSendState\(\)/);
-  assert.match(js, /sendButton\.disabled = ended \|\| agentPresence === "working"/);
+  assert.match(js, /const waitingOnAgent = !ended && agentPresence === "working"/);
+  assert.match(js, /sendButton\.disabled = ended \|\| waitingOnAgent/);
   assert.match(js, /sendAndEndButton\.disabled = sendButton\.disabled/);
   assert.doesNotMatch(js, /hasContent/);
+
+  // P6: the gate is deliberate, but it used to be silent. A disabled control that gives
+  // no reason reads as a broken one.
+  assert.match(js, /Waiting for the agent to finish before sending\./);
+  assert.match(js, /button\.title = reason/);
+  // The reason must never overwrite a send error or the empty-composer nudge. Ownership
+  // of the shared hint line is tracked, not guessed from its text or its hidden state.
+  assert.match(js, /let sendHintOwner = null/);
+  assert.match(js, /sendHintOwner === null \|\| sendHintOwner === "working"/);
+  assert.match(js, /sendHintOwner = "status"/);
 });
 
 test("sending with an empty composer nudges instead of blocking", async () => {
@@ -744,14 +755,19 @@ test("composer offers two always-visible top-level send actions", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const css = await chromeCssSource();
 
-  assert.match(html, /class="button" id="send">Send to agent</);
+  assert.match(html, /class="button" id="send" aria-describedby="sendHint">Send to agent</);
   assert.match(html, /class="button button-ghost" id="sendAndEnd"[^<]*>.*Send &amp; End</);
+  // The hint and the caption sit ABOVE the button row, so the buttons are the last thing
+  // in the panel and do not shift down when the hint appears.
   assert.match(
     html,
-    /<div class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first\.<\/div><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button">.*<button class="button" id="send">Send to agent<\/button><\/div>/,
+    /<div class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first\.<\/div><p class="send-caption" id="sendCaption">.*<\/p><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button" aria-describedby="sendCaption sendHint">.*<button class="button" id="send" aria-describedby="sendHint">Send to agent<\/button><\/div>/,
   );
   // Send & End is a ghost button and carries the 14px caption the spec requires.
-  assert.match(html, /<p class="send-caption">Send &amp; End delivers the feedback and closes the session\.<\/p>/);
+  assert.match(
+    html,
+    /<p class="send-caption" id="sendCaption">Send &amp; End delivers the feedback and closes the session\.<\/p>/,
+  );
   assert.match(css, /\.send-caption\{[^}]*font-size:var\(--text-label\)/);
   assert.match(css, /\.send-caption\{[^}]*color:var\(--ink-2\)/);
   assert.match(css, /\.button\{[^}]*background:var\(--dark-fill\)/);
