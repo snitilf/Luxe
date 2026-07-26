@@ -1,8 +1,12 @@
-// Release config gate: `release-as` is a first-release pin, not a one-shot.
-// It applies on every release-please run, so once the pinned version has
-// actually shipped it must be deleted or every future release stays stuck
-// there. This gate stays silent while the pin is still ahead of the released
-// version, and fails once the pin has been consumed.
+// Release config gate: a config `release-as` is a standing pin, not a
+// one-shot. It applies on every release-please run, so once the pinned
+// version has shipped it holds every future release at that version. For a
+// one-time version override, use a `Release-As: x.y.z` commit footer instead,
+// which release-please consumes exactly once and which leaves nothing behind
+// in the tree. This gate fails when a config pin is strictly behind the
+// released version - definitely stale. A pin equal to the manifest is allowed
+// because the release PR and its tag legitimately carry that state, and this
+// gate runs inside their CI.
 // Also checks that package.json and the manifest agree on the current version,
 // since release-please keeps them in sync and any drift means a release will
 // publish a version nobody expects.
@@ -44,13 +48,14 @@ for (const [path, entry] of Object.entries(config.packages ?? {})) {
   if (released === undefined) continue; // not bootstrapped yet, pin is still doing its job
 
   const order = compareVersions(pin, released);
-  const consumed = order === null ? pin === released : order <= 0;
+  const stale = order !== null && order < 0;
 
-  if (consumed) {
+  if (stale) {
     failures.push(
       `${CONFIG_PATH}: packages["${path}"]["release-as"] is "${pin}", but ${MANIFEST_PATH} already ` +
-        `reports "${released}" as released. The pin has been consumed. Delete the "release-as" line ` +
-        `so release-please resumes computing versions from conventional commits.`,
+        `reports "${released}" as released. The pin is stale and will hold every future release at ` +
+        `"${pin}". Delete the "release-as" line; for a one-time version override use a ` +
+        `"Release-As: x.y.z" commit footer instead.`,
     );
   }
 }
