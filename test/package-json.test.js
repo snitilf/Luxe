@@ -20,6 +20,7 @@ test("check script runs all verification commands", async () => {
     "npm run typecheck",
     "npm test",
     "npm run naming",
+    "npm run release-config",
   ]);
 });
 
