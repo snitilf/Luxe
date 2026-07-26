@@ -520,7 +520,7 @@ body {
 }
 .pill {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   max-width: 100%;
   border: var(--stroke-hair) dashed var(--strong);
@@ -540,14 +540,59 @@ body {
   flex: none;
   display: flex;
   color: currentColor;
+  margin-top: 2px;
 }
-.pill-preview {
-  display: block;
+.pill-fields {
+  display: flex;
   flex: 1;
   min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+.pill-context {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 6px;
+  line-height: var(--leading-tight);
+}
+.pill-preview {
+  color: var(--ink-1);
+  line-height: var(--leading-body);
+  overflow-wrap: anywhere;
+}
+.pill-text {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.pill-selector {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-mono);
+  overflow-wrap: anywhere;
+}
+.pill-selector code {
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
   overflow: hidden;
+  clip: rect(0, 0, 0, 0);
   white-space: nowrap;
-  text-overflow: ellipsis;
+  border: 0;
+}
+.pill-tag {
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  padding: 1px 6px;
 }
 .pill-close {
   display: flex;
@@ -571,45 +616,44 @@ body {
 }
 
 /* Tooltip: dark fill, per the component table. */
-.pill-tooltip {
-  display: none;
-  position: static;
-  z-index: 5;
+.pill-target-details {
   width: 100%;
   margin-top: 8px;
   border-radius: var(--radius-inner);
-  background: var(--dark-fill);
-  color: var(--dark-fill-text);
-  padding: 10px 12px;
+  border: var(--stroke-hair) solid var(--hair);
+  background: var(--surface-2);
+  color: var(--ink-1);
   font-size: var(--text-label);
-  box-shadow: var(--shadow-modal);
 }
-.tooltip-label {
+.pill-target-details summary {
+  cursor: pointer;
+  padding: 7px 10px;
+  color: var(--ink-2);
+  font-weight: var(--weight-medium);
+}
+.pill-target-details dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 10px 10px;
+}
+.pill-target-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(84px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.pill-target-details dt {
   font-size: var(--text-label);
   font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-micro);
-  text-transform: uppercase;
-  color: var(--dark-fill-text);
-  opacity: 0.75;
-  margin: 0 0 4px;
+  color: var(--ink-2);
 }
-.pill-tooltip-target {
+.pill-target-details dd {
+  min-width: 0;
+  margin: 0;
   font-family: var(--font-mono);
   font-size: var(--text-label);
   letter-spacing: var(--tracking-mono);
-  border-radius: var(--radius-nav);
-  padding: 6px 8px;
-  margin-bottom: 8px;
-  background: var(--dark-fill-hover);
   overflow-wrap: anywhere;
-}
-.pill-tooltip-prompt {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.pill-wrap:hover .pill-tooltip,
-.pill-wrap:focus-within .pill-tooltip {
-  display: block;
 }
 
 /* ---- Composer ---------------------------------------------------------- */

@@ -26,6 +26,30 @@ const ARTIFACT_HTML = `<!doctype html><html><body>
 
 const PNG_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const MIB = 1024 * 1024;
+
+function sceneWithSerializedBytes(byteLength) {
+  const base = { elements: [], appState: {}, files: {}, padding: "" };
+  const fixedBytes = Buffer.byteLength(JSON.stringify(base));
+  return { ...base, padding: "x".repeat(byteLength - fixedBytes) };
+}
+
+function pngDataUrlOfDecodedBytes(byteLength) {
+  return `data:image/png;base64,${Buffer.alloc(byteLength).toString("base64")}`;
+}
+
+function whiteboardPromptTarget(scenePath, previewPath, diagramIndex = 0) {
+  return {
+    type: "excalidraw-scene",
+    diagramIndex,
+    diagramId: `mermaid-${diagramIndex + 1}`,
+    sourceHash: "source-hash",
+    scenePath,
+    previewPath,
+    imageFallback: false,
+    stats: { added: 1, removed: 0, moved: 0, relabeled: 0, drawn: 0 },
+  };
+}
 
 async function startWhiteboardServer() {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-wb-server-"));
@@ -50,10 +74,12 @@ async function startWhiteboardServer() {
   }).then((res) => res.json());
   return {
     dir,
+    assetsDir,
     // The session store canonicalizes the artifact path, and on macOS the temp
     // dir is a symlink, so kept files land under the resolved path.
     realDir: await realpath(dir),
     base,
+    artifact,
     key: opened.key,
     server,
     sameOrigin: { "content-type": "application/json", origin: base },
@@ -64,21 +90,33 @@ async function startWhiteboardServer() {
   };
 }
 
+function pollOnce(ctx, timeoutMs = 0) {
+  return fetch(`${ctx.base}/api/poll`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: ctx.artifact, timeoutMs }),
+  }).then((response) => response.json());
+}
+
 test("isWhiteboardWriteApiPath matches only whiteboard write routes", () => {
-  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/0"), true);
-  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/12/feedback-files"), true);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/0", "PUT"), true);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/12/feedback-files", "POST"), true);
   // The kept-copy route carries a full-resolution PNG data URL, so it needs the
   // 20 MB body limit exactly like the other whiteboard writes.
-  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/3/save-to-machine"), true);
-  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/3/save-to-elsewhere"), false);
-  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/prompts"), false);
-  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/9999"), false);
-  assert.equal(isWhiteboardWriteApiPath("/api/BAD/whiteboard/0"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/3/save-to-machine", "POST"), true);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/0", "POST"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/0", "GET"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/3/feedback-files", "PUT"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/3/save-to-machine", "GET"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/3/save-to-elsewhere", "POST"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/prompts", "POST"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/9999", "PUT"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/BAD/whiteboard/0", "PUT"), false);
   // The index pattern is the canonical decimal form the routes accept, so no
   // path the routes will reject can claim the 20 MB body cap.
-  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/007"), false);
-  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/0x10"), false);
-  assert.equal(isWhiteboardWriteApiPath("/whiteboard-frame"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/007", "PUT"), false);
+  assert.equal(isWhiteboardWriteApiPath("/api/0123456789abcdef/whiteboard/0x10", "PUT"), false);
+  assert.equal(isWhiteboardWriteApiPath("/whiteboard-frame", "GET"), false);
 });
 
 test("createWhiteboardFrameHtml loads only whiteboard-assets resources", () => {
@@ -313,6 +351,590 @@ test("feedback-files writes the .excalidraw and PNG sidecars and returns their p
   }
 });
 
+test("prompt batches reject only whiteboard targets outside the current session", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/1/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "B", type: "ellipse" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    const validTarget = {
+      type: "excalidraw-scene",
+      diagramIndex: 1,
+      diagramId: "mermaid-2",
+      sourceHash: "source-hash",
+      scenePath,
+      previewPath,
+      imageFallback: false,
+      stats: { added: 1, removed: 0, moved: 0, relabeled: 0, drawn: 0 },
+    };
+    const hostileTarget = { ...validTarget, scenePath: "/etc/passwd", previewPath: "" };
+
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          { prompt: "Keep the human message", tag: "message", text: "Freeform message" },
+          { prompt: "Read this file", tag: "whiteboard", target: hostileTarget },
+          { prompt: "Apply the diagram edit", tag: "whiteboard", target: validTarget },
+        ],
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      status: "partial",
+      pending_prompts: 2,
+      accepted_prompt_indices: [0, 2],
+      rejected_prompts: [{ index: 1, code: "invalid_whiteboard_target" }],
+      session_ended: false,
+    });
+
+    const feedback = await pollOnce(ctx);
+    assert.deepEqual(
+      feedback.prompts.map((prompt) => prompt.prompt),
+      ["Keep the human message", "Apply the diagram edit"],
+    );
+    assert.equal(
+      feedback.prompts.some((prompt) => prompt.target?.scenePath === "/etc/passwd"),
+      false,
+    );
+    assert.equal(feedback.session_ended, undefined);
+    assert.deepEqual(await pollOnce(ctx), { status: "waiting" });
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("default prompt routes reject oversized top-level context without mutating the queue", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const oversizedSnapshot = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        domSnapshot: "x".repeat(300 * 1024),
+        prompts: [{ prompt: "Must remain unsent", text: "Heading", selector: "h1", tag: "annotation" }],
+      }),
+    });
+    assert.equal(oversizedSnapshot.status, 413);
+    assert.equal((await pollOnce(ctx)).status, "waiting");
+
+    const oversizedBatch = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        prompts: Array.from({ length: 101 }, (_, index) => ({
+          prompt: `Prompt ${index}`,
+          text: "",
+          selector: "",
+          tag: "message",
+        })),
+      }),
+    });
+    assert.equal(oversizedBatch.status, 413);
+    assert.equal((await pollOnce(ctx)).status, "waiting");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("a 1.5-million-character prompt is rejected locally while valid batch neighbors deliver", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        prompts: [
+          { prompt: "Valid human message", text: "Freeform message", selector: "", tag: "message" },
+          { prompt: "x".repeat(1_500_000), text: "", selector: "", tag: "message" },
+        ],
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      status: "partial",
+      pending_prompts: 1,
+      accepted_prompt_indices: [0],
+      rejected_prompts: [{ index: 1, code: "prompt_too_large" }],
+      session_ended: false,
+    });
+    const feedback = await pollOnce(ctx);
+    assert.deepEqual(
+      feedback.prompts.map((prompt) => prompt.prompt),
+      ["Valid human message"],
+    );
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("prompt and context limits count UTF-8 bytes rather than JavaScript characters", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const exactPrompt = "é".repeat((16 * 1024) / 2);
+    const oversizedPrompt = `${exactPrompt}é`;
+    const exactContext = "é".repeat((4 * 1024) / 2);
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        prompts: [
+          { prompt: exactPrompt, text: exactContext, selector: "", tag: "message" },
+          { prompt: oversizedPrompt, text: "", selector: "", tag: "message" },
+          { prompt: "Oversized context", text: `${exactContext}é`, selector: "", tag: "message" },
+        ],
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).rejected_prompts, [
+      { index: 1, code: "prompt_too_large" },
+      { index: 2, code: "prompt_too_large" },
+    ]);
+    const feedback = await pollOnce(ctx);
+    assert.equal(Buffer.byteLength(feedback.prompts[0].prompt, "utf8"), 16 * 1024);
+    assert.equal(Buffer.byteLength(feedback.prompts[0].text, "utf8"), 4 * 1024);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("prompt targets are a bounded closed union with exact-limit positive controls", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const validPrompt = {
+      prompt: "p".repeat(16 * 1024),
+      text: "t".repeat(4 * 1024),
+      selector: "s".repeat(512),
+      tag: "message",
+      target: {
+        type: "text-range",
+        text: "t".repeat(4 * 1024),
+        selector: "s".repeat(512),
+        start: {
+          selector: "s".repeat(512),
+          path: Array.from({ length: 64 }, (_, index) => index),
+          offset: Number.MAX_SAFE_INTEGER,
+        },
+        end: { selector: "s".repeat(512), path: [], offset: 0 },
+      },
+    };
+    const invalidTargets = [
+      { type: "unknown", payload: "hidden" },
+      {
+        type: "mermaid-node",
+        diagramId: "flow",
+        nodeId: "A",
+        label: "A",
+        selector: "svg#flow > g#A",
+        hidden: "not allowed",
+      },
+      {
+        type: "text-range",
+        text: "Selected",
+        selector: "p",
+        start: { selector: "p", path: Array.from({ length: 65 }, () => 0), offset: 0 },
+        end: { selector: "p", path: [], offset: 0 },
+      },
+      {
+        type: "text-range",
+        text: "Selected",
+        selector: "p",
+        start: { selector: "p", path: [0], offset: -1 },
+        end: { selector: "p", path: [], offset: 0 },
+      },
+    ];
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        prompts: [
+          validPrompt,
+          ...invalidTargets.map((target, index) => ({
+            prompt: `Invalid ${index}`,
+            text: "",
+            selector: "",
+            tag: "annotation",
+            target,
+          })),
+        ],
+      }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.accepted_prompt_indices, [0]);
+    assert.deepEqual(body.rejected_prompts, [
+      { index: 1, code: "invalid_prompt" },
+      { index: 2, code: "invalid_prompt" },
+      { index: 3, code: "prompt_too_large" },
+      { index: 4, code: "invalid_prompt" },
+    ]);
+    const feedback = await pollOnce(ctx);
+    assert.equal(feedback.prompts[0].prompt.length, 16 * 1024);
+    assert.equal(feedback.prompts[0].text.length, 4 * 1024);
+    assert.equal(feedback.prompts[0].selector.length, 512);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("default-route exact batch and snapshot limits remain accepted", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const prompts = Array.from({ length: 100 }, (_, index) => ({
+      prompt: `Prompt ${index}`,
+      text: "",
+      selector: "",
+      tag: "message",
+    }));
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({ prompts, domSnapshot: "x".repeat(128 * 1024) }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.accepted_prompt_indices.length, 100);
+    const feedback = await pollOnce(ctx);
+    assert.equal(feedback.prompts.length, 100);
+    assert.equal(Buffer.byteLength(feedback.dom_snapshot), 128 * 1024);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("default-route context paths, reply text, and channel identifiers are bounded", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const oversizedPath = "x".repeat(4 * 1024 + 1);
+    /** @type {Array<[string, Record<string, unknown>]>} */
+    const boundedPathRequests = [
+      ["/api/sessions", { file: oversizedPath }],
+      ["/api/poll", { file: oversizedPath, timeoutMs: 0 }],
+      ["/api/end", { file: oversizedPath }],
+    ];
+    for (const [pathname, body] of boundedPathRequests) {
+      const response = await fetch(`${ctx.base}${pathname}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 413, pathname);
+    }
+
+    const exactReply = await fetch(`${ctx.base}/api/${ctx.key}/agent-reply`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({ text: "x".repeat(4 * 1024) }),
+    });
+    assert.equal(exactReply.status, 200);
+    const oversizedReply = await fetch(`${ctx.base}/api/${ctx.key}/agent-reply`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({ text: "x".repeat(4 * 1024 + 1) }),
+    });
+    assert.equal(oversizedReply.status, 413);
+
+    const channel = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard-channel`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({ token: "x".repeat(513) }),
+    });
+    assert.equal(channel.status, 413);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("an all-rejected whiteboard batch does not wake polling", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        prompts: [
+          {
+            prompt: "Read a caller path",
+            tag: "whiteboard",
+            target: {
+              type: "excalidraw-scene",
+              diagramIndex: 1,
+              scenePath: "/etc/passwd",
+              previewPath: "",
+            },
+          },
+          {
+            prompt: "Use an aliased whiteboard type",
+            tag: "whiteboard",
+            target: {
+              type: "excalidraw_scene",
+              diagramIndex: 1,
+              scenePath: "/etc/passwd",
+              previewPath: "",
+            },
+          },
+          {
+            prompt: "Hide a path on a text range",
+            tag: "annotation",
+            target: {
+              type: "text-range",
+              text: "x",
+              selector: "p",
+              start: { selector: "p", path: [0], offset: 0 },
+              end: { selector: "p", path: [0], offset: 1 },
+              scene_path: "/etc/passwd",
+            },
+          },
+        ],
+      }),
+    });
+
+    assert.deepEqual(await response.json(), {
+      status: "rejected",
+      pending_prompts: 0,
+      accepted_prompt_indices: [],
+      rejected_prompts: [
+        { index: 0, code: "invalid_whiteboard_target" },
+        { index: 1, code: "invalid_whiteboard_target" },
+        { index: 2, code: "invalid_whiteboard_target" },
+      ],
+      session_ended: false,
+    });
+    assert.deepEqual(await pollOnce(ctx), { status: "waiting" });
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("all-valid whiteboard send-and-end keeps feedback files readable for polling", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "A", type: "rectangle" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    const pollPromise = pollOnce(ctx, 5000);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          {
+            prompt: "Apply the whiteboard edit",
+            tag: "whiteboard",
+            target: {
+              type: "excalidraw-scene",
+              diagramIndex: 0,
+              diagramId: "mermaid-1",
+              sourceHash: "source-hash",
+              scenePath,
+              previewPath,
+              imageFallback: false,
+              stats: { added: 1, removed: 0, moved: 0, relabeled: 0, drawn: 0 },
+            },
+          },
+        ],
+      }),
+    });
+    const result = await response.json();
+
+    assert.equal(result.session_ended, true);
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+    const feedback = await pollPromise;
+    assert.equal(feedback.session_ended, true);
+    assert.equal(feedback.prompts[0].target.scenePath, scenePath);
+    assert.equal(JSON.parse(await readFile(feedback.prompts[0].target.scenePath, "utf8")).type, "excalidraw");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("queued ended-session whiteboard feedback survives server restart until polling", async () => {
+  const ctx = await startWhiteboardServer();
+  let restarted;
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "A", type: "rectangle" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          {
+            prompt: "Apply the queued edit",
+            tag: "whiteboard",
+            target: whiteboardPromptTarget(scenePath, previewPath),
+          },
+        ],
+      }),
+    });
+    await ctx.server.done;
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+
+    restarted = await serve({
+      port: 0,
+      stateFile: path.join(ctx.dir, "state.json"),
+      version: "9.9.9-test",
+      whiteboardAssetsDir: ctx.assetsDir,
+    });
+    const restartedBase = `http://127.0.0.1:${restarted.port}`;
+    const feedback = await fetch(`${restartedBase}/api/poll`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: ctx.artifact, timeoutMs: 0 }),
+    }).then((response) => response.json());
+
+    assert.equal(feedback.prompts[0].target.scenePath, scenePath);
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+  } finally {
+    await restarted?.close();
+    await ctx.close();
+  }
+});
+
+test("ending with a later message preserves an earlier queued whiteboard target", async () => {
+  const ctx = await startWhiteboardServer();
+  let restarted;
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "A", type: "rectangle" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        prompts: [
+          {
+            prompt: "Apply the earlier whiteboard edit",
+            tag: "whiteboard",
+            target: whiteboardPromptTarget(scenePath, previewPath),
+          },
+        ],
+      }),
+    });
+    const ending = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [{ prompt: "A later human message", tag: "message", text: "Freeform message" }],
+      }),
+    }).then((response) => response.json());
+
+    assert.equal(ending.session_ended, true);
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+    await ctx.server.done;
+    restarted = await serve({
+      port: 0,
+      stateFile: path.join(ctx.dir, "state.json"),
+      version: "9.9.9-test",
+      whiteboardAssetsDir: ctx.assetsDir,
+    });
+    const feedback = await fetch(`http://127.0.0.1:${restarted.port}/api/poll`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: ctx.artifact, timeoutMs: 0 }),
+    }).then((response) => response.json());
+    assert.deepEqual(
+      feedback.prompts.map((prompt) => prompt.prompt),
+      ["Apply the earlier whiteboard edit", "A later human message"],
+    );
+    assert.equal(JSON.parse(await readFile(feedback.prompts[0].target.scenePath, "utf8")).type, "excalidraw");
+  } finally {
+    await restarted?.close();
+    await ctx.close();
+  }
+});
+
+test("an all-rejected repeat cannot delete already-queued ended whiteboard feedback", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "A", type: "rectangle" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    const otherArtifact = path.join(ctx.dir, "other.html");
+    await writeFile(otherArtifact, "<!doctype html><html><body>Other session</body></html>");
+    await fetch(`${ctx.base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: otherArtifact }),
+    });
+    await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          {
+            prompt: "Apply the queued edit",
+            tag: "whiteboard",
+            target: whiteboardPromptTarget(scenePath, previewPath),
+          },
+        ],
+      }),
+    });
+
+    const repeated = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          {
+            prompt: "Hostile repeat",
+            tag: "whiteboard",
+            target: { type: "excalidraw-scene", diagramIndex: 0, scenePath: "/etc/passwd" },
+          },
+        ],
+      }),
+    }).then((response) => response.json());
+
+    assert.equal(repeated.status, "rejected");
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+    const feedback = await pollOnce(ctx);
+    assert.equal(feedback.prompts[0].target.scenePath, scenePath);
+  } finally {
+    await ctx.close();
+  }
+});
+
 // The same-origin guard on this route is the only thing stopping a hostile page the user
 // visits from writing arbitrary scene files and PNGs into the state directory through the
 // loopback server. Upstream covered the whiteboard PUT but never this route.
@@ -408,6 +1030,156 @@ test("whiteboard write routes accept payloads beyond the default 2mb JSON cap", 
       body: JSON.stringify({ source_hash: "big", scene: bigScene }),
     });
     assert.equal(whiteboardResponse.status, 200);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("wrong-method whiteboard paths remain under the default 2mb parser", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({ padding: "x".repeat(3 * MIB) }),
+    });
+    assert.equal(response.status, 413);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("all three 20mb routes enforce the 8 MiB scene boundary", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const oversizedScene = sceneWithSerializedBytes(8 * MIB + 1);
+    const requests = [
+      fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0`, {
+        method: "PUT",
+        headers: ctx.sameOrigin,
+        body: JSON.stringify({ source_hash: "hash", text_metrics_version: 0, scene: oversizedScene, baseline: null }),
+      }),
+      fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+        method: "POST",
+        headers: ctx.sameOrigin,
+        body: JSON.stringify({ scene: oversizedScene, pngDataUrl: "" }),
+      }),
+      fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/save-to-machine`, {
+        method: "POST",
+        headers: ctx.sameOrigin,
+        body: JSON.stringify({ scene: oversizedScene, pngDataUrl: "" }),
+      }),
+    ];
+    const responses = await Promise.all(requests);
+    assert.deepEqual(
+      responses.map((response) => response.status),
+      [413, 413, 413],
+    );
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("whiteboard baseline and PNG caps apply beneath the 20mb parser", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const oversizedBaseline = sceneWithSerializedBytes(8 * MIB + 1);
+    const baseline = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0`, {
+      method: "PUT",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        source_hash: "hash",
+        text_metrics_version: 0,
+        scene: { elements: [], appState: {}, files: {} },
+        baseline: oversizedBaseline,
+      }),
+    });
+    assert.equal(baseline.status, 413);
+
+    const oversizedPng = pngDataUrlOfDecodedBytes(8 * MIB + 1);
+    for (const suffix of ["feedback-files", "save-to-machine"]) {
+      const response = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/${suffix}`, {
+        method: "POST",
+        headers: ctx.sameOrigin,
+        body: JSON.stringify({ scene: { elements: [], appState: {}, files: {} }, pngDataUrl: oversizedPng }),
+      });
+      assert.equal(response.status, 413, suffix);
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("whiteboard count, hash, metrics, and PNG shape limits reject without truncation", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const tooManyElements = Array.from({ length: 10_001 }, (_, index) => ({ id: String(index) }));
+    const tooManyFiles = Object.fromEntries(
+      Array.from({ length: 1_001 }, (_, index) => [String(index), { id: String(index) }]),
+    );
+    const cases = [
+      {
+        body: { source_hash: "x", scene: { elements: tooManyElements, files: {} } },
+        status: 413,
+      },
+      {
+        body: { source_hash: "x", scene: { elements: [], files: tooManyFiles } },
+        status: 413,
+      },
+      {
+        body: { source_hash: "x".repeat(257), scene: { elements: [], files: {} } },
+        status: 413,
+      },
+      {
+        body: { source_hash: "x", text_metrics_version: -1, scene: { elements: [], files: {} } },
+        status: 400,
+      },
+    ];
+    for (const item of cases) {
+      const response = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0`, {
+        method: "PUT",
+        headers: ctx.sameOrigin,
+        body: JSON.stringify(item.body),
+      });
+      assert.equal(response.status, item.status);
+    }
+
+    const malformedPng = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({ scene: { elements: [], files: {} }, pngDataUrl: "data:image/png;base64,***" }),
+    });
+    assert.equal(malformedPng.status, 400);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("whiteboard exact limits remain accepted", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const exactScene = sceneWithSerializedBytes(8 * MIB);
+    const put = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0`, {
+      method: "PUT",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        source_hash: "x".repeat(256),
+        text_metrics_version: Number.MAX_SAFE_INTEGER,
+        scene: exactScene,
+        baseline: { elements: Array.from({ length: 10_000 }, () => ({})) },
+      }),
+    });
+    assert.equal(put.status, 200);
+
+    const feedback = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [], files: Object.fromEntries(Array.from({ length: 1_000 }, (_, i) => [i, {}])) },
+        pngDataUrl: pngDataUrlOfDecodedBytes(8 * MIB),
+      }),
+    });
+    assert.equal(feedback.status, 200);
   } finally {
     await ctx.close();
   }

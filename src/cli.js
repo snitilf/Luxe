@@ -15,10 +15,22 @@ import {
   exportWarningSummaries,
   splitExportWarnings,
 } from "./export-bundle.js";
-import { clientHost, defaultPort, ensureStateDir, hostForUrl, serverLogFile, stateDir, stateFile } from "./paths.js";
+import { LAYOUT_WARNING_DESCRIPTIONS, normalizeLayoutWarningReport } from "./layout-warnings.js";
+import {
+  bindHost,
+  clientHost,
+  defaultPort,
+  ensureStateDir,
+  hostForUrl,
+  isLoopbackHost,
+  remoteBindingAllowed,
+  serverLogFile,
+  stateDir,
+  stateFile,
+} from "./paths.js";
 import { findPlaybook, listPlaybooks, playbookIds, PLAYBOOK_ROUTER_HELP } from "./playbooks.js";
 import { PIERRE_DIFFS_ASSET_FILE, PIERRE_DIFFS_SHA384 } from "./pierre-diffs-vendor.js";
-import { resolveExportAssetPath, serve } from "./server.js";
+import { remoteBindingRefusalMessage, remoteBindingWarning, resolveExportAssetPath, serve } from "./server.js";
 import { canonicalFile, sessionKey, SessionStore } from "./session-store.js";
 import {
   listSessionWhiteboards,
@@ -160,7 +172,7 @@ export function createHomeOutput({ bin, sessions, includeSessions = true, agent 
       "Run `luxe <html-file>` to open or resume a Luxe Editor session. If the user explicitly ended the session from the browser, this refuses to reopen it and explains why instead of reopening uninvited - pass `--reopen` only when the user asks for further review or something important needs their visual attention",
       "Unless the user specifies another location, create HTML artifacts in the current working directory under `.luxe/`",
       "Luxe serves the html file through a local express.js server. If your html needs to reference other filesystem assets such as images, CSS, fonts, and local scripts, copy them into the same directory as the HTML file, then reference them with relative paths from that directory. Never prepend `/` to those asset paths - root paths won't work",
-      `Run \`luxe poll <html-file>\` to wait for user feedback or browser-proven severe layout failures. It long-polls and stays silent until the user sends feedback, ends the session, or the real browser proves meaningful content is inaccessible or unusable, so leave it running - never kill it. Repair and re-check every returned layout failure before involving the human; cosmetic, intentional, transient, tiny, and uncertain observations stay silent. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}`,
+      `Run \`luxe poll <html-file>\` to wait for user feedback or Luxe-reported layout warnings. It long-polls and stays silent until the user sends feedback, ends the session, or Luxe reports a warning, so leave it running - never kill it. Verify every reported locator in the browser before repairing it, then re-check before involving the human; cosmetic, intentional, transient, tiny, and uncertain observations stay silent. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}`,
       "Every Send from the browser also delivers `dom_snapshot`, a text outline of the rendered artifact, so you have page context for the feedback - it captures whatever the artifact renders as text, including anything sensitive shown in a table, code block, or config listing",
       'Rendered Mermaid diagrams in `.mermaid` containers stay themed Mermaid in the page and carry a quiet Edit affordance that opens them as a full-viewport, editable Excalidraw whiteboard - flowchart, sequence, class, ER, and state diagrams convert to editable shapes; other types open as an image to draw on. Scenes autosave locally; when a reload detects a changed Mermaid source, the reviewer explicitly chooses to re-convert and discard saved edits or keep editing the saved scene. Standalone and exported copies still render plain Mermaid. Queue feedback adds a prompt to the Conversation panel; when the user sends it, poll returns a tag "whiteboard" prompt carrying a bounded edit summary plus local scenePath (.excalidraw JSON) and previewPath (PNG) files - read the summary first, open the files only when needed, then apply the edits by updating the Mermaid source in the artifact (never try to write the scene back)',
       "Whiteboards are EPHEMERAL: every scene is deleted when the session ends, when the idle server shuts down, or by the sweep at the next server start. Keeping one is explicit - the user presses Save to machine in the whiteboard, or asks you to, and you run `luxe save-diagram <html-file> [--diagram <n>]`, which writes <artifact-basename>.wb<n>.excalidraw and .png next to the artifact and exempts that scene from cleanup",
@@ -222,7 +234,7 @@ export async function copyCodeAssetsCommand(args) {
 export function createOpenOutput({ file, url, status, agent = "generic" }) {
   return {
     session: { file, url, status },
-    next_step: `Do not respond to the user just yet. Now you must run \`luxe poll ${file}\`. This command long-polls until the user sends feedback, ends the session, or the real browser proves a severe layout failure through the in-iframe audit, and it stays silent the whole time - that is normal, never kill it. If layout_warnings arrive, follow the poll response's next_step: repair and re-check the inaccessible or unusable content before involving the human. Cosmetic, intentional, transient, tiny, and uncertain observations stay silent. Do not pass --timeout-ms during normal agent use. ${pollExecutionGuidance({ agent })} After applying feedback, run \`luxe poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms to show your response in Luxe Editor and wait for more feedback. If the user ends the session, stop polling and do not reopen it by re-running \`luxe ${file}\` unless the user asks for further review or something genuinely important needs their visual attention - deliver routine updates directly in this conversation instead. When reopening is warranted, run \`luxe ${file} --reopen\`.`,
+    next_step: `Do not respond to the user just yet. Now you must run \`luxe poll ${file}\`. This command long-polls until the user sends feedback, ends the session, or Luxe reports a layout warning through the in-iframe audit, and it stays silent the whole time - that is normal, never kill it. If layout_warnings arrive, follow the poll response's next_step: verify each reported locator in the browser before repairing it, then re-check before involving the human. Cosmetic, intentional, transient, tiny, and uncertain observations stay silent. Do not pass --timeout-ms during normal agent use. ${pollExecutionGuidance({ agent })} After applying feedback, run \`luxe poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms to show your response in Luxe Editor and wait for more feedback. If the user ends the session, stop polling and do not reopen it by re-running \`luxe ${file}\` unless the user asks for further review or something genuinely important needs their visual attention - deliver routine updates directly in this conversation instead. When reopening is warranted, run \`luxe ${file} --reopen\`.`,
   };
 }
 
@@ -282,7 +294,12 @@ async function pollCommand(args) {
   if (agentReply) {
     await postJson(`${baseUrl}/api/${sessionKey(absolute)}/agent-reply`, { text: agentReply });
   }
-  const timeoutMs = flagValue(args, "--timeout-ms");
+  const timeoutText = flagValue(args, "--timeout-ms");
+  const hasTimeout = timeoutText !== null;
+  const timeoutMs = hasTimeout ? Number(timeoutText) : null;
+  if (hasTimeout && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2147483647)) {
+    throw new AxiError("--timeout-ms must be a non-negative safe integer", "VALIDATION_ERROR");
+  }
   // The indefinite poll looks hung from the agent's side (stdout stays empty until the user
   // acts), so narrate the wait on stderr and leave re-run guidance behind if the agent's
   // harness kills the process anyway. stderr keeps the stdout JSON contract intact.
@@ -293,14 +310,14 @@ async function pollCommand(args) {
     process.stderr.write(`\n${pollInterruptedText(absolute)}\n`);
     process.exit(signal === "SIGINT" ? 130 : 143);
   };
-  if (!timeoutMs) {
+  if (!hasTimeout) {
     // Register before the banner write below: a harness that kills the poll as soon as the
     // banner appears can deliver the signal before the next statement runs, and without a
     // handler the default disposition exits silently with no re-run guidance.
     process.on("SIGINT", onPollSignal);
     process.on("SIGTERM", onPollSignal);
   }
-  const waitReporter = timeoutMs
+  const waitReporter = hasTimeout
     ? null
     : startPollWaitReporter({
         file: absolute,
@@ -313,13 +330,13 @@ async function pollCommand(args) {
       request: {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ file: absolute, ...(timeoutMs ? { timeoutMs } : {}) }),
+        body: JSON.stringify({ file: absolute, ...(hasTimeout ? { timeoutMs } : {}) }),
       },
     });
     return createPollOutput({ file: absolute, response, agent: detectInvokingAgent(process.env) });
   } finally {
     waitReporter?.stop();
-    if (!timeoutMs) {
+    if (!hasTimeout) {
       process.off("SIGINT", onPollSignal);
       process.off("SIGTERM", onPollSignal);
     }
@@ -378,11 +395,7 @@ export function createPollOutput({ file, response, agent = "generic" }) {
     throw new AxiError("No active Luxe Editor session for this file", "NOT_FOUND", [`Run \`luxe ${file}\` first`]);
   }
   if (response.status === "feedback") {
-    const layoutWarnings = Array.isArray(response.layout_warnings)
-      ? response.layout_warnings.filter(
-          (warning) => warning && String(warning.severity || "").toLowerCase() === "error",
-        )
-      : [];
+    const layoutWarnings = canonicalLayoutWarningsForAgent(response.layout_warnings);
     const sessionEnded = Boolean(response.session_ended);
     const endedBy = typeof response.ended_by === "string" ? response.ended_by : undefined;
     return {
@@ -409,6 +422,21 @@ export function createPollOutput({ file, response, agent = "generic" }) {
   };
 }
 
+function canonicalLayoutWarningsForAgent(value) {
+  if (!Array.isArray(value) || value.length > 50) return [];
+  const warnings = [];
+  for (const warning of value) {
+    try {
+      const normalized = normalizeLayoutWarningReport([warning])[0];
+      warnings.push({ ...normalized, persistent: warning?.persistent === true });
+    } catch {
+      // Poll responses ultimately come from local state, which can predate the current
+      // validator. Never let an invalid legacy warning reach agent-facing output.
+    }
+  }
+  return warnings;
+}
+
 function createFeedbackNextStep(file, layoutWarnings, sessionEnded, endedBy, prompts = [], agent = "generic") {
   const count = layoutWarnings.length;
   const whiteboardNote = prompts.some((prompt) => prompt && prompt.tag === "whiteboard")
@@ -418,8 +446,8 @@ function createFeedbackNextStep(file, layoutWarnings, sessionEnded, endedBy, pro
     const layoutNote =
       count > 0
         ? endedBy === "user"
-          ? `${count} proven severe layout failure${count === 1 ? "" : "s"} arrived alongside this final feedback. Repair the inaccessible or unusable content in ${file}, then open it directly at the affected viewport and confirm the content or control is visible and usable without reopening this ended Luxe session. `
-          : `${count} proven severe layout failure${count === 1 ? "" : "s"} arrived alongside this final feedback. Repair the inaccessible or unusable content in ${file}, then run \`luxe ${file}\` to open a fresh session and re-check the real-browser audit. `
+          ? `${reportedWarningsText(layoutWarnings)} These warnings arrived alongside this final feedback. Verify each reported locator in the browser before repairing it in ${file}, then open the artifact directly at the affected viewport and confirm the content or control is visible and usable without reopening this ended Luxe session. `
+          : `${reportedWarningsText(layoutWarnings)} These warnings arrived alongside this final feedback. Verify each reported locator in the browser before repairing it in ${file}, then run \`luxe ${file}\` to open a fresh session and re-check the audit. `
         : "";
     if (endedBy === "user") {
       const reopenNote =
@@ -435,13 +463,18 @@ function createFeedbackNextStep(file, layoutWarnings, sessionEnded, endedBy, pro
   return `${layoutPrefix}${whiteboardNote}Do not respond to the user just yet. Now you must run \`luxe poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms unless the user ended the session. The poll waits silently until the user sends more feedback, ends the session, or reports fresh layout_warnings - never kill it. ${pollExecutionGuidance({ agent })}`;
 }
 
-// Layout findings reach this path only after the browser has direct, stable evidence that
-// meaningful content or a required control is inaccessible or unusable. Cosmetic and uncertain
-// observations are discarded before storage, so every returned failure still requires repair.
-function layoutWarningsPrefix(file, layoutWarnings) {
+function reportedWarningsText(layoutWarnings) {
   const count = layoutWarnings.length;
-  const plural = count === 1 ? "" : "s";
-  return `${count} proven severe layout failure${plural} detected - repair the inaccessible or unusable content in ${file}, then re-check in the browser before involving the human. Luxe live-reloads the artifact automatically after you save, so you do not need to re-run \`luxe ${file}\` for this. `;
+  const summaries = layoutWarnings.map((warning) => {
+    const description =
+      LAYOUT_WARNING_DESCRIPTIONS[warning?.kind] || "Luxe reported a layout warning from its fixed warning set.";
+    return `${description} Locator: ${JSON.stringify(String(warning?.selector || ""))}.`;
+  });
+  return `${count} reported warning${count === 1 ? "" : "s"}. ${summaries.join(" ")}`;
+}
+
+function layoutWarningsPrefix(file, layoutWarnings) {
+  return `${reportedWarningsText(layoutWarnings)} Verify each reported locator in the browser before repairing it in ${file}, then re-check before involving the human. Luxe live-reloads the artifact automatically after you save, so you do not need to re-run \`luxe ${file}\` for this. `;
 }
 
 function createEndedNextStep(file, endedBy) {
@@ -631,6 +664,7 @@ async function designCommand() {
 async function serverCommand(args) {
   const port = Number(flagValue(args, "--port") || defaultPort());
   const debug = args.includes("--verbose") || process.env.LUXE_DEBUG === "1";
+  assertConfiguredRemoteBinding();
   const server = await serve({ port, stateFile: stateFile(), version: VERSION, debug });
   await server.done;
   return "";
@@ -807,6 +841,8 @@ function processOnPortMatchesLuxe(port) {
 
 async function startServer(port) {
   await ensureStateDir();
+  const { host, remoteBinding } = assertConfiguredRemoteBinding();
+  if (remoteBinding) process.stderr.write(`${remoteBindingWarning(host)}\n`);
   const entry = resolveServerEntry();
   let logFd = null;
   try {
@@ -821,6 +857,15 @@ async function startServer(port) {
   } finally {
     if (logFd !== null) closeSync(logFd);
   }
+}
+
+function assertConfiguredRemoteBinding() {
+  const host = bindHost();
+  const remoteBinding = !isLoopbackHost(host);
+  if (!remoteBindingAllowed(host)) {
+    throw new AxiError(remoteBindingRefusalMessage(host), "SERVER_ERROR");
+  }
+  return { host, remoteBinding };
 }
 
 // The detached server child must point at a node-executable entry that actually invokes
@@ -954,13 +999,13 @@ export function getCommandHelp(command, { agent = "generic" } = {}) {
 }
 
 function createTopLevelHelp({ agent = "generic" } = {}) {
-  return `luxe - Luxe Editor AXI\n\nUsage:\n  luxe\n  luxe <html-file> [--no-open] [--no-gate] [--reopen]\n  luxe poll <html-file> [--agent-reply "..."]\n  luxe end <html-file>\n  luxe export <html-file> [--out <path>]\n  luxe save-diagram <html-file> [--diagram <n>]\n  luxe copy-code-assets <html-file>\n  luxe stop\n  luxe playbook [playbook_id]\n  luxe design\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback, ends the session, or the browser proves a severe layout failure, staying silent while it waits - never kill it. Repair and re-check every returned layout failure before involving the human; cosmetic and uncertain observations are never returned. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
+  return `luxe - Luxe Editor AXI\n\nUsage:\n  luxe\n  luxe <html-file> [--no-open] [--no-gate] [--reopen]\n  luxe poll <html-file> [--agent-reply "..."]\n  luxe end <html-file>\n  luxe export <html-file> [--out <path>]\n  luxe save-diagram <html-file> [--diagram <n>]\n  luxe copy-code-assets <html-file>\n  luxe stop\n  luxe playbook [playbook_id]\n  luxe design\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback, ends the session, or Luxe reports a layout warning, staying silent while it waits - never kill it. Verify every reported locator in the browser before repairing it, then re-check before involving the human; cosmetic and uncertain observations are never returned. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
 }
 
 function createCommandHelp({ agent = "generic" } = {}) {
   return {
     open: `Usage: luxe <html-file> [--no-open] [--no-gate] [--reopen]\n\nOpen or resume a Luxe Editor review session for an HTML artifact. Use --no-open when you need to ensure the server/session exists without opening another browser window. Use --no-gate to skip the open-time layout curtain for this browser open. If the user explicitly ended the session from the browser, this refuses to reopen it and returns guidance instead - pass --reopen to force it open when the user asks for further review or something important needs their visual attention. Sessions ended by the agent (\`luxe end\`) reopen normally without the flag.\n`,
-    poll: `Usage: luxe poll <html-file> [--agent-reply "..."]\n\nThis command long-polls indefinitely for queued user prompts and browser-proven severe layout failures, then returns them to the agent as layout_warnings. It stays silent while it waits - that is normal, never kill it. Repair and re-check every returned layout failure before involving the human; cosmetic and uncertain observations are never returned. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} Use --agent-reply after applying prior feedback to display your response in Luxe Editor before waiting again. ${POLL_SEND_AND_END_RULE}\n`,
+    poll: `Usage: luxe poll <html-file> [--agent-reply "..."]\n\nThis command long-polls indefinitely for queued user prompts and Luxe-reported layout warnings returned as layout_warnings. It stays silent while it waits - that is normal, never kill it. Verify every reported locator in the browser before repairing it, then re-check before involving the human; cosmetic and uncertain observations are never returned. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} Use --agent-reply after applying prior feedback to display your response in Luxe Editor before waiting again. ${POLL_SEND_AND_END_RULE}\n`,
     end: `Usage: luxe end <html-file>\n\nEnd a Luxe Editor session as the agent. A session ended this way still reopens normally on the next \`luxe <html-file>\`, unlike a user ending it from the browser, which requires --reopen.\n`,
     export: `Usage: luxe export <html-file> [--out <path>]\n\nWrite a portable copy of an artifact: one HTML file with its LOCAL assets inlined (relative-path stylesheets, scripts, images, and fonts become inline <style>/<script> blocks and data URIs). Remote CDN/font references (https URLs) are left as links for the browser to load, so the file needs network to render those. Luxe makes no outbound requests - it only reads local files, confined to the artifact's directory. Defaults to writing <name>.export.html next to the source; pass --out to choose a path. The Luxe annotation SDK is never included in an export.\n`,
     stop: `Usage: luxe stop [--port <port>]\n\nShut down the background Luxe Editor server. The server also stops itself when no browser or poll has been connected for a while (LUXE_IDLE_TIMEOUT_MS, default 30m) and immediately when the last session ends with nothing connected.\n`,
@@ -968,7 +1013,7 @@ function createCommandHelp({ agent = "generic" } = {}) {
     playbook: `Usage: luxe playbook [playbook_id]\n\nList focused artifact guidance playbooks, or show one playbook by ID. Known IDs: diagram, table, comparison, plan, code, input.\n\n${PLAYBOOK_ROUTER_HELP}\n\nExamples:\n  luxe playbook\n  luxe playbook diagram\n  luxe playbook input\n`,
     "copy-code-assets": `Usage: luxe copy-code-assets <html-file>\n\nCopy the hash-checked browser bundle required by the code playbook beside an existing artifact. The local classic script is safe for \`luxe export\` to inline.\n`,
     design: `Usage: luxe design\n\nShow a copy-pasteable CDN snippet for Tailwind CSS browser runtime v4 + DaisyUI v5, the Luxe theme block that maps DaisyUI's semantic variables onto the Luxe tokens, Mermaid diagram tooling, the Luxe Shiki code theme, the chart palette and its labelling rule, a content-to-playbook router, an optional layout safety CSS snippet, plus technical reference for DaisyUI components. ${PLAYBOOK_ROUTER_HELP} Luxe artifacts stay portable HTML. This CDN snippet is the design fallback, not the default: inspect the subject project before falling back, and paste the layout safety CSS only when useful for dense nested grid/flex layouts, badges, wide fonts, or local media. ${DESIGN_PRIORITY_RULE}\n`,
-    server: `Usage: luxe server [--port 4387] [--verbose]\n\nRun the local Luxe Editor server. Pass --verbose (or set LUXE_DEBUG=1) to log session and watcher events to stderr. Detached server output is appended to ~/.luxe/server.log, or LUXE_STATE_DIR/server.log when set, for startup and crash diagnostics.\n\nLUXE_HOST sets the bind address (default 127.0.0.1; a wildcard 0.0.0.0 or :: binds every interface). Binding beyond loopback exposes an unauthenticated server that can read and serve arbitrary local files to anything that can reach it, so only do so on a trusted network. LUXE_LINK_HOST sets the hostname written into generated session links (default: the bind address, or loopback when bound to a wildcard). See README's Allowed hosts section for Host allowlisting and LUXE_ALLOWED_HOSTS. LUXE_NO_OPEN=1 (or --no-open) suppresses the local browser launch.\n`,
+    server: `Usage: luxe server [--port 4387] [--verbose]\n\nRun the local Luxe Editor server. Pass --verbose (or set LUXE_DEBUG=1) to log session and watcher events to stderr. Detached server output is appended to ~/.luxe/server.log, or LUXE_STATE_DIR/server.log when set, for startup and crash diagnostics.\n\nLUXE_HOST sets the bind address (default 127.0.0.1). Exact LUXE_ALLOW_REMOTE=1 is required whenever LUXE_HOST is non-loopback, including wildcard 0.0.0.0 or ::, LAN/WAN addresses, and hostnames. Remote binding exposes an unauthenticated server with file access and agent/session controls, so every authorized remote start warns on stderr and in server.log. LUXE_ALLOWED_HOSTS remains a DNS-rebinding allowlist and does not satisfy the remote-binding opt-in. LUXE_LINK_HOST sets the hostname written into generated session links (default: the bind address, or loopback when bound to a wildcard). LUXE_NO_OPEN=1 (or --no-open) suppresses the local browser launch.\n`,
   };
 }
 
