@@ -178,7 +178,8 @@ test("fonts are served with the woff2 MIME type and a CORS header", async () => 
 test("the packed tarball contains the fonts and their licences", () => {
   // --ignore-scripts: the build already ran (npm run check), and prepack would
   // rebuild the whole whiteboard bundle for a file listing.
-  const output = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+  const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+  const output = execFileSync(npmExecutable, ["pack", "--dry-run", "--json", "--ignore-scripts"], {
     cwd: new URL("..", import.meta.url),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],

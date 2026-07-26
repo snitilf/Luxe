@@ -176,11 +176,12 @@ async function seedScene(dir, key, index, { elements = [{ id: "A", type: "rectan
 }
 
 test("F1: a kept whiteboard lands next to the artifact under the diagram index", () => {
-  assert.equal(artifactWhiteboardBasename("/p/report.html"), "report");
-  assert.equal(artifactWhiteboardBasename("/p/multi.part.html"), "multi.part");
-  assert.deepEqual(savedWhiteboardPaths("/p/report.html", 2), {
-    scenePath: path.join("/p", "report.wb2.excalidraw"),
-    previewPath: path.join("/p", "report.wb2.png"),
+  const artifact = path.resolve("/p/report.html");
+  assert.equal(artifactWhiteboardBasename(artifact), "report");
+  assert.equal(artifactWhiteboardBasename(path.resolve("/p/multi.part.html")), "multi.part");
+  assert.deepEqual(savedWhiteboardPaths(artifact, 2), {
+    scenePath: path.join(path.dirname(artifact), "report.wb2.excalidraw"),
+    previewPath: path.join(path.dirname(artifact), "report.wb2.png"),
   });
 });
 
