@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.2.1...editeur-luxe-v0.2.2) (2026-07-26)
+
+
+### Bug Fixes
+
+* **docs:** ship the docs/ tree in the npm tarball and split the README ([#5](https://github.com/snitilf/Luxe/issues/5)) ([6c9d3fb](https://github.com/snitilf/Luxe/commit/6c9d3fbf24ca8be10c883eb215b05fa4888b1aed))
+
 ## [0.2.1](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.2.0...editeur-luxe-v0.2.1) (2026-07-26)
 
 
