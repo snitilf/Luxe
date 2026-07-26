@@ -2,10 +2,9 @@
 // privacy modes on the state directory. These are the behaviors a hostile page the user simply
 // visits would exercise, so every case here is written from that attacker's point of view.
 //
-// What this file does NOT claim: that artifact JavaScript is untrusted. It is trusted to the
-// level of the agent that wrote it and can send feedback through the documented
-// window.luxe API (see the trust model note in README.md). The guards here are about a
-// foreign page driving your session, which is a different threat.
+// Artifact JavaScript may queue feedback through window.luxe, but sending and ending require
+// chrome-owned human confirmation. The guards here also stop a foreign page from driving the
+// session through direct HTTP requests.
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

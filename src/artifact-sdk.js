@@ -771,14 +771,6 @@ export function createArtifactSdk(
     parent.postMessage({ type: "luxe:queuePrompt", prompt: item }, "*");
   }
 
-  function sendQueuedPrompts() {
-    parent.postMessage({ type: "luxe:sendQueuedPrompts" }, "*");
-  }
-
-  function endSession() {
-    parent.postMessage({ type: "luxe:endSession" }, "*");
-  }
-
   function snapshot() {
     const lines = [];
 
@@ -1620,8 +1612,7 @@ export function createArtifactSdk(
       '</div><textarea placeholder="' +
       placeholder +
       '"></textarea><div class="luxe-hint">Enter to queue &middot; ' +
-      (/Mac|iP(hone|ad|od)/.test(navigator.platform) ? "⌘" : "Ctrl") +
-      '+Enter to send now</div><div class="luxe-row"><button class="luxe-cancel" type="button">Cancel</button><button class="luxe-send" type="button">Queue</button></div>';
+      'Send from the Luxe conversation</div><div class="luxe-row"><button class="luxe-cancel" type="button">Cancel</button><button class="luxe-send" type="button">Queue</button></div>';
     root.appendChild(card);
 
     const left = Math.min(Math.max(12, rect.left), window.innerWidth - card.offsetWidth - 12);
@@ -1643,10 +1634,7 @@ export function createArtifactSdk(
     textarea.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
-        const sendNow = (event.ctrlKey || event.metaKey) && !!textarea.value.trim();
         sendButton.click();
-        // postMessage delivery is ordered, so the queued prompt lands before the send.
-        if (sendNow) sendQueuedPrompts();
       }
     });
     setTimeout(() => textarea.focus(), 0);
@@ -1654,8 +1642,6 @@ export function createArtifactSdk(
 
   /** @type {Window & { luxe?: unknown }} */ (window).luxe = {
     queuePrompt,
-    sendQueuedPrompts,
-    endSession,
     getQueuedPrompts: () => [],
     setStatus: (message) => parent.postMessage({ type: "luxe:status", message: String(message) }, "*"),
     snapshot,

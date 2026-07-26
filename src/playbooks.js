@@ -194,7 +194,7 @@ export const PLAYBOOKS = [
     structure: [
       "Make each decision surface visible: what is being chosen, what the options mean, and what happens next.",
       "Keep reversible selection state local in the artifact until the user explicitly submits that question.",
-      "Pair each question with a Submit or Queue answer control that sends exactly one prompt for the final answer.",
+      "Pair each question with a Submit or Queue answer control that queues exactly one prompt for the final answer.",
       "Show selected state separately from queued state so the user trusts what will be sent back.",
     ],
     design_rules: [
@@ -204,7 +204,7 @@ export const PLAYBOOKS = [
       "Put data-luxe-action only on custom (non-native) elements that should act like a feedback control - typically a styled div or span you made clickable - so Luxe does not annotate it and shows a pointer cursor instead.",
       "Use data-luxe-question on a question wrapper or pass queueKey when multiple pre-send updates should replace the prior unsent answer for the same question.",
       "Pass options such as tag, text, selector, target, data, queueKey, or element when they help the agent understand exactly what the user chose.",
-      "Call window.luxe.sendQueuedPrompts() only when the control should immediately send committed feedback instead of waiting for the user to press Send to Agent.",
+      "Artifact controls may queue feedback only. The human must confirm transmission with Send to Agent or Send & End in the Luxe conversation chrome.",
       "Make queued prompts specific enough that the agent can act without asking a follow-up question.",
       "Keep native browser controls accessible and readable on mobile.",
     ],
@@ -219,7 +219,7 @@ export const PLAYBOOKS = [
       'A native single-choice question should submit the final value: `<form data-luxe-question="plan" onsubmit="event.preventDefault(); const choice = new FormData(event.currentTarget).get(\'plan\'); if (choice) window.luxe.queuePrompt(\'Use the \' + choice + \' plan\', { tag: \'choice\', text: \'Plan: \' + choice, element: event.currentTarget, data: { question: \'plan\', answer: choice } });"><label><input type="radio" name="plan" value="Starter"> Starter</label><label><input type="radio" name="plan" value="Pro"> Pro</label><button type="submit">Queue this answer</button></form>`.',
       "A custom choice UI should make option buttons update local state, then use a separate Queue answer button with data-luxe-action to queue the final selected value.",
       "Use window.luxe.queuePrompt for user intent, not internal analytics or UI-only state changes.",
-      "End input paths with an obvious way for the user to send feedback back to the agent.",
+      "End input paths by directing the user to confirm queued feedback from the Luxe conversation chrome.",
     ],
   },
 ];

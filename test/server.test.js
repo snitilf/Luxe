@@ -2858,13 +2858,14 @@ test("annotation card queues prompt on Enter and inserts newline on Shift+Enter"
   assert.match(js, /sendButton\.click\(\)/);
 });
 
-test("annotation card queues and sends immediately on Ctrl+Enter or Cmd+Enter", () => {
+test("annotation card only queues feedback and leaves sending to the chrome", () => {
   const js = createSdkJs("abc");
 
-  assert.match(js, /event\.ctrlKey \|\| event\.metaKey/);
-  assert.match(js, /sendQueuedPrompts\(\)/);
+  assert.doesNotMatch(js, /sendQueuedPrompts/);
+  assert.doesNotMatch(js, /luxe:endSession/);
+  assert.doesNotMatch(js, /endSession,/);
   assert.match(js, /class="luxe-hint"/);
-  assert.match(js, /\+Enter to send now/);
+  assert.match(js, /Send from the Luxe conversation/);
   assert.match(js, /\.luxe-annotation-card \.luxe-hint\{/);
 });
 
@@ -2874,7 +2875,7 @@ test("chrome client chat input sends on Enter and inserts newline on Shift+Enter
   assert.match(js, /chatInput\.addEventListener\(["']keydown["']/);
   assert.match(js, /event\.key === ["']Enter["'] && !event\.shiftKey/);
   assert.match(js, /event\.preventDefault\(\)/);
-  assert.match(js, /sendQueued\(\)/);
+  assert.match(js, /sendQueued\(false\)/);
 });
 
 test("chrome falls back to a default favicon and title when none are provided", () => {

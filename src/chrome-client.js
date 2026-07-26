@@ -318,19 +318,9 @@ document.addEventListener(
 
 // Snapshot-request ledger, half one. Artifact JS can postMessage to its parent whenever it
 // likes, so a `luxe:snapshot` message arriving is not evidence that the chrome asked for one.
-// Every chrome-initiated request is recorded here first; the handler below consumes exactly
-// one entry per snapshot it accepts and drops anything it did not ask for. The property this
-// buys is narrow and worth stating exactly: an unsolicited `luxe:snapshot` on its own cannot
-// drive a feedback POST, and a second one cannot overwrite the snapshot of a send already in
-// flight.
-//
-// It is NOT a barrier against artifact JS initiating a send, and must not be described as
-// one. `luxe:sendQueuedPrompts` is a documented product API (`window.luxe.sendQueuedPrompts`,
-// see the input playbook in src/playbooks.js) whose whole purpose is letting an artifact
-// control send committed feedback immediately; it calls sendQueued(), which records its own
-// request on this queue. So artifact JS can queue a prompt and send it with the page outline
-// attached, with no human click. That is by design: artifact JavaScript is written by the
-// same agent the feedback goes back to. See the trust model note in README.md.
+// Every chrome-owned Send or Send & End gesture records a request here first; the handler
+// below consumes exactly one entry per snapshot it accepts and drops anything it did not ask
+// for. Artifact messages can fill the queue, but cannot create a send request.
 function requestSnapshot() {
   snapshotRequests.push("submit");
   postToFrame({ type: "luxe:requestSnapshot" });
@@ -670,8 +660,8 @@ function resetFrame() {
 //
 //   1. Only the artifact iframe's own window may ask. `event.source` must be
 //      `frame.contentWindow`, the same gate every other artifact-to-chrome
-//      message already passes (`luxe:queuePrompt`, `luxe:endSession`), so the
-//      new message adds no reach the artifact did not already have.
+//      message already passes (`luxe:queuePrompt`, `luxe:toggleAnnotationMode`),
+//      so the new message adds no reach the artifact did not already have.
 //   2. Asking conveys no data and writes nothing. The message carries a single
 //      integer, which is range-checked here and then checked again against the
 //      Mermaid sources the SERVER extracted from the artifact file on disk. An
@@ -1142,12 +1132,8 @@ window.addEventListener("message", (event) => {
     enqueuePrompt(msg.prompt);
   }
   if (msg.type === "luxe:snapshot") {
-    // Snapshot-request ledger, half two: a snapshot with no outstanding request behind it was
-    // pushed by the artifact page on its own initiative, so drop it. Only a snapshot the
-    // chrome asked for may drive a feedback POST. Note what that does and does not mean: it
-    // means an unsolicited `luxe:snapshot` alone is inert, not that only a human can cause a
-    // send. The chrome also asks for a snapshot when the artifact calls the documented
-    // `luxe:sendQueuedPrompts` API below.
+    // Snapshot-request ledger, half two: a snapshot with no outstanding chrome request behind
+    // it was pushed by the artifact page on its own initiative, so drop it.
     if (snapshotRequests.length) {
       snapshotRequests.shift();
       pendingSnapshot = msg.snapshot || "";
@@ -1161,10 +1147,6 @@ window.addEventListener("message", (event) => {
     handleLayoutWarningsForGate(msg.layout_warnings);
     submitLayoutWarnings(msg.layout_warnings).catch(() => {});
   }
-  // Documented, intentional product API. `window.luxe.sendQueuedPrompts()` is what the input
-  // playbook tells artifact authors to call when a control should send committed feedback
-  // immediately instead of waiting for the human to press Send to Agent, so this path is a
-  // feature, not a gap. Do not "harden" it away: the in-page question pattern depends on it.
   // The Edit affordance the SDK draws over a rendered Mermaid diagram. This
   // message asks for a UI, nothing more: the index is range-checked here,
   // resolved against the server's own reading of the artifact file inside
@@ -1175,8 +1157,6 @@ window.addEventListener("message", (event) => {
     const index = validWhiteboardIndex(msg.diagramIndex);
     if (index !== null) openWhiteboardOverlay(index);
   }
-  if (msg.type === "luxe:sendQueuedPrompts") sendQueued();
-  if (msg.type === "luxe:endSession") endSession();
   if (msg.type === "luxe:toggleAnnotationMode") toggleAnnotationMode();
 });
 

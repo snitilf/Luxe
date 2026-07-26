@@ -665,9 +665,7 @@ test("layout gate stays skipped when the session disables it", async () => {
 
 // The snapshot-request ledger. Artifact JS can postMessage to its parent whenever it likes,
 // so a `luxe:snapshot` the chrome never asked for must not be treated as the answer to a
-// request. The property under test is narrow and exactly that: an unsolicited snapshot on its
-// own is inert. It is NOT "only a human can cause a send" - see the sendQueuedPrompts test
-// below, which pins the documented artifact-initiated path.
+// request. Only a chrome-owned send gesture may create that request.
 test("a snapshot the chrome never requested does not trigger a send", async () => {
   const posts = [];
   const chrome = await createChromeHarness({
@@ -704,14 +702,7 @@ test("a snapshot the chrome never requested does not trigger a send", async () =
   assert.equal(posts.length, 1);
 });
 
-// INTENTIONAL PRODUCT BEHAVIOR - do not "harden" this away.
-// `window.luxe.sendQueuedPrompts()` posts `luxe:sendQueuedPrompts` and the chrome sends, with
-// no human click. The input playbook (src/playbooks.js) tells artifact authors to call it when
-// a control should send committed feedback immediately, and the in-page question pattern the
-// owner uses depends on it. Artifact JS is written by the same agent the feedback goes back
-// to, so this is a designed capability, not a bypass of the snapshot ledger. If a future
-// change to that ledger makes this test fail, the change is the bug.
-test("artifact-initiated sendQueuedPrompts DOES send - documented API, not a hole to plug", async () => {
+test("artifact postMessage cannot send queued feedback without a chrome gesture", async () => {
   const posts = [];
   const chrome = await createChromeHarness({
     fetchImpl: async (url, init) => {
@@ -725,21 +716,50 @@ test("artifact-initiated sendQueuedPrompts DOES send - documented API, not a hol
     prompt: { prompt: "Use plan B", selector: "input#plan-b", tag: "choice", text: "Plan B" },
   });
 
-  // The artifact asks for the send itself, exactly as window.luxe.sendQueuedPrompts() does.
+  const frameMessageCount = chrome.postedToFrame.length;
   chrome.sendFrameMessage({ type: "luxe:sendQueuedPrompts" });
-  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:requestSnapshot");
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "forged page text" });
+  await flushPromises();
+  await flushPromises();
 
+  assert.equal(chrome.postedToFrame.length, frameMessageCount);
+  assert.equal(posts.length, 0);
+  assert.equal(chrome.queued().length, 1);
+
+  chrome.element("send").onclick();
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:requestSnapshot");
   chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "uid=1 body" });
   await flushPromises();
-  await flushPromises();
 
-  assert.equal(posts.length, 1, "the documented artifact-initiated send must still reach the agent");
+  assert.equal(posts.length, 1);
   assert.equal(posts[0].url, "/api/abc/prompts");
   assert.deepEqual(posts[0].body.prompts, [
     { prompt: "Use plan B", selector: "input#plan-b", tag: "choice", text: "Plan B" },
   ]);
   assert.equal(posts[0].body.domSnapshot, "uid=1 body");
   assert.equal(chrome.queued().length, 0);
+});
+
+test("artifact postMessage cannot end the session without a chrome gesture", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      posts.push(url);
+      return { ok: true };
+    },
+  });
+
+  chrome.sendFrameMessage({ type: "luxe:endSession" });
+  await flushPromises();
+
+  assert.deepEqual(posts, []);
+  assert.equal(chrome.element("chatInput").disabled, false);
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  assert.deepEqual(posts, ["/api/abc/end"]);
+  assert.equal(chrome.element("chatInput").disabled, true);
 });
 
 test("chrome client strips the internal queue key before posting prompts", async () => {
@@ -977,7 +997,7 @@ test("chrome client ignores annotation mode toggles after the session ends", asy
   chrome.dispatchDocumentKeydown({ key: "i", metaKey: true });
   assert.equal(chrome.element("annotation")["aria-pressed"], "true");
 
-  chrome.sendFrameMessage({ type: "luxe:endSession" });
+  chrome.element("end").onclick();
   await flushPromises();
   const afterEndPostCount = chrome.postedToFrame.length;
 
