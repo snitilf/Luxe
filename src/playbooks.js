@@ -140,13 +140,19 @@ export const PLAYBOOKS = [
 <div id="diff"></div>
 <script src="./${PIERRE_DIFFS_ASSET_FILE}"></script>
 <script>
-  const { File, FileDiff } = window.${PIERRE_DIFFS_GLOBAL};
+  const { File, FileDiff, registerCustomTheme } = window.${PIERRE_DIFFS_GLOBAL};
 
   // Inline the JSON \`luxe design\` prints as code_theme.shiki_theme_json, or load it
   // from a sibling file - the artifact must stay portable, so do not fetch it remotely.
   const luxeShikiTheme = { /* ...code_theme.shiki_theme_json... */ };
 
-  const options = { theme: luxeShikiTheme, themeType: "light", overflow: "wrap" };
+  // The bundle resolves themes by NAME through a registry: it does not accept a theme
+  // object on \`options.theme\`. Passing the JSON directly fails at render time with
+  // \`No valid theme loader registered for "undefined"\` and every block comes out
+  // unhighlighted. Register the theme once, then name it.
+  registerCustomTheme("luxe", () => Promise.resolve(luxeShikiTheme));
+
+  const options = { theme: "luxe", themeType: "light", overflow: "wrap" };
   const oldFile = {
     name: "src/greeting.ts",
     contents: "export function greet(name: string) {\\n  return \\"Hello \\" + name;\\n}\\n\\nconsole.log(greet(\\"Luxe\\"));\\n",
@@ -169,12 +175,13 @@ export const PLAYBOOKS = [
 
 </script>
 \`\`\``,
-      "Register the bespoke Luxe Shiki theme printed by `luxe design` (`code_theme.shiki_theme_json`) and name it in the `theme` option, replacing the GitHub pair above. It is built against the Luxe code plane, and every one of its syntax tokens is deep enough to survive on the added and removed diff tints.",
+      'Register the bespoke Luxe Shiki theme printed by `luxe design` (`code_theme.shiki_theme_json`) with `registerCustomTheme("luxe", () => Promise.resolve(theme))`, then pass the NAME as `theme: "luxe"`, exactly as the snippet above shows. The bundle resolves themes through a name registry and never accepts a theme object, so `theme: themeJson` renders every block unhighlighted. The Luxe theme is built against the Luxe code plane, and every one of its syntax tokens is deep enough to survive on the added and removed diff tints.',
       'Use FileDiff diffStyle: "split" for side-by-side review and diffStyle: "unified" for stacked reading; keep overflow: "wrap" unless horizontal alignment is essential.',
       "Use @pierre/diffs line annotations, selections, and headers when calling out specific lines so notes stay attached to code.",
     ],
     pitfalls: [
       "Do not render code as static screenshots, plain <pre> blocks, or markdown pasted into HTML.",
+      "Do not pass a theme object to `options.theme`. It fails as an unhandled async rejection *after* `render()` has already returned, so nothing throws where you can see it and the block simply comes out empty or unhighlighted. Register by name instead, and check the console before shipping a code artifact.",
       "Do not choose an arbitrary stock Shiki theme. Its palette will not match the Luxe code plane, and its pale syntax tokens wash out on the diff tints.",
       "Do not show huge unrelated files when a focused render range, parsed patch file, or grouped summary would be clearer.",
       "Do not separate a claim from the code lines that prove it.",
