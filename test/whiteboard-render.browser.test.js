@@ -58,6 +58,19 @@ function resultFromDump(html) {
   return null;
 }
 
+function isKilledChromeResult(error) {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "killed" in error &&
+    error.killed === true &&
+    "signal" in error &&
+    error.signal === "SIGKILL" &&
+    "stdout" in error &&
+    typeof error.stdout === "string"
+  );
+}
+
 test("real Excalidraw rendering keeps loaded-font labels inside their text bounds", { timeout: 30_000 }, async (t) => {
   const chrome = await chromePath();
   if (!chrome) {
@@ -109,21 +122,28 @@ test("real Excalidraw rendering keeps loaded-font labels inside their text bound
       if (!address || typeof address === "string") throw new Error("test server did not bind to a TCP port");
       const port = address.port;
       const profile = path.join(root, "chrome-profile");
-      const { stdout } = await execFileAsync(
-        chrome,
-        [
-          "--headless=new",
-          "--disable-gpu",
-          "--disable-dev-shm-usage",
-          "--no-sandbox",
-          `--user-data-dir=${profile}`,
-          "--run-all-compositor-stages-before-draw",
-          "--virtual-time-budget=8000",
-          "--dump-dom",
-          `http://127.0.0.1:${port}/`,
-        ],
-        { maxBuffer: 8 * 1024 * 1024, timeout: 18_000 },
-      );
+      const args = [
+        "--headless=new",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--no-sandbox",
+        `--user-data-dir=${profile}`,
+        "--run-all-compositor-stages-before-draw",
+        "--virtual-time-budget=8000",
+        "--dump-dom",
+        `http://127.0.0.1:${port}/`,
+      ];
+      let stdout;
+      try {
+        ({ stdout } = await execFileAsync(chrome, args, {
+          killSignal: "SIGKILL",
+          maxBuffer: 8 * 1024 * 1024,
+          timeout: 18_000,
+        }));
+      } catch (error) {
+        if (!isKilledChromeResult(error)) throw error;
+        stdout = error.stdout;
+      }
       const result = resultFromDump(stdout);
       assert.ok(result, "browser fixture did not report a result");
       assert.equal(result.pass, true, result.error);
