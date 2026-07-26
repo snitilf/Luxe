@@ -10,7 +10,7 @@ The [project README](../README.md) is the short version; everything below is the
 | [Reviewing artifacts](reviewing.md) | The human side: annotating, keyboard shortcuts, in-page forms, Mermaid whiteboards, ending a session |
 | [Writing artifacts](artifacts.md)   | The agent side: the injected SDK, local assets, the layout gate, and standalone export               |
 | [Configuration](configuration.md)   | Every environment variable, with defaults                                                            |
-| [Security](security.md)             | Trust model, network exposure, cross-origin defenses, and what is stored on disk                     |
+| [Security](security.md)             | Trust model, network exposure, payload boundaries, cross-origin defenses, and what is stored on disk |
 | [Built as an AXI](axi.md)           | What being an AXI means for how agents use Luxe                                                      |
 | [Development](development.md)       | Building from source and the verification commands                                                   |
 

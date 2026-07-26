@@ -21,23 +21,27 @@ Root-prefixed paths such as `/assets/logo.png` will not resolve through Luxe's a
 
 ## Open-time layout gate
 
-The browser chrome masks an artifact only while the real in-iframe audit checks for a stable, proven severe layout failure.
+The browser chrome masks an artifact while the in-iframe audit checks for a stable report from its fixed warning set.
 
-A severe failure notifies the agent through the `layout_warnings` poll path and keeps the curtain up until a clean reload, while cosmetic, intentional, transient, tiny, and uncertain observations stay silent.
+A reported warning notifies the agent through the `layout_warnings` poll path and keeps the curtain up until a clean reload, while cosmetic, intentional, transient, tiny, and uncertain observations stay silent.
 
-The user can click **Show anyway**, and a bounded safety timeout fails open without an issue banner when no severe failure has been proven.
+The user can click **Show anyway**, and a bounded safety timeout fails open without an issue banner when no warning has been reported.
 
 Pass `--no-gate` to skip the curtain for one browser open.
 
-## Layout failures
+## Layout warnings
 
-After fonts and finite animations settle, the injected SDK confirms severe failures from direct rendered evidence such as materially escaped meaningful content or required controls, clipped text fragments, viewport reachability, or near-total semantic occlusion.
+After fonts and finite animations settle, the injected SDK reports warnings from its fixed checks for materially escaped meaningful content or required controls, clipped text fragments, viewport reachability, and near-total semantic occlusion.
 
 Explicit ellipsis and line clamp, standard visually hidden accessibility text, intentional scrollers or masks, parent overhang, generic element scroll geometry, decorative overlap, and uncertain motion do not produce findings by themselves.
 
-Proven failures are returned from `luxe poll` in `layout_warnings` with `selector`, `kind`, `axis`, `overflowPx`, `viewportWidth`, `severity`, and `persistent`.
+Reported warnings are returned from `luxe poll` in `layout_warnings` with `selector`, `kind`, `axis`, `overflowPx`, `severity`, and server-computed `persistent`.
 
-Every returned failure should be fixed and rechecked before asking the human to review.
+`persistent` is `true` when the same finding was already delivered in a prior poll, so the agent can tell a fresh warning from one its last repair did not clear.
+
+The agent must verify every reported locator in the browser before repair, then recheck before asking the human to review.
+
+A single report carries at most 50 warnings, and a `selector` is at most 512 characters.
 
 ## Export
 

@@ -41,6 +41,12 @@ Every Send delivers a `dom_snapshot` alongside your prompts: a text outline of t
 It captures visible rendered text, including anything sensitive shown in a table, code block, or config listing, up to 2,000 nodes and 128 KiB.
 A capped snapshot ends with `[Luxe DOM snapshot truncated]`, and the snapshot is stored in the local state file until the agent's next poll collects it.
 
+Each queued item carries `prompt`, `text`, `selector`, `tag`, and a normalized `target`.
+The browser's own identifiers and queue bookkeeping are not sent.
+
+Before you send, the queued pill shows the prompt, the quoted text, the selector, and the tag inline, and puts the full `target` behind a disclosure you can open.
+So everything transmitted is inspectable in the chrome first.
+
 See [Security](security.md) for what that means for artifacts holding sensitive values.
 
 ## Live reload
@@ -75,7 +81,7 @@ That writes `<artifact-basename>.wb<n>.excalidraw` next to the artifact, plus th
 ## Agent presence
 
 The browser shows when no agent is listening.
-It keeps queued feedback and proven severe layout failures for the next successful `luxe poll` send even across reloads, and only blocks human sends while the agent is working on delivered feedback.
+It keeps queued feedback and reported layout warnings for the next successful `luxe poll` send even across reloads, and only blocks human sends while the agent is working on delivered feedback.
 The agent's reply (`--agent-reply`) concludes that work and re-enables sends.
 
 The no-timeout poll always writes an immediate stderr banner so it is visibly not hung.
