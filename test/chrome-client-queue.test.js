@@ -740,6 +740,38 @@ test("artifact postMessage cannot send queued feedback without a chrome gesture"
   assert.equal(chrome.queued().length, 0);
 });
 
+test("a chrome gesture authorizes only the prompts queued at confirmation time", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: init?.body ? JSON.parse(init.body) : null });
+      return { ok: true };
+    },
+  });
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Human reviewed this", selector: "h1", tag: "annotation", text: "Heading" },
+  });
+  chrome.element("send").onclick();
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Artifact added this later", selector: "body", tag: "annotation", text: "Page" },
+  });
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "uid=1 body" });
+  await flushPromises();
+
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0].body.prompts, [
+    { prompt: "Human reviewed this", selector: "h1", tag: "annotation", text: "Heading" },
+  ]);
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Artifact added this later"],
+  );
+});
+
 test("artifact postMessage cannot end the session without a chrome gesture", async () => {
   const posts = [];
   const chrome = await createChromeHarness({

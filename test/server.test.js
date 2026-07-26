@@ -580,7 +580,7 @@ test("the DOM-snapshot copy path is gone from the chrome", async () => {
   assert.doesNotMatch(js, /copyDomSnapshot/);
   assert.doesNotMatch(js, /requestSnapshot\("copy"\)/);
   // What must survive: the request/response snapshot flow that feeds every feedback POST.
-  assert.match(js, /function requestSnapshot\(\)/);
+  assert.match(js, /function requestSnapshot\(prompts, endAfter\)/);
   assert.match(js, /domSnapshot: pendingSnapshot/);
 });
 
@@ -591,8 +591,10 @@ test("chrome accepts a snapshot only against an outstanding request", async () =
   const js = await chromeClientSource();
 
   assert.match(js, /const snapshotRequests = \[\]/);
-  assert.match(js, /snapshotRequests\.push\("submit"\)/);
-  assert.match(js, /if \(snapshotRequests\.length\) \{\n {6}snapshotRequests\.shift\(\);/);
+  assert.match(js, /snapshotRequests\.push\(\{ prompts, endAfter \}\)/);
+  assert.match(js, /const request = snapshotRequests\.shift\(\)/);
+  assert.match(js, /pendingSubmitPrompts = request\.prompts/);
+  assert.match(js, /const prompts = pendingSubmitPrompts/);
   // The upstream `|| "submit"` fallback defeated the queue: an unrequested snapshot fell
   // through to the send branch. It must not come back.
   assert.doesNotMatch(js, /snapshotRequests\.shift\(\) \|\| /);

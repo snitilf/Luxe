@@ -56,6 +56,7 @@ let annotation = sessionData.annotationDefault === true;
 let ended = false;
 let agentPresence = "waiting";
 let pendingSnapshot = "";
+let pendingSubmitPrompts = [];
 const layoutGateEnabled = sessionData.layoutGateEnabled !== false;
 const configuredLayoutGateMaxHoldMs = Number(sessionData.layoutGateMaxHoldMs);
 const layoutGateMaxHoldMs =
@@ -318,11 +319,11 @@ document.addEventListener(
 
 // Snapshot-request ledger, half one. Artifact JS can postMessage to its parent whenever it
 // likes, so a `luxe:snapshot` message arriving is not evidence that the chrome asked for one.
-// Every chrome-owned Send or Send & End gesture records a request here first; the handler
-// below consumes exactly one entry per snapshot it accepts and drops anything it did not ask
-// for. Artifact messages can fill the queue, but cannot create a send request.
-function requestSnapshot() {
-  snapshotRequests.push("submit");
+// Every chrome-owned Send or Send & End gesture records the exact prompt batch it authorizes;
+// the handler below consumes exactly one entry per snapshot it accepts and drops anything it
+// did not ask for. Artifact messages can fill the queue, but cannot create or expand a send.
+function requestSnapshot(prompts, endAfter) {
+  snapshotRequests.push({ prompts, endAfter });
   postToFrame({ type: "luxe:requestSnapshot" });
 }
 
@@ -344,8 +345,7 @@ function sendQueued(endAfter) {
   }
   hideSendHint();
 
-  if (endAfter) endAfterSubmit = true;
-  requestSnapshot();
+  requestSnapshot(queued.slice(), endAfter);
 }
 
 async function submitQueued() {
@@ -380,7 +380,7 @@ async function submitQueued() {
 }
 
 async function submitQueuedOnce() {
-  const prompts = queued.slice();
+  const prompts = pendingSubmitPrompts;
   const shouldEndSession = endAfterSubmit;
   const body = { prompts: prompts.map(stripInternalPromptFields), domSnapshot: pendingSnapshot };
   if (shouldEndSession) body.endSession = true;
@@ -1135,8 +1135,10 @@ window.addEventListener("message", (event) => {
     // Snapshot-request ledger, half two: a snapshot with no outstanding chrome request behind
     // it was pushed by the artifact page on its own initiative, so drop it.
     if (snapshotRequests.length) {
-      snapshotRequests.shift();
+      const request = snapshotRequests.shift();
       pendingSnapshot = msg.snapshot || "";
+      pendingSubmitPrompts = request.prompts;
+      endAfterSubmit = request.endAfter;
       submitQueued();
     }
   }
