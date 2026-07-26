@@ -113,7 +113,10 @@ async function createChromeHarness({
         if (typeof this.onclick === "function") return this.onclick(event);
         return undefined;
       },
-      remove() {},
+      remove() {
+        this.removed = true;
+        this.parentElement = null;
+      },
       focus() {
         this.focused = true;
       },
@@ -177,6 +180,10 @@ async function createChromeHarness({
 
       addEventListener(type, handler) {
         this.listeners.set(type, handler);
+      }
+
+      close() {
+        this.closed = true;
       }
     },
     document: {
@@ -1997,4 +2004,39 @@ test("the dismiss request is advisory: the chrome never assumes the card closed"
   // unsent draft. The chrome must not mirror card state or act on the outcome.
   const event = chrome.dispatchDocumentEvent("pointerdown", {});
   assert.equal(event.defaultPrevented, false);
+});
+
+// Ending a session has to stop the machinery, not just grey it out. The spinner is owned by
+// presence, presence is fed by the event stream, and the stream used to outlive the session -
+// so an ended session sat there claiming to be working forever.
+test("ending a session clears the working indicator and closes the event stream", async () => {
+  const chrome = await createChromeHarness();
+  const presence = chrome.eventSource().listeners.get("agent-presence");
+
+  presence({ data: JSON.stringify({ state: "working" }) });
+  const spinner = chrome.element("chatLog").lastAppendedChild;
+  assert.ok(spinner, "a working bubble was appended");
+  assert.equal(spinner.removed, undefined);
+  assert.equal(chrome.eventSource().closed, undefined);
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  assert.equal(spinner.removed, true, "the working bubble is removed on end");
+  assert.equal(chrome.eventSource().closed, true, "the event stream is closed on end");
+});
+
+test("a presence event arriving after the end cannot restore the spinner", async () => {
+  const chrome = await createChromeHarness();
+  const presence = chrome.eventSource().listeners.get("agent-presence");
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  const before = chrome.element("chatLog").lastAppendedChild;
+  // The stream is closed, but a message already dispatched must not resurrect the spinner
+  // on a session that is over.
+  presence({ data: JSON.stringify({ state: "working" }) });
+
+  assert.equal(chrome.element("chatLog").lastAppendedChild, before, "no new bubble was appended");
 });

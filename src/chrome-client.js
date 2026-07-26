@@ -83,6 +83,10 @@ let lastScroll = { x: 0, y: 0 };
 let copyHintTimer;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let sendHintTimer;
+// The live event stream, held here rather than only in the const at the bottom of the
+// file so `markSessionEnded` can close it without reaching into the boot section.
+/** @type {EventSource | null} */
+let eventStream = null;
 
 function escapeHtml(value) {
   return String(value).replace(
@@ -321,7 +325,12 @@ function syncChat(chat) {
   }
 }
 
+// Presence is a live-session concept. Once the session ends there is no agent to be
+// listening or working, so an ended session refuses every further presence update: the
+// SSE stream is closed on end, but a message already in flight would otherwise resurrect
+// the working spinner on a dead session, which is what the old code did.
 function setAgentPresence(state) {
+  if (ended) return;
   agentPresence = state === "listening" || state === "working" ? state : "waiting";
   updateSendState();
   if (presenceBanner) presenceBanner.hidden = ended || agentPresence !== "waiting";
@@ -846,6 +855,33 @@ async function endSession() {
   markSessionEnded();
 }
 
+// Remove the "Working..." bubble directly. Routing this through setAgentPresence("waiting")
+// would work by side effect, but "waiting" means "your agent is not listening" - a live-session
+// state with its own banner - so an ended session would pass through a status it can never be in.
+function clearWorkingIndicator() {
+  if (workingBubble) workingBubble.remove();
+  workingBubble = null;
+  agentPresence = "waiting";
+}
+
+function closeEventStream() {
+  if (!eventStream) return;
+  eventStream.close();
+  eventStream = null;
+}
+
+// Every timer that can still fire after the session is over. None of them are harmful on
+// their own; together they are the difference between a page that has stopped and a page
+// that merely looks stopped.
+function clearSessionTimers() {
+  clearTimeout(sendHintTimer);
+  sendHintTimer = undefined;
+  clearTimeout(copyHintTimer);
+  copyHintTimer = undefined;
+  clearLayoutGateTimer();
+  clearPointerdownSendFreeze();
+}
+
 function markSessionEnded() {
   if (ended) return;
   ended = true;
@@ -856,6 +892,14 @@ function markSessionEnded() {
   chatInput.disabled = true;
   updateSendState();
   if (presenceBanner) presenceBanner.hidden = true;
+
+  // Tear the live-session machinery down rather than merely hiding it. Leaving any of
+  // this running is what made an ended session keep claiming to be working: the spinner
+  // is owned by presence, presence is fed by the stream, and the stream outlived the
+  // session. Order matters only in that the stream closes before the last repaint.
+  clearWorkingIndicator();
+  closeEventStream();
+  clearSessionTimers();
   layoutGateManuallyBypassed = true;
   revealLayoutGate();
   postToFrame({ type: "luxe:setAnnotationMode", enabled: false });
@@ -1546,6 +1590,7 @@ frame.addEventListener("load", () => {
 initializeLayoutGate();
 
 const events = new EventSource("/events/" + key);
+eventStream = events;
 events.addEventListener("reload", () => {
   resetFrame().then((reloaded) => {
     if (reloaded) refreshWhiteboardSource();
