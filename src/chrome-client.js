@@ -641,39 +641,47 @@ async function exportArtifact() {
 
 function replaceArtifactFrame() {
   startLayoutGateCycle();
-  inlineWhiteboardChannels.clear();
   // The iframe is sandboxed, so reload by resetting the iframe URL from chrome.
   frame.src = artifactSrc || frame.src;
 }
 
+// A live reload replaces the artifact document. Nothing editable lives inside
+// it any more - the only editor is the overlay, which sits outside the iframe
+// and survives - so the reload is unconditional, and the open whiteboard is
+// told about the new source separately (refreshWhiteboardSource).
 function resetFrame() {
-  if (artifactResetPromise) return artifactResetPromise;
-  const hasLiveInlineWhiteboard = [...inlineWhiteboardChannels].some(
-    ([index, channel]) => channel.initialized && index !== overlayIndex,
-  );
-  if (!hasLiveInlineWhiteboard) {
-    replaceArtifactFrame();
-    return Promise.resolve(true);
-  }
-  artifactResetPromise = flushInlineWhiteboards()
-    .then((flushed) => {
-      if (!flushed) return false;
-      replaceArtifactFrame();
-      return true;
-    })
-    .finally(() => {
-      artifactResetPromise = null;
-    });
-  return artifactResetPromise;
+  replaceArtifactFrame();
+  return Promise.resolve(true);
 }
 
 // ---------------------------------------------------------------------------
-// Whiteboards. The artifact SDK embeds one sandboxed whiteboard frame in place
-// of each rendered Mermaid diagram. The chrome owns every server round trip
-// and serves all frames concurrently. The overlay hosts the same frame page
-// fullscreen when an inline frame asks to maximize - the inline frame is
-// suspended while the overlay owns that diagram so two editors never autosave
-// one sidecar.
+// Whiteboards, fullscreen-first. A rendered Mermaid diagram stays a rendered
+// Mermaid diagram in the artifact; the artifact SDK draws one quiet Edit
+// affordance over it, and pressing it asks the chrome to open that diagram in
+// the full-viewport overlay. There is exactly one editor at a time, so nothing
+// can race another editor onto the same sidecar.
+//
+// TRUST BOUNDARY. Upstream's maximize request arrived over the inline frame's
+// authenticated channel: a signed token minted by the server, verified at
+// POST /api/:key/whiteboard-channel. There is no inline frame any more, so the
+// request now arrives from the artifact iframe, which is untrusted content -
+// this is a deliberate change of who may ask, and it is guarded rather than
+// assumed:
+//
+//   1. Only the artifact iframe's own window may ask. `event.source` must be
+//      `frame.contentWindow`, the same gate every other artifact-to-chrome
+//      message already passes (`luxe:queuePrompt`, `luxe:endSession`), so the
+//      new message adds no reach the artifact did not already have.
+//   2. Asking conveys no data and writes nothing. The message carries a single
+//      integer, which is range-checked here and then checked again against the
+//      Mermaid sources the SERVER extracted from the artifact file on disk. An
+//      index the artifact invented resolves to nothing and the open fails.
+//   3. Authority to write still comes from the channel token, not from the ask.
+//      The overlay frame the chrome opens is served a fresh signed token, POSTs
+//      it to the same-origin-guarded channel route, and only after that does
+//      the chrome accept a save, a queue, or a save-to-machine from it. A page
+//      that spammed opens would move the UI around; it could not persist a byte.
+//   4. One at a time, and never after the session ends.
 // ---------------------------------------------------------------------------
 
 /** @type {Map<number, { diagramId: string, source: string, sourceHash: string }>} */
@@ -684,32 +692,15 @@ let overlayFrameReady = false;
 let overlayChannelId = "";
 let overlayOpeningIndex = null;
 let nextWhiteboardFlushId = 0;
-let artifactResetPromise = null;
 let chromeRestartReloadPromise = null;
 const whiteboardTeardowns = new Map();
 const whiteboardFlushes = new Map();
 const whiteboardSaveChains = new Map();
-const inlineWhiteboardChannels = new Map();
 
-function whiteboardTheme() {
-  // Luxe is light-only: no theme detection, no OS theme following.
-  return "light";
-}
-
-function postToWhiteboardOverlay(message) {
+function postToWhiteboard(message) {
   if (whiteboardFrame.contentWindow && overlayChannelId) {
     whiteboardFrame.contentWindow.postMessage({ ...message, channelId: overlayChannelId }, "*");
   }
-}
-
-function postToInlineWhiteboard(index, message) {
-  const channel = inlineWhiteboardChannels.get(index);
-  if (channel?.window) channel.window.postMessage({ ...message, channelId: channel.channelId }, "*");
-}
-
-function postToWhiteboard(index, placement, message) {
-  if (placement === "overlay") postToWhiteboardOverlay(message);
-  else postToInlineWhiteboard(index, message);
 }
 
 async function fetchMermaidSources() {
@@ -743,7 +734,7 @@ function whiteboardRecord(index) {
   return record;
 }
 
-async function handleWhiteboardReady(index, mode, isCurrent) {
+async function handleWhiteboardReady(index, isCurrent) {
   try {
     const sources = await fetchMermaidSources();
     const source = sources.find((item) => item.index === index);
@@ -754,21 +745,17 @@ async function handleWhiteboardReady(index, mode, isCurrent) {
     record.source = String(source.source || "");
     record.sourceHash = String(source.hash || "");
     if (!isCurrent()) return false;
-    postToWhiteboard(index, mode, {
+    postToWhiteboard({
       type: "luxe-whiteboard:init",
-      mode,
       diagramIndex: index,
       diagramId: record.diagramId,
       source: record.source,
       sourceHash: record.sourceHash,
       saved,
-      theme: whiteboardTheme(),
     });
     return true;
   } catch (error) {
-    if (mode === "overlay") {
-      showWhiteboardError("Could not open the whiteboard: " + (error instanceof Error ? error.message : String(error)));
-    }
+    showWhiteboardError("Could not open the whiteboard: " + (error instanceof Error ? error.message : String(error)));
     return false;
   }
 }
@@ -778,10 +765,9 @@ function showWhiteboardOverlay(index) {
   overlayIndex = index;
   overlayFrameReady = false;
   overlayChannelId = "";
-  inlineWhiteboardChannels.delete(index);
   whiteboardError.hidden = true;
   whiteboardOverlay.hidden = false;
-  postToFrame({ type: "luxe:suspendWhiteboard", diagramIndex: index });
+  postToFrame({ type: "luxe:whiteboardOpened", diagramIndex: index });
   // A fresh document per open: the frame boots, posts ready, and receives its
   // init - no stale editor state can leak between opens.
   whiteboardFrame.src = "/whiteboard-frame?diagramIndex=" + encodeURIComponent(String(index));
@@ -794,17 +780,15 @@ function finishWhiteboardClose(index) {
   overlayIndex = null;
   overlayFrameReady = false;
   overlayChannelId = "";
-  inlineWhiteboardChannels.delete(index);
-  if (!ended) postToFrame({ type: "luxe:resumeWhiteboard", diagramIndex: index });
+  if (!ended) postToFrame({ type: "luxe:whiteboardClosed", diagramIndex: index });
 }
 
-function whiteboardTeardownKey(index, placement) {
-  return placement + ":" + index;
-}
-
-function beginWhiteboardTeardown(index, placement, onComplete) {
-  const key = whiteboardTeardownKey(index, placement);
-  const pending = whiteboardTeardowns.get(key);
+// Save-before-close. The overlay never closes on the strength of its own
+// bookkeeping: it asks the frame to flush, and only a confirmed save tears the
+// editor down. A failed save leaves the whiteboard open with the error visible,
+// which is the whole point - closing anyway would drop the edits.
+function beginWhiteboardTeardown(index, onComplete) {
+  const pending = whiteboardTeardowns.get(index);
   if (pending) {
     if (onComplete) pending.promise.then(onComplete);
     return pending.promise;
@@ -814,70 +798,49 @@ function beginWhiteboardTeardown(index, placement, onComplete) {
   const promise = new Promise((complete) => {
     resolve = complete;
   });
-  const teardown = { index, placement, flushId, promise, resolve, onComplete };
-  whiteboardTeardowns.set(key, teardown);
-  const message = { type: "luxe-whiteboard:prepareTeardown", flushId };
-  postToWhiteboard(index, placement, message);
+  whiteboardTeardowns.set(index, { index, flushId, promise, resolve, onComplete });
+  postToWhiteboard({ type: "luxe-whiteboard:prepareTeardown", flushId });
   return promise;
 }
 
-function finishWhiteboardTeardown(index, message, placement) {
+function settleWhiteboardTeardown(index, message, ok) {
   const flushId = String(message.flushId || "");
-  const key = whiteboardTeardownKey(index, placement);
-  const teardown = whiteboardTeardowns.get(key);
-  if (!teardown || teardown.index !== index || teardown.placement !== placement || teardown.flushId !== flushId) return;
-  whiteboardTeardowns.delete(key);
-  teardown.onComplete?.(true);
-  teardown.resolve(true);
+  const teardown = whiteboardTeardowns.get(index);
+  if (!teardown || teardown.flushId !== flushId) return;
+  whiteboardTeardowns.delete(index);
+  teardown.onComplete?.(ok);
+  teardown.resolve(ok);
 }
 
-function failWhiteboardTeardown(index, message, placement) {
-  const flushId = String(message.flushId || "");
-  const key = whiteboardTeardownKey(index, placement);
-  const teardown = whiteboardTeardowns.get(key);
-  if (!teardown || teardown.index !== index || teardown.placement !== placement || teardown.flushId !== flushId) return;
-  whiteboardTeardowns.delete(key);
-  teardown.onComplete?.(false);
-  teardown.resolve(false);
-}
-
-function whiteboardFlushKey(index, placement) {
-  return placement + ":" + index;
-}
-
-function beginWhiteboardFlush(index, placement) {
-  const flushKey = whiteboardFlushKey(index, placement);
-  const pending = whiteboardFlushes.get(flushKey);
+function beginWhiteboardFlush(index) {
+  const pending = whiteboardFlushes.get(index);
   if (pending) return pending.promise;
   const flushId = `whiteboard-flush-${++nextWhiteboardFlushId}`;
   let resolve;
   const promise = new Promise((complete) => {
     resolve = complete;
   });
-  whiteboardFlushes.set(flushKey, { index, placement, flushId, promise, resolve });
-  postToWhiteboard(index, placement, { type: "luxe-whiteboard:flush", flushId });
+  whiteboardFlushes.set(index, { index, flushId, promise, resolve });
+  postToWhiteboard({ type: "luxe-whiteboard:flush", flushId });
   return promise;
 }
 
-function finishWhiteboardFlush(index, message, placement) {
+function finishWhiteboardFlush(index, message) {
   const flushId = String(message.flushId || "");
-  const flushKey = whiteboardFlushKey(index, placement);
-  const flush = whiteboardFlushes.get(flushKey);
-  if (!flush || flush.index !== index || flush.placement !== placement || flush.flushId !== flushId) return;
-  whiteboardFlushes.delete(flushKey);
+  const flush = whiteboardFlushes.get(index);
+  if (!flush || flush.flushId !== flushId) return;
+  whiteboardFlushes.delete(index);
   flush.resolve(Boolean(message.ok));
 }
 
+// A version-driven chrome reload replaces this whole document, so an open
+// whiteboard gets a bounded chance to save first. Bounded, not unbounded: a
+// wedged frame must not block the upgrade forever.
 async function flushWhiteboardsBeforeChromeReload() {
-  const flushes = [];
-  for (const [index, channel] of inlineWhiteboardChannels) {
-    if (channel.initialized && index !== overlayIndex) flushes.push(beginWhiteboardFlush(index, "inline"));
-  }
-  if (overlayIndex !== null && overlayFrameReady) flushes.push(beginWhiteboardFlush(overlayIndex, "overlay"));
-  if (flushes.length === 0) return;
+  if (overlayIndex === null || !overlayFrameReady) return;
   let timeout;
   await Promise.race([
-    Promise.all(flushes),
+    beginWhiteboardFlush(overlayIndex),
     new Promise((resolve) => {
       timeout = setTimeout(resolve, 1500);
     }),
@@ -885,22 +848,26 @@ async function flushWhiteboardsBeforeChromeReload() {
   clearTimeout(timeout);
 }
 
-async function flushInlineWhiteboards() {
-  for (const [index, channel] of [...inlineWhiteboardChannels]) {
-    if (!channel.initialized || index === overlayIndex) continue;
-    if (!(await beginWhiteboardTeardown(index, "inline"))) return false;
-  }
-  return true;
-}
-
-function openWhiteboardOverlay(index) {
+// The guarded entry point for the artifact's Edit affordance. See the trust
+// boundary note at the top of this section: the index is range-checked here and
+// resolved against the server's own extraction of the artifact file before any
+// editor appears.
+async function openWhiteboardOverlay(index) {
   if (ended || overlayIndex !== null || overlayOpeningIndex !== null) return;
   overlayOpeningIndex = index;
-  beginWhiteboardTeardown(index, "inline", (flushed) => {
-    if (overlayOpeningIndex !== index) return;
-    overlayOpeningIndex = null;
-    if (flushed && !ended && overlayIndex === null) showWhiteboardOverlay(index);
-  });
+  try {
+    const sources = await fetchMermaidSources();
+    if (!sources.some((item) => item.index === index)) {
+      showWhiteboardError("That diagram is not in the artifact file any more. Reload and try again.");
+      return;
+    }
+    if (overlayOpeningIndex !== index || ended || overlayIndex !== null) return;
+    showWhiteboardOverlay(index);
+  } catch (error) {
+    showWhiteboardError("Could not open the whiteboard: " + (error instanceof Error ? error.message : String(error)));
+  } finally {
+    if (overlayOpeningIndex === index) overlayOpeningIndex = null;
+  }
 }
 
 function closeWhiteboard() {
@@ -910,7 +877,7 @@ function closeWhiteboard() {
     finishWhiteboardClose(index);
     return;
   }
-  beginWhiteboardTeardown(index, "overlay", (flushed) => {
+  beginWhiteboardTeardown(index, (flushed) => {
     if (flushed && overlayIndex === index) finishWhiteboardClose(index);
   });
 }
@@ -940,15 +907,15 @@ function saveWhiteboardScene(index, message) {
   return result;
 }
 
-function handleWhiteboardSave(index, message, mode) {
+function handleWhiteboardSave(index, message) {
   const flushId = String(message.flushId || "");
   saveWhiteboardScene(index, message).then(
     () => {
-      if (flushId) postToWhiteboard(index, mode, { type: "luxe-whiteboard:saveResult", flushId, ok: true });
+      if (flushId) postToWhiteboard({ type: "luxe-whiteboard:saveResult", flushId, ok: true });
     },
     (error) => {
       if (flushId) {
-        postToWhiteboard(index, mode, {
+        postToWhiteboard({
           type: "luxe-whiteboard:saveResult",
           flushId,
           ok: false,
@@ -959,6 +926,35 @@ function handleWhiteboardSave(index, message, mode) {
   );
 }
 
+// "Save to machine": the explicit keep that takes a scene out of the ephemeral
+// sidecar and writes it next to the artifact. The scene is persisted to the
+// sidecar first, in the same chain as every other save, so the copy on disk and
+// the copy next to the artifact are the same bytes.
+async function saveWhiteboardToMachine(index, message) {
+  try {
+    await saveWhiteboardScene(index, message);
+    const response = await fetch("/api/" + key + "/whiteboard/" + index + "/save-to-machine", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scene: message.scene || null, pngDataUrl: String(message.pngDataUrl || "") }),
+    });
+    if (!response.ok) throw new Error("failed to write the whiteboard files");
+    const files = await response.json();
+    postToWhiteboard({
+      type: "luxe-whiteboard:saveToMachineResult",
+      ok: true,
+      scenePath: String(files.scene_path || ""),
+      previewPath: String(files.preview_path || ""),
+    });
+  } catch (error) {
+    postToWhiteboard({
+      type: "luxe-whiteboard:saveToMachineResult",
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function whiteboardSummaryText(summaryLines) {
   return (Array.isArray(summaryLines) ? summaryLines : [])
     .filter((line) => typeof line === "string")
@@ -967,7 +963,7 @@ function whiteboardSummaryText(summaryLines) {
     .join("\n");
 }
 
-async function queueWhiteboardFeedback(index, message, mode) {
+async function queueWhiteboardFeedback(index, message) {
   const diagramId = whiteboardRecord(index).diagramId;
   try {
     // Persist the exact reviewed state before queueing, so the paths in the
@@ -1012,10 +1008,10 @@ async function queueWhiteboardFeedback(index, message, mode) {
       // earlier unsent prompt instead of stacking duplicates.
       [internalQueueKeyField]: "whiteboard:" + index,
     });
-    postToWhiteboard(index, mode, { type: "luxe-whiteboard:queueResult", ok: true });
-    if (mode === "overlay") closeWhiteboard();
+    postToWhiteboard({ type: "luxe-whiteboard:queueResult", ok: true });
+    closeWhiteboard();
   } catch (error) {
-    postToWhiteboard(index, mode, {
+    postToWhiteboard({
       type: "luxe-whiteboard:queueResult",
       ok: false,
       error: error instanceof Error ? error.message : String(error),
@@ -1023,10 +1019,10 @@ async function queueWhiteboardFeedback(index, message, mode) {
   }
 }
 
-// Inline frames live inside the artifact iframe, so a live reload replaces
-// them wholesale and they re-init against fresh sources on their own. Only an
-// open overlay outlives the reload; tell it when its diagram's source changed
-// underneath it so the frame can surface staleness (never silently merge).
+// A live reload replaces the artifact, and with it every rendered diagram, but
+// an open overlay outlives it. Tell that overlay when its diagram's source
+// changed underneath it, so the frame can surface staleness rather than let a
+// scene converted from an older diagram merge into the new one unannounced.
 async function refreshWhiteboardSource() {
   if (overlayIndex === null) return;
   const index = overlayIndex;
@@ -1038,7 +1034,7 @@ async function refreshWhiteboardSource() {
     if (nextHash !== record.sourceHash) {
       record.source = source ? String(source.source || "") : "";
       record.sourceHash = nextHash;
-      postToWhiteboardOverlay({
+      postToWhiteboard({
         type: "luxe-whiteboard:sourceChanged",
         source: record.source,
         sourceHash: record.sourceHash,
@@ -1049,45 +1045,22 @@ async function refreshWhiteboardSource() {
   }
 }
 
+// Deliberately type-strict, not just range-strict. `Number(null)` and
+// `Number("")` are both 0, so a coercing check would turn a missing or empty
+// field in a message from untrusted content into a valid request for diagram 0.
 function validWhiteboardIndex(value) {
-  const index = Number(value);
-  return Number.isInteger(index) && index >= 0 && index <= 999 ? index : null;
+  if (typeof value !== "number") return null;
+  return Number.isInteger(value) && value >= 0 && value <= 999 ? value : null;
 }
 
-function handleAuthenticatedWhiteboardMessage(index, message, mode) {
-  if (message.type === "luxe-whiteboard:save") handleWhiteboardSave(index, message, mode);
-  if (message.type === "luxe-whiteboard:queueFeedback") queueWhiteboardFeedback(index, message, mode);
-  if (message.type === "luxe-whiteboard:maximize" && mode === "inline") openWhiteboardOverlay(index);
-  if (message.type === "luxe-whiteboard:close" && mode === "overlay") closeWhiteboard();
-  if (message.type === "luxe-whiteboard:teardownReady") finishWhiteboardTeardown(index, message, mode);
-  if (message.type === "luxe-whiteboard:teardownFailed") failWhiteboardTeardown(index, message, mode);
-  if (message.type === "luxe-whiteboard:flushComplete") finishWhiteboardFlush(index, message, mode);
-}
-
-function handleInlineWhiteboardMessage(event, message) {
-  if (ended) return;
-  const index = validWhiteboardIndex(message.diagramIndex);
-  if (index === null || !event.source) return;
-  if (message.type === "luxe-whiteboard:ready") {
-    if (inlineWhiteboardChannels.has(index)) return;
-    const channelId = String(message.channelToken || "");
-    if (!channelId) return;
-    authenticateWhiteboardChannel(channelId).then((authenticated) => {
-      if (!authenticated || ended || inlineWhiteboardChannels.has(index)) return;
-      const channel = { window: event.source, channelId, initialized: false };
-      inlineWhiteboardChannels.set(index, channel);
-      whiteboardRecord(index).diagramId = String(message.diagramId || "");
-      handleWhiteboardReady(index, "inline", () => inlineWhiteboardChannels.get(index) === channel).then(
-        (initialized) => {
-          if (inlineWhiteboardChannels.get(index) === channel) channel.initialized = initialized;
-        },
-      );
-    });
-    return;
-  }
-  const channel = inlineWhiteboardChannels.get(index);
-  if (!channel || channel.window !== event.source || channel.channelId !== message.channelId) return;
-  handleAuthenticatedWhiteboardMessage(index, message, "inline");
+function handleAuthenticatedWhiteboardMessage(index, message) {
+  if (message.type === "luxe-whiteboard:save") handleWhiteboardSave(index, message);
+  if (message.type === "luxe-whiteboard:queueFeedback") queueWhiteboardFeedback(index, message);
+  if (message.type === "luxe-whiteboard:saveToMachine") saveWhiteboardToMachine(index, message);
+  if (message.type === "luxe-whiteboard:close") closeWhiteboard();
+  if (message.type === "luxe-whiteboard:teardownReady") settleWhiteboardTeardown(index, message, true);
+  if (message.type === "luxe-whiteboard:teardownFailed") settleWhiteboardTeardown(index, message, false);
+  if (message.type === "luxe-whiteboard:flushComplete") finishWhiteboardFlush(index, message);
 }
 
 function handleOverlayWhiteboardMessage(event, message) {
@@ -1107,22 +1080,18 @@ function handleOverlayWhiteboardMessage(event, message) {
         return;
       }
       if (!isCurrent()) return;
-      const initialized = await handleWhiteboardReady(index, "overlay", isCurrent);
+      const initialized = await handleWhiteboardReady(index, isCurrent);
       if (initialized && isCurrent()) overlayFrameReady = true;
     });
     return;
   }
   if (!overlayFrameReady || message.channelId !== overlayChannelId) return;
-  handleAuthenticatedWhiteboardMessage(index, message, "overlay");
+  handleAuthenticatedWhiteboardMessage(index, message);
 }
 
 window.addEventListener("message", (event) => {
-  const message = event.data || {};
-  if (event.source === whiteboardFrame.contentWindow) {
-    handleOverlayWhiteboardMessage(event, message);
-  } else {
-    handleInlineWhiteboardMessage(event, message);
-  }
+  if (event.source !== whiteboardFrame.contentWindow) return;
+  handleOverlayWhiteboardMessage(event, event.data || {});
 });
 
 function loadFrame() {
@@ -1196,6 +1165,16 @@ window.addEventListener("message", (event) => {
   // playbook tells artifact authors to call when a control should send committed feedback
   // immediately instead of waiting for the human to press Send to Agent, so this path is a
   // feature, not a gap. Do not "harden" it away: the in-page question pattern depends on it.
+  // The Edit affordance the SDK draws over a rendered Mermaid diagram. This
+  // message asks for a UI, nothing more: the index is range-checked here,
+  // resolved against the server's own reading of the artifact file inside
+  // openWhiteboardOverlay, and the editor it opens still has to authenticate
+  // its own channel before it may write anything. See the trust boundary note
+  // above the whiteboard section.
+  if (msg.type === "luxe:openWhiteboard") {
+    const index = validWhiteboardIndex(msg.diagramIndex);
+    if (index !== null) openWhiteboardOverlay(index);
+  }
   if (msg.type === "luxe:sendQueuedPrompts") sendQueued();
   if (msg.type === "luxe:endSession") endSession();
   if (msg.type === "luxe:toggleAnnotationMode") toggleAnnotationMode();
@@ -1258,10 +1237,10 @@ frame.addEventListener("load", () => {
   postToFrame({ type: "luxe:setAnnotationMode", enabled: annotation && !ended });
   // Replay the pre-reload scroll position so hot reloads don't jump the artifact to the top.
   postToFrame({ type: "luxe:restoreScroll", x: lastScroll.x, y: lastScroll.y });
-  if (overlayIndex !== null) {
-    inlineWhiteboardChannels.delete(overlayIndex);
-    postToFrame({ type: "luxe:suspendWhiteboard", diagramIndex: overlayIndex });
-  }
+  // A reload rebuilds the artifact's Edit affordances; if the overlay is still
+  // open over the old document, tell the new one which diagram it owns so the
+  // affordance renders in its busy state rather than offering a second editor.
+  if (overlayIndex !== null) postToFrame({ type: "luxe:whiteboardOpened", diagramIndex: overlayIndex });
 });
 
 initializeLayoutGate();

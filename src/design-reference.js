@@ -1,3 +1,5 @@
+import { luxeShikiThemeJson } from "./luxe-shiki-theme.js";
+import { luxeMermaidInitLiteral } from "./mermaid-theme.js";
 import { listPlaybooks, PLAYBOOK_ROUTER_INSTRUCTION } from "./playbooks.js";
 
 export const TAILWIND_BROWSER_VERSION = "4.2.4";
@@ -39,115 +41,103 @@ export const DESIGN_CDN_SNIPPET = `<link rel="stylesheet" href="${DESIGN_CDN_URL
 // hash, and where it is not (older browsers, or a page that already installed an import map)
 // the module still loads exactly as before. Integrity covers the entry module only; Mermaid
 // loads further chunks by relative URL and those are not hashed here.
+//
+// Luxe is light-only, so this snippet renders once with a fixed theme. Upstream shipped a
+// page-background probe, a `prefers-color-scheme` listener and a MutationObserver here to keep
+// diagrams in step with a theme that could flip; none of that has a reason to exist any more,
+// and it is deleted rather than retuned (UI-REVAMP section 5, cleanup 2). The `themeVariables`
+// block below is imported from `src/mermaid-theme.js`, never restated, and is what stops Mermaid
+// falling back to its own beige-and-purple defaults.
 export const MERMAID_CDN_SNIPPET = `<script type="importmap">
   { "integrity": { "${MERMAID_CDN_URL}": "${MERMAID_CDN_INTEGRITY}" } }
 </script>
 <script type="module">
   import mermaid from "${MERMAID_CDN_URL}";
 
-  // Render Mermaid in a theme that matches the artifact page, and re-render when
-  // the viewer flips the page theme - Mermaid never restyles an already-rendered
-  // SVG on its own, so a fixed theme clashes in either light or dark mode.
-  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  mermaid.initialize(${luxeMermaidInitLiteral("  ")});
 
-  // Normalize any CSS color the browser produces (rgb, oklch, hsl, named, ...)
-  // to [r, g, b, a] bytes via a 1x1 canvas, so parsing never breaks on modern
-  // color syntaxes like DaisyUI's oklch() values.
-  const paint = document.createElement("canvas").getContext("2d");
-  function toRgba(color) {
-    paint.clearRect(0, 0, 1, 1);
-    paint.fillStyle = "#000";
-    paint.fillStyle = color;
-    paint.fillRect(0, 0, 1, 1);
-    return paint.getImageData(0, 0, 1, 1).data;
-  }
-
-  function compositeRgba(foreground, background) {
-    const foregroundAlpha = foreground[3] / 255;
-    const backgroundAlpha = background[3] / 255;
-    const alpha = foregroundAlpha + backgroundAlpha * (1 - foregroundAlpha);
-    if (alpha === 0) return [0, 0, 0, 0];
-    return [
-      (foreground[0] * foregroundAlpha + background[0] * backgroundAlpha * (1 - foregroundAlpha)) / alpha,
-      (foreground[1] * foregroundAlpha + background[1] * backgroundAlpha * (1 - foregroundAlpha)) / alpha,
-      (foreground[2] * foregroundAlpha + background[2] * backgroundAlpha * (1 - foregroundAlpha)) / alpha,
-      alpha * 255,
-    ];
-  }
-
-  function pageIsDark() {
-    // Trust the actually-rendered page background so this works with any theming
-    // mechanism: prefers-color-scheme, a data-theme attribute, or plain CSS.
-    const root = document.documentElement;
-    const rootBackground = toRgba(getComputedStyle(root).backgroundColor);
-    const bodyBackground = document.body ? toRgba(getComputedStyle(document.body).backgroundColor) : [0, 0, 0, 0];
-    const [r, g, b, a] = compositeRgba(bodyBackground, rootBackground);
-    if (a > 0) {
-      return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
-    }
-    const colorScheme = getComputedStyle(root).colorScheme;
-    if (colorScheme.includes("dark") && !colorScheme.includes("light")) return true;
-    if (colorScheme.includes("light") && !colorScheme.includes("dark")) return false;
-    return darkQuery.matches;
-  }
-
-  const diagrams = [...document.querySelectorAll(".mermaid")].map((el) => ({ el, src: el.textContent }));
-  let applied;
-  let rendering = false;
-  let queued = false;
-  function queueRender() {
-    queued = true;
-    if (rendering) return;
-    void render();
-  }
+  const diagrams = [...document.querySelectorAll(".mermaid")];
   async function render() {
-    rendering = true;
+    if (diagrams.length === 0) return;
     try {
-      while (queued) {
-        queued = false;
-        const theme = pageIsDark() ? "dark" : "default";
-        if (theme === applied) continue;
-        mermaid.initialize({ startOnLoad: false, theme, securityLevel: "strict" });
-        for (const { el, src } of diagrams) {
-          el.removeAttribute("data-processed");
-          el.textContent = src;
-        }
-        try {
-          await mermaid.run({ nodes: diagrams.map((d) => d.el) });
-        } catch (error) {
-          console.error("Mermaid diagram render failed:", error);
-          return;
-        }
-        applied = theme;
-      }
-    } finally {
-      rendering = false;
-      if (queued) queueRender();
+      await mermaid.run({ nodes: diagrams });
+    } catch (error) {
+      console.error("Mermaid diagram render failed:", error);
     }
   }
 
-  // First render once stylesheets are applied (no wrong-theme flash), then keep
-  // the diagrams in sync with page-theme toggles and OS light/dark changes.
-  if (document.readyState === "complete") queueRender();
-  else window.addEventListener("load", queueRender, { once: true });
-  const themeObserver = new MutationObserver(queueRender);
-  for (const el of [document.documentElement, document.body]) {
-    if (!el) continue;
-    themeObserver.observe(el, {
-      attributes: true,
-      attributeFilter: ["data-theme", "class", "style"],
-    });
-  }
-  document.addEventListener("change", queueRender, true);
-  document.addEventListener(
-    "transitionend",
-    ({ propertyName }) => {
-      if (propertyName === "background-color") queueRender();
-    },
-    true,
-  );
-  darkQuery.addEventListener("change", queueRender);
+  // Render once stylesheets are applied, so the fonts the theme names are the
+  // ones Mermaid measures against.
+  if (document.readyState === "complete") void render();
+  else window.addEventListener("load", () => void render(), { once: true });
 </script>`;
+
+// D1: one Luxe theme block mapping DaisyUI's semantic variables onto the Luxe tokens. The
+// upstream DaisyUI catalogue and build stay intact - this replaces the theme *choice*, not
+// the component reference. Values are the tokens in `src/luxe-tokens.css`.
+//
+// Two deliberate remappings:
+//   - Luxe's surface planes get LIGHTER as they rise, the opposite of DaisyUI's convention, so
+//     `base-100` is the white card plane, `base-200` the raised panel, `base-300` the page
+//     canvas, and `body` is pinned to the canvas explicitly.
+//   - `accent` is a second cocoa, not the Luxe gold. The gold is reserved for the annotation
+//     stroke and the selected-text wash; leaving it reachable through `btn-accent` would spend
+//     the one accent hue on ordinary buttons.
+export const LUXE_DAISYUI_THEME_CSS = `<style>
+  :root, [data-theme="luxe"] {
+    color-scheme: light;
+
+    --color-base-100: #ffffff;
+    --color-base-200: #fbf9f4;
+    --color-base-300: #f7f4ee;
+    --color-base-content: #211e17;
+
+    --color-primary: #463527;
+    --color-primary-content: #f7f4ee;
+    --color-secondary: #5c564a;
+    --color-secondary-content: #f7f4ee;
+    --color-accent: #57432f;
+    --color-accent-content: #f7f4ee;
+    --color-neutral: #211e17;
+    --color-neutral-content: #f7f4ee;
+
+    --color-info: #3c5f8f;
+    --color-info-content: #f7f4ee;
+    --color-success: #2e6b27;
+    --color-success-content: #f7f4ee;
+    --color-warning: #8a5a06;
+    --color-warning-content: #f7f4ee;
+    --color-error: #b3341f;
+    --color-error-content: #f7f4ee;
+
+    --radius-selector: 999px;
+    --radius-field: 8px;
+    --radius-box: 16px;
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    --border: 1px;
+    --depth: 0;
+    --noise: 0;
+  }
+
+  html, body {
+    background: #f7f4ee;
+    color: #211e17;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.15px;
+  }
+
+  code, pre, kbd, samp {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0;
+  }
+
+  pre, .mockup-code {
+    background: #f7f4ec;
+    border: 1px solid #e7e2d6;
+    border-radius: 12px;
+  }
+</style>`;
 
 export const LAYOUT_SAFETY_CSS_SNIPPET = `<style>
   *, *::before, *::after { box-sizing: border-box; }
@@ -176,43 +166,24 @@ export const DESIGN_SYSTEM_HINT =
   DESIGN_PRIORITY_RULE +
   " Run `luxe design` for a content-to-playbook router, a copy-pasteable CDN snippet, a Mermaid CDN snippet/init for diagrams, and the DaisyUI component reference. When you deliver the artifact, state which of the three design sources you used and why.";
 
-export const DAISYUI_THEMES = [
-  "light",
-  "dark",
-  "cupcake",
-  "bumblebee",
-  "emerald",
-  "corporate",
-  "synthwave",
-  "retro",
-  "cyberpunk",
-  "valentine",
-  "halloween",
-  "garden",
-  "forest",
-  "aqua",
-  "lofi",
-  "pastel",
-  "fantasy",
-  "wireframe",
-  "black",
-  "luxury",
-  "dracula",
-  "cmyk",
-  "autumn",
-  "business",
-  "acid",
-  "lemonade",
-  "night",
-  "coffee",
-  "winter",
-  "dim",
-  "nord",
-  "sunset",
-  "caramellatte",
-  "abyss",
-  "silk",
-];
+// Charts have no playbook of their own, because this product ships no chart components. The
+// palette rules still have to reach whoever authors one, so they live here and surface through
+// `luxe design`. The labelling rule is load-bearing rather than stylistic: three of the eight
+// slots sit below 3:1 on the Luxe canvas, so an unlabelled series is genuinely hard to read.
+export const LUXE_CHART_GUIDANCE = Object.freeze({
+  labelling_rule:
+    "Every chart MUST carry direct labels, printed values, or an accompanying table view. A legend alone is not sufficient. Three of the eight palette slots sit below the 3:1 contrast floor on the Luxe canvas, so a legend-only chart makes those series unreadable rather than merely inelegant.",
+  palette: ["#527dc1", "#b95d4a", "#50a67e", "#d7a44c", "#5a8637", "#ce7d93", "#7660a3", "#d36e4f"],
+  palette_rules: [
+    "Fixed order, never cycled and never reshuffled: the order is the colour-blind safety mechanism, not decoration.",
+    "Lines, stacked bars, and grouped bars may use all eight slots. Scatter, bubble, choropleth, and small multiples cap at four.",
+    "A series that itself means good or bad wears the status colours, not a categorical slot.",
+  ],
+  marks:
+    "2px strokes, round caps and joins, 4px end dots ringed 2px in the canvas colour, gridlines in #e7e2d6, axis text #5c564a at 14px, 2px surface gap between stacked segments.",
+  sequential: ["#dbe4f4", "#a8bfe6", "#6f93d2", "#3a6fc4", "#274d8d"],
+  diverging: ["#274d8d", "#3a6fc4", "#a8bfe6", "#e9e5da", "#dba193", "#b8452f", "#7e2c1d"],
+});
 
 export function createDesignOutput() {
   return {
@@ -245,14 +216,20 @@ export function createDesignOutput() {
       versions: { mermaid: MERMAID_VERSION },
     },
     theme_usage: [
-      'Default to `<html data-theme="luxury">` - it matches the Luxe look. Pick a different theme from the list below only when the user asked for one or the content clearly calls for it.',
-      'Set a nested section theme with `<section data-theme="night">`.',
-      "Prefer semantic colors such as `bg-base-100`, `bg-base-200`, `text-base-content`, `bg-primary`, `text-primary-content`, `alert-warning`, and `btn-primary` so themes remain readable.",
+      "Luxe ships exactly one theme and it is light. Paste `luxe_theme_snippet` right after the CDN snippet; it maps DaisyUI's semantic variables onto the Luxe tokens, so every DaisyUI component comes out in the system with no per-element colour work.",
+      "Do not set `data-theme` to one of DaisyUI's stock themes and do not give a section a theme of its own. The stock themes carry their own palettes and would drop a foreign object into the page.",
+      "Prefer semantic colors such as `bg-base-100`, `bg-base-200`, `text-base-content`, `bg-primary`, `text-primary-content`, `alert-warning`, and `btn-primary` so the theme block does the work.",
+      "Spend colour on data, on status, and on nothing else. Surfaces and type are warm neutrals; `primary` is the cocoa fill; there is no second brand hue to reach for.",
       "Avoid hardcoded Tailwind color names for text and surfaces unless the user asked for exact colors.",
       "Use Tailwind responsive prefixes such as `sm:`, `md:`, `lg:`, and `xl:` for layout changes.",
       'Never `@apply` DaisyUI classes (such as `text-base-content/40`, `bg-base-200`, or `btn`) inside `<style type="text/tailwindcss">` - the Tailwind browser runtime does not know them, and one unknown utility aborts the entire compile, leaving the page with no Tailwind styles at all. Put DaisyUI classes directly on elements, or write plain CSS with theme variables such as `var(--color-base-200)`.',
     ],
-    themes: DAISYUI_THEMES,
+    luxe_theme_snippet: LUXE_DAISYUI_THEME_CSS,
+    charts: LUXE_CHART_GUIDANCE,
+    code_theme: {
+      note: "Luxe ships a bespoke Shiki theme. Register it and use it by name wherever the artifact highlights code; the Shiki defaults clash with the Luxe code plane.",
+      shiki_theme_json: luxeShikiThemeJson(),
+    },
     components: {
       actions: ["button", "dropdown", "fab", "modal", "swap", "theme-controller"],
       data_display: [

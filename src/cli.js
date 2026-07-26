@@ -14,12 +14,19 @@ import {
   exportWarningSummaries,
   splitExportWarnings,
 } from "./export-bundle.js";
-import { clientHost, defaultPort, ensureStateDir, hostForUrl, serverLogFile, stateFile } from "./paths.js";
+import { clientHost, defaultPort, ensureStateDir, hostForUrl, serverLogFile, stateDir, stateFile } from "./paths.js";
 import { findPlaybook, listPlaybooks, playbookIds, PLAYBOOK_ROUTER_HELP } from "./playbooks.js";
-import { resolveDesignAssetPath, serve } from "./server.js";
+import { resolveExportAssetPath, serve } from "./server.js";
 import { canonicalFile, sessionKey, SessionStore } from "./session-store.js";
+import {
+  listSessionWhiteboards,
+  loadWhiteboard,
+  savedWhiteboardPaths,
+  saveWhiteboardToMachine,
+  whiteboardFeedbackPaths,
+} from "./whiteboard-store.js";
 
-const COMMANDS = new Set(["open", "poll", "end", "stop", "server", "playbook", "design", "export"]);
+const COMMANDS = new Set(["open", "poll", "end", "stop", "server", "playbook", "design", "export", "save-diagram"]);
 // SDK-reserved built-ins (e.g. `update`) must reach runAxiCli untouched; otherwise
 // the bare-arg normalization below would rewrite them into the hidden `open` command.
 const RESERVED = new Set(RESERVED_COMMANDS);
@@ -83,6 +90,7 @@ export async function run(argv) {
       design: designCommand,
       server: serverCommand,
       export: exportCommand,
+      "save-diagram": saveDiagramCommand,
     },
     getCommandHelp: (command) => getCommandHelp(command, { agent }),
   });
@@ -140,7 +148,8 @@ export function createHomeOutput({ bin, sessions, includeSessions = true, agent 
       "Luxe serves the html file through a local express.js server. If your html needs to reference other filesystem assets such as images, CSS, fonts, and local scripts, copy them into the same directory as the HTML file, then reference them with relative paths from that directory. Never prepend `/` to those asset paths - root paths won't work",
       `Run \`luxe poll <html-file>\` to wait for user feedback or browser-proven severe layout failures. It long-polls and stays silent until the user sends feedback, ends the session, or the real browser proves meaningful content is inaccessible or unusable, so leave it running - never kill it. Repair and re-check every returned layout failure before involving the human; cosmetic, intentional, transient, tiny, and uncertain observations stay silent. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}`,
       "Every Send from the browser also delivers `dom_snapshot`, a text outline of the rendered artifact, so you have page context for the feedback - it captures whatever the artifact renders as text, including anything sensitive shown in a table, code block, or config listing",
-      'Rendered Mermaid diagrams in `.mermaid` containers become embedded, editable Excalidraw whiteboards in the browser (click a diagram to unlock editing; a Fullscreen action opens it over the whole viewport) - flowchart, sequence, class, ER, and state diagrams convert to editable shapes; other types embed as an image to draw on. Scenes autosave locally; when a reload detects a changed Mermaid source, the reviewer explicitly chooses to re-convert and discard saved edits or keep editing the saved scene. Standalone and exported copies still render plain Mermaid. Queue feedback adds a prompt to the Conversation panel; when the user sends it, poll returns a tag "whiteboard" prompt carrying a bounded edit summary plus local scenePath (.excalidraw JSON) and previewPath (PNG) files - read the summary first, open the files only when needed, then apply the edits by updating the Mermaid source in the artifact (never try to write the scene back)',
+      'Rendered Mermaid diagrams in `.mermaid` containers stay themed Mermaid in the page and carry a quiet Edit affordance that opens them as a full-viewport, editable Excalidraw whiteboard - flowchart, sequence, class, ER, and state diagrams convert to editable shapes; other types open as an image to draw on. Scenes autosave locally; when a reload detects a changed Mermaid source, the reviewer explicitly chooses to re-convert and discard saved edits or keep editing the saved scene. Standalone and exported copies still render plain Mermaid. Queue feedback adds a prompt to the Conversation panel; when the user sends it, poll returns a tag "whiteboard" prompt carrying a bounded edit summary plus local scenePath (.excalidraw JSON) and previewPath (PNG) files - read the summary first, open the files only when needed, then apply the edits by updating the Mermaid source in the artifact (never try to write the scene back)',
+      "Whiteboards are EPHEMERAL: every scene is deleted when the session ends, when the idle server shuts down, or by the sweep at the next server start. Keeping one is explicit - the user presses Save to machine in the whiteboard, or asks you to, and you run `luxe save-diagram <html-file> [--diagram <n>]`, which writes <artifact-basename>.wb<n>.excalidraw and .png next to the artifact and exempts that scene from cleanup",
       "Run `luxe end <html-file>` to end a session as the agent - ending it this way still allows a plain reopen later. When the user ends it from the browser instead, a later `luxe <html-file>` refuses to reopen it without `--reopen`",
       "Run `luxe export <html-file> [--out <path>]` to write a portable copy of the artifact - one HTML file with its LOCAL assets inlined - so it opens with no Luxe server and no sibling files. Remote CDN/font references are left as links, so it needs network to render those. Users can also export from the browser chrome's overflow menu",
       "Run `luxe stop` to shut down the background server (it also self-stops when idle or after the last session ends with nothing connected)",
@@ -409,6 +418,79 @@ async function endCommand(args) {
   return { session: { file: absolute, status: response.status || "ended" } };
 }
 
+// The agent-facing half of D5's "Save to machine", so "save that diagram" works from the
+// conversation rather than only from the fullscreen editor's button. It writes the same two
+// files to the same place and sets the same retain marker.
+//
+// It works directly on the sidecar rather than through the server: the browser control's
+// route is same-origin guarded, which is exactly right for a browser control and exactly
+// wrong for a CLI (a header-less request would be rejected). Reading the state directory the
+// CLI already owns needs no route and widens no guard.
+export async function saveDiagramCommand(args) {
+  const file = firstPositionalArg(args, ["--diagram"]);
+  if (!file) {
+    throw new AxiError("HTML file path is required", "VALIDATION_ERROR", [
+      "Run `luxe save-diagram <html-file> [--diagram <n>]`",
+    ]);
+  }
+  const absolute = await canonicalFile(file);
+  const key = sessionKey(absolute);
+  const root = stateDir();
+  const available = await listSessionWhiteboards(root, key);
+  if (available.length === 0) {
+    throw new AxiError(`No whiteboard scenes exist for ${absolute}`, "VALIDATION_ERROR", [
+      "A diagram becomes a whiteboard the first time someone opens it with the Edit affordance in the browser.",
+    ]);
+  }
+  const requested = flagValue(args, "--diagram");
+  let index;
+  if (requested === null) {
+    if (available.length > 1) {
+      throw new AxiError(`This artifact has ${available.length} whiteboards; say which one`, "VALIDATION_ERROR", [
+        `Run \`luxe save-diagram ${file} --diagram <n>\` with one of: ${available.join(", ")}`,
+      ]);
+    }
+    index = available[0];
+  } else {
+    index = Number(requested);
+    if (!available.includes(index)) {
+      throw new AxiError(`No whiteboard scene for diagram ${requested}`, "VALIDATION_ERROR", [
+        `Available diagram indices: ${available.join(", ")}`,
+      ]);
+    }
+  }
+  const record = await loadWhiteboard(root, key, index);
+  if (!record?.scene) {
+    throw new AxiError(`Whiteboard ${index} has no saved scene yet`, "VALIDATION_ERROR", [
+      "Open it in the browser once so the editor autosaves a scene, then try again.",
+    ]);
+  }
+  // Reuse the PNG the browser already exported at queue time when there is one. Rendering a
+  // new one would need a browser, and the CLI has none - so the honest outcome is the scene
+  // plus whatever preview exists, and a next_step that says which.
+  const { previewPath: feedbackPng } = whiteboardFeedbackPaths(root, key, index);
+  const pngDataUrl = await readFile(feedbackPng)
+    .then((bytes) => `data:image/png;base64,${bytes.toString("base64")}`)
+    .catch(() => "");
+  const { scenePath, previewPath } = await saveWhiteboardToMachine(root, key, index, {
+    artifactFile: absolute,
+    scene: record.scene,
+    pngDataUrl,
+  });
+  return {
+    saved_whiteboard: {
+      artifact: absolute,
+      diagram_index: index,
+      scene_path: scenePath,
+      preview_path: previewPath,
+      retained: true,
+    },
+    next_step: previewPath
+      ? `Kept diagram ${index} as ${scenePath} and ${previewPath}. Both survive session cleanup; every other whiteboard for this artifact is deleted when the session ends.`
+      : `Kept diagram ${index} as ${scenePath}. No PNG was written because none has been exported yet - press Queue feedback or Save to machine in the browser once if the user wants the image too. The expected path would be ${savedWhiteboardPaths(absolute, index).previewPath}.`,
+  };
+}
+
 // Produce a portable copy of an artifact: one HTML file with its LOCAL assets (relative-path
 // stylesheets, scripts, images, fonts) inlined as data URIs. Remote CDN/font references are left
 // as-is for the browser to load, so the export needs network to render those. Luxe makes no
@@ -426,7 +508,7 @@ async function exportCommand(args) {
   const { html, warnings } = await buildSelfContainedHtml(source, {
     baseDir: root,
     confineDir: root,
-    resolveAbsolute: resolveDesignAssetPath,
+    resolveAbsolute: resolveExportAssetPath,
   });
   await writeFile(output, html);
   return createExportOutput({ source: absolute, output, html, warnings });
@@ -820,7 +902,7 @@ export function getCommandHelp(command, { agent = "generic" } = {}) {
 }
 
 function createTopLevelHelp({ agent = "generic" } = {}) {
-  return `luxe - Luxe Editor AXI\n\nUsage:\n  luxe\n  luxe <html-file> [--no-open] [--no-gate] [--reopen]\n  luxe poll <html-file> [--agent-reply "..."]\n  luxe end <html-file>\n  luxe export <html-file> [--out <path>]\n  luxe stop\n  luxe playbook [playbook_id]\n  luxe design\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback, ends the session, or the browser proves a severe layout failure, staying silent while it waits - never kill it. Repair and re-check every returned layout failure before involving the human; cosmetic and uncertain observations are never returned. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
+  return `luxe - Luxe Editor AXI\n\nUsage:\n  luxe\n  luxe <html-file> [--no-open] [--no-gate] [--reopen]\n  luxe poll <html-file> [--agent-reply "..."]\n  luxe end <html-file>\n  luxe export <html-file> [--out <path>]\n  luxe save-diagram <html-file> [--diagram <n>]\n  luxe stop\n  luxe playbook [playbook_id]\n  luxe design\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback, ends the session, or the browser proves a severe layout failure, staying silent while it waits - never kill it. Repair and re-check every returned layout failure before involving the human; cosmetic and uncertain observations are never returned. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
 }
 
 function createCommandHelp({ agent = "generic" } = {}) {
@@ -830,8 +912,9 @@ function createCommandHelp({ agent = "generic" } = {}) {
     end: `Usage: luxe end <html-file>\n\nEnd a Luxe Editor session as the agent. A session ended this way still reopens normally on the next \`luxe <html-file>\`, unlike a user ending it from the browser, which requires --reopen.\n`,
     export: `Usage: luxe export <html-file> [--out <path>]\n\nWrite a portable copy of an artifact: one HTML file with its LOCAL assets inlined (relative-path stylesheets, scripts, images, and fonts become inline <style>/<script> blocks and data URIs). Remote CDN/font references (https URLs) are left as links for the browser to load, so the file needs network to render those. Luxe makes no outbound requests - it only reads local files, confined to the artifact's directory. Defaults to writing <name>.export.html next to the source; pass --out to choose a path. The Luxe annotation SDK is never included in an export.\n`,
     stop: `Usage: luxe stop [--port <port>]\n\nShut down the background Luxe Editor server. The server also stops itself when no browser or poll has been connected for a while (LUXE_IDLE_TIMEOUT_MS, default 30m) and immediately when the last session ends with nothing connected.\n`,
+    "save-diagram": `Usage: luxe save-diagram <html-file> [--diagram <n>]\n\nKeep a whiteboard permanently. Whiteboard scenes are ephemeral by default - they live for the session and are then deleted - so this is how "save that diagram" is honoured from the conversation. Writes <artifact-basename>.wb<n>.excalidraw and <artifact-basename>.wb<n>.png next to the artifact and marks the scene retained, so no cleanup pass touches it again. <n> is the diagram's position among the artifact's .mermaid containers, counting from 0; omit --diagram when the artifact has only one whiteboard. The PNG is the one the browser last exported; if none exists yet, only the scene is written and the result says so.\n`,
     playbook: `Usage: luxe playbook [playbook_id]\n\nList focused artifact guidance playbooks, or show one playbook by ID. Known IDs: diagram, table, comparison, plan, code, input.\n\n${PLAYBOOK_ROUTER_HELP}\n\nExamples:\n  luxe playbook\n  luxe playbook diagram\n  luxe playbook input\n`,
-    design: `Usage: luxe design\n\nShow a copy-pasteable CDN snippet for Tailwind CSS browser runtime v4 + DaisyUI v5 + themes, Mermaid diagram tooling, a content-to-playbook router, an optional layout safety CSS snippet, plus technical reference for DaisyUI components. ${PLAYBOOK_ROUTER_HELP} Luxe artifacts stay portable HTML. This CDN snippet is the design fallback, not the default: inspect the subject project before falling back, and paste the layout safety CSS only when useful for dense nested grid/flex layouts, badges, wide fonts, or local media. ${DESIGN_PRIORITY_RULE}\n`,
+    design: `Usage: luxe design\n\nShow a copy-pasteable CDN snippet for Tailwind CSS browser runtime v4 + DaisyUI v5, the Luxe theme block that maps DaisyUI's semantic variables onto the Luxe tokens, Mermaid diagram tooling, the Luxe Shiki code theme, the chart palette and its labelling rule, a content-to-playbook router, an optional layout safety CSS snippet, plus technical reference for DaisyUI components. ${PLAYBOOK_ROUTER_HELP} Luxe artifacts stay portable HTML. This CDN snippet is the design fallback, not the default: inspect the subject project before falling back, and paste the layout safety CSS only when useful for dense nested grid/flex layouts, badges, wide fonts, or local media. ${DESIGN_PRIORITY_RULE}\n`,
     server: `Usage: luxe server [--port 4387] [--verbose]\n\nRun the local Luxe Editor server. Pass --verbose (or set LUXE_DEBUG=1) to log session and watcher events to stderr. Detached server output is appended to ~/.luxe/server.log, or LUXE_STATE_DIR/server.log when set, for startup and crash diagnostics.\n\nLUXE_HOST sets the bind address (default 127.0.0.1; a wildcard 0.0.0.0 or :: binds every interface). Binding beyond loopback exposes an unauthenticated server that can read and serve arbitrary local files to anything that can reach it, so only do so on a trusted network. LUXE_LINK_HOST sets the hostname written into generated session links (default: the bind address, or loopback when bound to a wildcard). See README's Allowed hosts section for Host allowlisting and LUXE_ALLOWED_HOSTS. LUXE_NO_OPEN=1 (or --no-open) suppresses the local browser launch.\n`,
   };
 }

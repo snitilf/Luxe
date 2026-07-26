@@ -24,10 +24,14 @@ import {
 import * as mermaidNode from "./mermaid-node.js";
 import { extractMermaidSources, mermaidSourceHash } from "./mermaid-source.js";
 import {
+  cleanupSessionWhiteboards,
   isValidDiagramIndex,
   isValidWhiteboardKey,
   loadWhiteboard,
   saveWhiteboard,
+  saveWhiteboardToMachine,
+  sessionHasUnsavedWhiteboardEdits,
+  sweepOrphanWhiteboards,
   writeWhiteboardFeedbackFiles,
 } from "./whiteboard-store.js";
 import { inlineLuxeTokens, LUXE_TOKENS_MARKER } from "./chrome-css.js";
@@ -81,7 +85,12 @@ export function defaultWhiteboardAssetsDir() {
 // PNG preview data URL), which outgrow the default 2 MB JSON cap. Only the
 // whiteboard write routes get the larger limit.
 export function isWhiteboardWriteApiPath(pathname) {
-  return /^\/api\/[0-9a-f]{16}\/whiteboard\/\d{1,3}(\/feedback-files)?$/.test(String(pathname || ""));
+  // The index pattern is the canonical decimal form `isValidDiagramIndex`
+  // accepts, so the body limit and the route validation agree on what an index
+  // is: a path the routes will reject can never claim the larger cap.
+  return /^\/api\/[0-9a-f]{16}\/whiteboard\/(0|[1-9]\d{0,2})(\/(feedback-files|save-to-machine))?$/.test(
+    String(pathname || ""),
+  );
 }
 
 export function createWhiteboardChannelToken(secret, now = Date.now()) {
@@ -318,7 +327,10 @@ export async function serve({
         res.status(404).json({ error: "session not found" });
         return;
       }
-      if (shouldEndSession) clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
+      if (shouldEndSession) {
+        await cleanupWhiteboardsForEndedSession(req.params.key);
+        clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
+      }
       events.emit(shouldEndSession ? "ended" : "feedback", req.params.key);
       res.json({ status: "queued", pending_prompts: session.pending_prompts });
       if (shouldEndSession) await shutdownIfNoLiveSessions();
@@ -348,6 +360,7 @@ export async function serve({
     try {
       if (rejectCrossOriginWrite(req, res, "cross-origin session end rejected")) return;
       await store.endSession(req.params.key, "user");
+      await cleanupWhiteboardsForEndedSession(req.params.key);
       clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
       events.emit("ended", req.params.key);
       res.json({ status: "ended" });
@@ -393,7 +406,7 @@ export async function serve({
       const { html, warnings } = await buildSelfContainedHtml(source, {
         baseDir: root,
         confineDir: root,
-        resolveAbsolute: resolveDesignAssetPath,
+        resolveAbsolute: resolveExportAssetPath,
       });
       const { unresolved, notices } = splitExportWarnings(warnings);
       res.setHeader("content-disposition", exportContentDisposition(session.file));
@@ -414,6 +427,7 @@ export async function serve({
       const file = await canonicalFile(req.body.file);
       const key = sessionKey(file);
       await store.endSession(key, "agent");
+      await cleanupWhiteboardsForEndedSession(key);
       clearFeedbackDelivery(key, activePolls, deliveredFeedback, events);
       events.emit("ended", key);
       res.json({ status: "ended" });
@@ -763,6 +777,61 @@ export async function serve({
     }
   });
 
+  // "Save to machine" (D5/F1/F2): lift one scene out of the ephemeral sidecar and
+  // write it next to the artifact as `<artifact-basename>.wb<N>.excalidraw` and
+  // `.png`, then mark the sidecar retained so no cleanup pass deletes it. Same
+  // same-origin guard as the other whiteboard writes, and for a stronger reason:
+  // this one writes outside the state directory, into the user's project.
+  app.post("/api/:key/whiteboard/:index/save-to-machine", async (req, res, next) => {
+    try {
+      if (!isSameOriginRequest(req)) {
+        res.status(403).json({ error: "cross-origin whiteboard write rejected" });
+        return;
+      }
+      const session = await store.findByKey(req.params.key);
+      if (!session || !isValidWhiteboardKey(req.params.key) || !isValidDiagramIndex(req.params.index)) {
+        res.status(404).json({ error: "whiteboard not found" });
+        return;
+      }
+      // This route writes into the user's project, so it does not take the
+      // caller's word for which diagram exists. The overlay checks the index
+      // against the extracted Mermaid sources before it opens, but that check
+      // is client-side; without the same check here, a caller could keep a
+      // diagram the artifact does not have and litter the project with
+      // `artifact.wb42.excalidraw`.
+      const html = await readFile(session.file, "utf8").catch(() => "");
+      if (!extractMermaidSources(html).some((entry) => entry.index === Number(req.params.index))) {
+        res.status(404).json({ error: "whiteboard not found" });
+        return;
+      }
+      // Ending a session is what makes its whiteboards collectable (D5). The
+      // overlay refuses to open after the end, and this route refuses too:
+      // otherwise a stale tab writes a retain marker back into a swept sidecar
+      // directory that nothing will ever clean up again.
+      if (session.status === "ended") {
+        res.status(409).json({ error: "session has ended" });
+        return;
+      }
+      const body = req.body || {};
+      // The destination is derived from the session's own artifact path, never
+      // from the request: a caller chooses which diagram to keep, not where it
+      // lands.
+      const { scenePath, previewPath } = await saveWhiteboardToMachine(
+        whiteboardStateRoot,
+        req.params.key,
+        Number(req.params.index),
+        {
+          artifactFile: session.file,
+          scene: body.scene ?? null,
+          pngDataUrl: String(body.pngDataUrl || body.png_data_url || ""),
+        },
+      );
+      res.json({ scene_path: scenePath, preview_path: previewPath });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.use((error, req, res, _next) => {
     // Body-parser errors carry a meaningful HTTP status (413 payload-too-large,
     // 400 malformed JSON); surface it instead of flattening everything to 500.
@@ -777,6 +846,58 @@ export async function serve({
     s.once("error", reject);
   });
   publicPort = httpServer.address().port;
+
+  // ---- Ephemeral whiteboards, exits 1 to 3 (D5/F3) ------------------------
+  // Scenes are working state for the life of a session. Exit 1 is an explicit
+  // end, exit 2 is the idle self-shutdown, exit 3 is the orphan sweep below.
+  // Retained scenes ("Save to machine") survive all three.
+  async function cleanupWhiteboardsForEndedSession(key) {
+    try {
+      const removed = await cleanupSessionWhiteboards(whiteboardStateRoot, key);
+      if (removed) logEvent?.(`cleaned up whiteboard sidecars for ended session ${key}`);
+    } catch (error) {
+      // Never let a cleanup failure block ending a session.
+      logEvent?.(`whiteboard cleanup failed for ${key}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  // Exit 2. Walking away is a more common exit than pressing End, so idle
+  // shutdown has to clean up or scenes accumulate from every abandoned session.
+  // The exception is the one D5 asked us to try: a session still holding
+  // whiteboard edits the user has not kept is left alone. D5 suggested the
+  // startup sweep would then collect it; it does not, because the sweep only
+  // touches sessions that are gone or ended, and this one is neither - the
+  // scene lives until the session is explicitly ended. That divergence is
+  // deliberate: the alternative deletes work the user left on the canvas while
+  // they were away from the desk. Recorded in notes/dev/gotchas.md.
+  async function cleanupWhiteboardsOnIdleShutdown() {
+    try {
+      const sessions = await store.listSessions();
+      for (const session of sessions) {
+        if (await sessionHasUnsavedWhiteboardEdits(whiteboardStateRoot, session.key)) {
+          logEvent?.(`idle shutdown left session ${session.key}'s unsaved whiteboard edits in place`);
+          continue;
+        }
+        await cleanupSessionWhiteboards(whiteboardStateRoot, session.key);
+      }
+    } catch (error) {
+      logEvent?.(`idle whiteboard cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  // Exit 3. Sessions that died without a clean exit (a crash, a kill, or the
+  // idle skip above) leave their sidecars behind; every directory whose session
+  // is gone or already ended is collected at boot.
+  async function sweepOrphanWhiteboardsAtStartup() {
+    try {
+      const sessions = await store.listSessions();
+      const live = sessions.filter((session) => session.status !== "ended").map((session) => session.key);
+      const swept = await sweepOrphanWhiteboards(whiteboardStateRoot, live);
+      if (swept.length > 0) logEvent?.(`startup sweep removed whiteboard sidecars for ${swept.join(", ")}`);
+    } catch (error) {
+      logEvent?.(`startup whiteboard sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   let shuttingDown = false;
   function shutdown() {
@@ -823,7 +944,7 @@ export async function serve({
       idleTimer = null;
       if (!shuttingDown && sseClients.size === 0 && activePolls.size === 0) {
         logEvent?.(`idle for ${idleTimeoutMs}ms with no connections, shutting down`);
-        shutdown();
+        cleanupWhiteboardsOnIdleShutdown().finally(shutdown);
       }
     }, idleTimeoutMs);
     idleTimer.unref?.();
@@ -849,6 +970,7 @@ export async function serve({
 
   // Arm the idle timer for a server that is spawned but never opens a session.
   refreshIdleTimer();
+  await sweepOrphanWhiteboardsAtStartup();
 
   return {
     port: httpServer.address().port,
@@ -881,6 +1003,30 @@ export function resolveDesignAssetPath(refPath) {
   if (existsSync(packaged)) return packaged;
   const source = fileURLToPath(asset.source);
   return existsSync(source) ? source : null;
+}
+
+// D6: the font half of the export asset resolver, added in the CALLER rather
+// than inside export-bundle.js, which stays untouched. An artifact that uses
+// the Luxe design guidance names its faces by family and does not link
+// /fonts/*, but a page authored against a running Luxe server can reference
+// them root-absolutely, and export-bundle only inlines what it can turn into a
+// path on disk. Without this the exported file loses its type the moment the
+// server it was exported from stops running.
+export function resolveFontAssetPath(refPath) {
+  const match = /^\/fonts\/([^/?#]+)(?:[?#].*)?$/.exec(refPath);
+  if (!match) return null;
+  // Same containment as the /fonts route: a name, never a path.
+  if (!/^[\w.-]+$/.test(match[1]) || match[1].startsWith(".")) return null;
+  const file = path.join(defaultFontsDir(), match[1]);
+  return existsSync(file) ? file : null;
+}
+
+// The single `resolveAbsolute` both export callers pass. Root-absolute
+// references are only ever resolved against assets THIS server owns and serves;
+// anything else stays a link, which is what keeps export a pure local-file
+// transform with no reach into the wider filesystem.
+export function resolveExportAssetPath(refPath) {
+  return resolveDesignAssetPath(refPath) || resolveFontAssetPath(refPath);
 }
 
 export function exportContentDisposition(file) {

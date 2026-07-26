@@ -6,13 +6,34 @@
 
 export const WHITEBOARD_PROMPT_TAG = "whiteboard";
 export const EXCALIDRAW_SCENE_TARGET_TYPE = "excalidraw-scene";
-export const WHITEBOARD_TEXT_METRICS_VERSION = 1;
+// Bumped whenever the converter call site's `themeVariables` change, because
+// Excalidraw measures the converted text synchronously against whatever font
+// family and size Mermaid was given. Version 2 is the Luxe theme block
+// (Inter 14px, replacing the bare 16px upstream passed), so every scene saved
+// under version 1 has text boxes measured for different glyphs. Saved scenes
+// are repaired on open by `repairSavedSceneTextMetrics`, which only ever grows
+// a box - see the note on that function for why that direction is the only
+// safe one.
+export const WHITEBOARD_TEXT_METRICS_VERSION = 2;
 
 export const SUMMARY_MAX_LINES = 40;
 export const SUMMARY_MAX_LINE_CHARS = 200;
 const SUMMARY_MOVE_EPSILON_PX = 2;
 const STAT_KEYS = ["added", "removed", "moved", "relabeled", "drawn"];
 
+// The persistence boundary for a scene's appearance, and one of the nine places
+// Mermaid/Excalidraw theming is injected - the only one that works by removal.
+//
+// Two reasons both keys are stripped, and neither is obsolete under a
+// light-only system:
+//   1. Excalidraw's theme must arrive through the <Excalidraw theme> prop
+//      alone. A persisted `theme` (or a dark-space `viewBackgroundColor`) is a
+//      second application of the same setting, and because dark renders through
+//      an invert filter, the two compose into a washed-out canvas.
+//   2. Dropping the background is what makes the Luxe canvas a token rather
+//      than a fossil. The frame supplies LUXE_WHITEBOARD_CANVAS_BACKGROUND on
+//      every mount, so changing that value repaints every scene ever saved
+//      instead of only newly converted ones.
 export function sanitizeWhiteboardAppState(appState) {
   if (!appState || typeof appState !== "object" || Array.isArray(appState)) return {};
   const safeAppState = { ...appState };
@@ -83,6 +104,12 @@ export async function convertExcalidrawSkeletonsAfterFontsLoad(skeletons, { conv
   return convert(skeletons);
 }
 
+// Repair for scenes saved under an older text-metrics version. EXPANSION ONLY,
+// deliberately: a box is grown to fit the glyphs the current theme measures and
+// is never shrunk, never moved, and never has its text or any other field
+// touched. Anything else would silently overwrite geometry the user set by hand
+// (or content they typed) in the name of a theme change - the repair exists to
+// stop labels clipping, not to reflow somebody's diagram.
 /**
  * @template E
  * @param {E[]} elements

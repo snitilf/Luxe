@@ -32,6 +32,28 @@ test("the installed mermaid the whiteboard bundles is the pinned version", () =>
   assert.equal(installed.version, REQUIRED_EXACT_PINS.mermaid);
 });
 
+// The converter call site drives Excalidraw's synchronous text measurement, so
+// the theme block and the metrics version are one contract. Bumping the block
+// without bumping the version leaves every saved scene measured for glyphs that
+// are no longer used, and the labels clip.
+test("the shared Mermaid theme and the text-metrics version move together", async () => {
+  const { LUXE_MERMAID_THEME_VARIABLES } = await import("../src/mermaid-theme.js");
+  const { WHITEBOARD_TEXT_METRICS_VERSION } = await import("../src/whiteboard-core.js");
+
+  // Version 2 is Inter 14px, the Luxe block. Change either of these two lines
+  // only together, and only after re-probing native conversion in a browser.
+  assert.equal(LUXE_MERMAID_THEME_VARIABLES.fontFamily, '"Inter", -apple-system, "Segoe UI", sans-serif');
+  assert.equal(LUXE_MERMAID_THEME_VARIABLES.fontSize, "14px");
+  assert.equal(WHITEBOARD_TEXT_METRICS_VERSION, 2);
+});
+
+test("the converter is handed the shared theme object, never a restated copy", () => {
+  const frame = readFileSync(new URL("../src/whiteboard-frame.js", import.meta.url), "utf8");
+
+  assert.match(frame, /parseMermaidToExcalidraw\(source, \{\s*themeVariables: LUXE_MERMAID_THEME_VARIABLES,\s*\}\)/);
+  assert.doesNotMatch(frame, /themeVariables:\s*\{/, "the frame must not inline its own themeVariables literal");
+});
+
 test("the converter and editor resolve to their pinned versions", () => {
   assert.equal(
     readJson("../node_modules/@excalidraw/mermaid-to-excalidraw/package.json").version,

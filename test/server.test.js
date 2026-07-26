@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { homedir, tmpdir } from "node:os";
@@ -23,6 +24,8 @@ import {
   isAllowedRequestHost,
   resolveArtifactAsset,
   resolveDesignAssetPath,
+  resolveExportAssetPath,
+  resolveFontAssetPath,
   resolveIdleTimeoutMs,
   resolveWatchTarget,
   serve,
@@ -1618,6 +1621,48 @@ test("/design serves local Tailwind and DaisyUI artifact assets", async () => {
 test("design asset resolver only trusts exact packaged design asset paths", () => {
   assert.equal(resolveDesignAssetPath("/design/daisyui.css/extra"), null);
   assert.equal(resolveDesignAssetPath("/design/tailwindcss-browser.js/extra"), null);
+});
+
+// D6: the font resolver lives here, in the caller, so export-bundle.js is not
+// touched. Without it an exported artifact that referenced /fonts/* loses its
+// type the moment the server it was exported from stops running.
+test("the export font resolver maps served font URLs onto the packaged files", () => {
+  const inter = resolveFontAssetPath("/fonts/inter-latin-400-normal.woff2");
+  assert.ok(inter, "the bundled Inter face must resolve to a real file");
+  assert.match(inter, /inter-latin-400-normal\.woff2$/);
+  assert.ok(existsSync(inter));
+  assert.equal(resolveFontAssetPath("/fonts/OFL-Inter.txt")?.endsWith("OFL-Inter.txt"), true);
+  // Query and fragment survive the way the design resolver handles them.
+  assert.equal(resolveFontAssetPath("/fonts/inter-latin-400-normal.woff2?v=1"), inter);
+});
+
+test("the export font resolver refuses traversal, nesting, and unknown files", () => {
+  for (const ref of [
+    "/fonts/../chrome.css",
+    "/fonts/..%2Fchrome.css",
+    "/fonts/nested/face.woff2",
+    "/fonts/.hidden",
+    "/fonts/",
+    "/fonts/does-not-exist.woff2",
+    "/design/../fonts/inter-latin-400-normal.woff2",
+    "fonts/inter-latin-400-normal.woff2",
+  ]) {
+    assert.equal(resolveFontAssetPath(ref), null, `${ref} must not resolve`);
+  }
+});
+
+test("the single export resolver covers design assets and fonts, and nothing else", () => {
+  assert.equal(resolveExportAssetPath("/design/daisyui.css"), resolveDesignAssetPath("/design/daisyui.css"));
+  assert.equal(
+    resolveExportAssetPath("/fonts/inter-latin-400-normal.woff2"),
+    resolveFontAssetPath("/fonts/inter-latin-400-normal.woff2"),
+  );
+  // Root-absolute references are only ever resolved against assets this server
+  // owns; everything else stays a link, which is what keeps export a pure
+  // local-file transform with no reach into the wider filesystem.
+  for (const ref of ["/etc/passwd", "/", "/sdk.js", "/chrome.css", "/artifact/abc/index.html"]) {
+    assert.equal(resolveExportAssetPath(ref), null, `${ref} must not resolve`);
+  }
 });
 
 test("GET /api/:key/export inlines local assets and leaves remote references intact", async () => {

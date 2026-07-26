@@ -996,17 +996,23 @@ function whiteboardFetch(url) {
   return { ok: true, json: async () => ({ whiteboard: null }) };
 }
 
-async function initializeInlineWhiteboard(chrome, token = "inline-channel") {
-  const whiteboard = chrome.createInlineWhiteboard();
-  chrome.sendInlineWhiteboardMessage(whiteboard, {
+// Fullscreen-first: the artifact holds no editor, so the only thing it can do is
+// ASK for one. This helper walks the whole guarded path - the artifact frame's
+// open request, the overlay frame booting, its channel token being verified -
+// and returns with an authenticated overlay ready to be driven.
+async function openOverlayWhiteboard(chrome, { index = 0, token = "overlay-channel" } = {}) {
+  chrome.sendFrameMessage({ type: "luxe:openWhiteboard", diagramIndex: index });
+  await flushPromises();
+  await flushPromises();
+  chrome.sendWhiteboardMessage({
     type: "luxe-whiteboard:ready",
-    diagramIndex: 0,
+    diagramIndex: index,
     diagramId: "mermaid-1",
     channelToken: token,
   });
   await flushPromises();
   await flushPromises();
-  return whiteboard;
+  return token;
 }
 
 test("artifact relays cannot invoke whiteboard persistence", async () => {
@@ -1029,23 +1035,71 @@ test("artifact relays cannot invoke whiteboard persistence", async () => {
   assert.equal(chrome.postedToFrame.length, 0);
 });
 
+// The trust-boundary change: the artifact may ask for an editor, so prove that
+// asking is all it can do. A window that is not the artifact frame is ignored
+// outright, and the request itself never reaches a write route.
+test("only the artifact frame's own window may ask for a whiteboard", async () => {
+  const calls = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return whiteboardFetch(url);
+    },
+  });
+
+  chrome.sendWhiteboardMessage({ type: "luxe:openWhiteboard", diagramIndex: 0 });
+  await flushPromises();
+
+  assert.deepEqual(calls, []);
+  assert.ok(!chrome.element("whiteboardFrame").src);
+});
+
+test("an open request for a diagram the artifact file does not have opens nothing", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => whiteboardFetch(url),
+  });
+
+  chrome.sendFrameMessage({ type: "luxe:openWhiteboard", diagramIndex: 7 });
+  await flushPromises();
+  await flushPromises();
+
+  assert.ok(!chrome.element("whiteboardFrame").src);
+  assert.match(chrome.element("whiteboardError").textContent, /not in the artifact file/);
+});
+
+test("an out-of-range diagram index is rejected before any server round trip", async () => {
+  const calls = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return whiteboardFetch(url);
+    },
+  });
+
+  for (const diagramIndex of [-1, 1000, 1.5, "0; DROP", "0", null, undefined, {}, []]) {
+    chrome.sendFrameMessage({ type: "luxe:openWhiteboard", diagramIndex });
+  }
+  await flushPromises();
+
+  assert.deepEqual(calls, []);
+});
+
 test("unverified whiteboard frames cannot invoke whiteboard persistence", async () => {
   const calls = [];
   const chrome = await createChromeHarness({
     fetchImpl: async (url, init = {}) => {
       calls.push({ url, init });
-      return { ok: false };
+      if (url.includes("/whiteboard-channel")) return { ok: false };
+      return whiteboardFetch(url);
     },
   });
-  const whiteboard = chrome.createInlineWhiteboard();
 
-  chrome.sendInlineWhiteboardMessage(whiteboard, {
-    type: "luxe-whiteboard:ready",
-    diagramIndex: 0,
-    channelToken: "forged",
-  });
+  chrome.sendFrameMessage({ type: "luxe:openWhiteboard", diagramIndex: 0 });
   await flushPromises();
-  chrome.sendInlineWhiteboardMessage(whiteboard, {
+  await flushPromises();
+  chrome.sendWhiteboardMessage({ type: "luxe-whiteboard:ready", diagramIndex: 0, channelToken: "forged" });
+  await flushPromises();
+  chrome.sendWhiteboardMessage({
     type: "luxe-whiteboard:save",
     diagramIndex: 0,
     channelId: "forged",
@@ -1053,63 +1107,59 @@ test("unverified whiteboard frames cannot invoke whiteboard persistence", async 
   });
   await flushPromises();
 
-  assert.deepEqual(
-    calls.map((call) => call.url),
-    ["/api/abc/whiteboard-channel"],
-  );
-  assert.equal(whiteboard.posted.length, 0);
-});
-
-test("whiteboard fullscreen waits for the authenticated inline frame to flush", async () => {
-  const chrome = await createChromeHarness({ fetchImpl: async (url) => whiteboardFetch(url) });
-  const inline = await initializeInlineWhiteboard(chrome);
-  const init = inline.posted.at(-1);
-  assert.equal(init.type, "luxe-whiteboard:init");
-  assert.equal(init.channelId, "inline-channel");
-
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:maximize",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-  });
-
-  const prepare = inline.posted.at(-1);
-  assert.equal(prepare.type, "luxe-whiteboard:prepareTeardown");
+  // The channel was offered and refused; nothing was written.
+  assert.ok(calls.some((call) => call.url === "/api/abc/whiteboard-channel"));
   assert.equal(
-    chrome.postedToFrame.some((message) => message.type === "luxe:suspendWhiteboard"),
+    calls.some((call) => call.init?.method === "PUT"),
     false,
   );
-
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:teardownReady",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-    flushId: prepare.flushId,
-  });
-
-  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:suspendWhiteboard");
-  assert.match(chrome.element("whiteboardFrame").src, /^\/whiteboard-frame\?diagramIndex=0$/);
 });
 
+test("the Edit affordance opens the overlay and tells the artifact which diagram it owns", async () => {
+  const chrome = await createChromeHarness({ fetchImpl: async (url) => whiteboardFetch(url) });
+
+  chrome.sendFrameMessage({ type: "luxe:openWhiteboard", diagramIndex: 0 });
+  await flushPromises();
+  await flushPromises();
+
+  assert.match(chrome.element("whiteboardFrame").src, /^\/whiteboard-frame\?diagramIndex=0$/);
+  assert.equal(chrome.element("whiteboardOverlay").hidden, false);
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:whiteboardOpened");
+
+  chrome.sendWhiteboardMessage({
+    type: "luxe-whiteboard:ready",
+    diagramIndex: 0,
+    diagramId: "mermaid-1",
+    channelToken: "overlay-channel",
+  });
+  await flushPromises();
+  await flushPromises();
+
+  const init = chrome.postedToWhiteboard.at(-1);
+  assert.equal(init.type, "luxe-whiteboard:init");
+  assert.equal(init.channelId, "overlay-channel");
+  assert.equal(init.source, "flowchart TD; A-->B");
+  // Light only: the frame is never told a theme any more.
+  assert.equal("theme" in init, false);
+});
+
+test("a second open request is ignored while one whiteboard is already open", async () => {
+  const chrome = await createChromeHarness({ fetchImpl: async (url) => whiteboardFetch(url) });
+  await openOverlayWhiteboard(chrome);
+  const srcAfterOpen = chrome.element("whiteboardFrame").src;
+
+  chrome.sendFrameMessage({ type: "luxe:openWhiteboard", diagramIndex: 0 });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(chrome.element("whiteboardFrame").src, srcAfterOpen);
+});
+
+// Save-before-close, exercised explicitly: the overlay does not disappear until
+// the frame confirms its final save landed.
 test("whiteboard close waits for the authenticated overlay frame to flush", async () => {
   const chrome = await createChromeHarness({ fetchImpl: async (url) => whiteboardFetch(url) });
-  const inline = await initializeInlineWhiteboard(chrome);
-
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:maximize",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-  });
-  const maximizePrepare = inline.posted.at(-1);
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:teardownReady",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-    flushId: maximizePrepare.flushId,
-  });
-  chrome.sendWhiteboardMessage({ type: "luxe-whiteboard:ready", diagramIndex: 0, channelToken: "overlay-channel" });
-  await flushPromises();
-  await flushPromises();
+  await openOverlayWhiteboard(chrome);
 
   chrome.element("whiteboardClose").click();
   const closePrepare = chrome.postedToWhiteboard.at(-1);
@@ -1125,110 +1175,148 @@ test("whiteboard close waits for the authenticated overlay frame to flush", asyn
   });
 
   assert.equal(chrome.element("whiteboardFrame").src, "about:blank");
-  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:resumeWhiteboard");
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:whiteboardClosed");
 });
 
-test("whiteboard fullscreen close accepts the resumed inline frame", async () => {
+test("a failed final save keeps the whiteboard open rather than dropping the edits", async () => {
   const chrome = await createChromeHarness({ fetchImpl: async (url) => whiteboardFetch(url) });
-  const inline = await initializeInlineWhiteboard(chrome);
-
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:maximize",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-  });
-  const maximizePrepare = inline.posted.at(-1);
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:teardownReady",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-    flushId: maximizePrepare.flushId,
-  });
-  chrome.sendWhiteboardMessage({ type: "luxe-whiteboard:ready", diagramIndex: 0, channelToken: "overlay-channel" });
-  await flushPromises();
-  await flushPromises();
+  await openOverlayWhiteboard(chrome);
 
   chrome.element("whiteboardClose").click();
   const closePrepare = chrome.postedToWhiteboard.at(-1);
   chrome.sendWhiteboardMessage({
-    type: "luxe-whiteboard:teardownReady",
+    type: "luxe-whiteboard:teardownFailed",
     diagramIndex: 0,
     channelId: "overlay-channel",
     flushId: closePrepare.flushId,
+    error: "disk full",
   });
 
-  const resumed = chrome.createInlineWhiteboard();
-  chrome.sendInlineWhiteboardMessage(resumed, {
-    type: "luxe-whiteboard:ready",
-    diagramIndex: 0,
-    diagramId: "mermaid-1",
-    channelToken: "resumed-channel",
-  });
-  await flushPromises();
-  await flushPromises();
-
-  assert.equal(resumed.posted.at(-1).type, "luxe-whiteboard:init");
-  assert.equal(resumed.posted.at(-1).channelId, "resumed-channel");
+  assert.notEqual(chrome.element("whiteboardFrame").src, "about:blank");
+  assert.equal(chrome.element("whiteboardOverlay").hidden, false);
 });
 
-test("artifact reload waits for inline whiteboards to flush", async () => {
+test("save to machine persists the scene first, then writes it next to the artifact", async () => {
+  const calls = [];
   const chrome = await createChromeHarness({
-    artifactSrc: "/artifact/abc/index.html",
-    fetchImpl: async (url) => whiteboardFetch(url),
-  });
-  const inline = await initializeInlineWhiteboard(chrome);
-  const initialLoadCount = chrome.srcLoads.length;
-
-  chrome.element("reloadArtifact").click();
-  const prepare = inline.posted.at(-1);
-  assert.equal(prepare.type, "luxe-whiteboard:prepareTeardown");
-  assert.equal(chrome.srcLoads.length, initialLoadCount);
-
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:teardownReady",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-    flushId: prepare.flushId,
-  });
-  await flushPromises();
-
-  assert.equal(chrome.srcLoads.length, initialLoadCount + 1);
-  assert.equal(chrome.element("artifact").src, "/artifact/abc/index.html");
-});
-
-test("server restart flushes an authenticated inline whiteboard before reloading", async () => {
-  let healthChecks = 0;
-  const chrome = await createChromeHarness({
-    fetchImpl: async (url) => {
-      if (url === "/health") {
-        healthChecks += 1;
-        if (healthChecks === 1) throw new Error("server is restarting");
-        return { ok: true };
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url, method: init.method });
+      if (url.includes("/save-to-machine")) {
+        return {
+          ok: true,
+          json: async () => ({ scene_path: "/tmp/artifact.wb0.excalidraw", preview_path: "/tmp/artifact.wb0.png" }),
+        };
       }
       return whiteboardFetch(url);
     },
   });
-  const inline = await initializeInlineWhiteboard(chrome);
+  await openOverlayWhiteboard(chrome);
 
-  const restart = chrome.eventSource().listeners.get("chrome-reload")();
-  await flushPromises();
-  chrome.runTimers(100);
-  await flushPromises();
-
-  const flush = inline.posted.at(-1);
-  assert.equal(flush.type, "luxe-whiteboard:flush");
-  assert.equal(chrome.reloadCount(), 0);
-
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:flushComplete",
+  chrome.sendWhiteboardMessage({
+    type: "luxe-whiteboard:saveToMachine",
     diagramIndex: 0,
-    channelId: "inline-channel",
-    flushId: flush.flushId,
-    ok: true,
+    channelId: "overlay-channel",
+    scene: { elements: [] },
+    sourceHash: "hash",
+    pngDataUrl: "data:image/png;base64,AAA=",
   });
-  await restart;
+  await flushPromises();
+  await flushPromises();
 
-  assert.equal(chrome.reloadCount(), 1);
+  const writes = calls.filter((call) => call.method);
+  assert.deepEqual(
+    writes.map((call) => `${call.method} ${call.url}`),
+    ["POST /api/abc/whiteboard-channel", "PUT /api/abc/whiteboard/0", "POST /api/abc/whiteboard/0/save-to-machine"],
+  );
+  const result = chrome.postedToWhiteboard.at(-1);
+  assert.equal(result.type, "luxe-whiteboard:saveToMachineResult");
+  assert.equal(result.ok, true);
+  assert.equal(result.scenePath, "/tmp/artifact.wb0.excalidraw");
+  assert.equal(result.previewPath, "/tmp/artifact.wb0.png");
+});
+
+test("a failed save to machine is reported to the frame instead of swallowed", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => (url.includes("/save-to-machine") ? { ok: false } : whiteboardFetch(url)),
+  });
+  await openOverlayWhiteboard(chrome);
+
+  chrome.sendWhiteboardMessage({
+    type: "luxe-whiteboard:saveToMachine",
+    diagramIndex: 0,
+    channelId: "overlay-channel",
+    scene: { elements: [] },
+    pngDataUrl: "",
+  });
+  await flushPromises();
+  await flushPromises();
+
+  const result = chrome.postedToWhiteboard.at(-1);
+  assert.equal(result.type, "luxe-whiteboard:saveToMachineResult");
+  assert.equal(result.ok, false);
+});
+
+// Live reload during an open whiteboard. The artifact document is replaced
+// immediately - there is nothing editable inside it any more - and the open
+// overlay is told its source moved, which is what arms the stale banner.
+test("a live reload replaces the artifact and warns the open whiteboard about the new source", async () => {
+  let hash = "hash";
+  const chrome = await createChromeHarness({
+    artifactSrc: "/artifact/abc/index.html",
+    fetchImpl: async (url) => {
+      if (url.includes("/mermaid-sources")) {
+        return { ok: true, json: async () => ({ sources: [{ index: 0, source: "flowchart TD; A-->C", hash }] }) };
+      }
+      return whiteboardFetch(url);
+    },
+  });
+  await openOverlayWhiteboard(chrome);
+  const loadsBefore = chrome.srcLoads.length;
+
+  hash = "hash-2";
+  chrome.eventSource().listeners.get("reload")();
+  await flushPromises();
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(chrome.srcLoads.length, loadsBefore + 1);
+  const changed = chrome.postedToWhiteboard.at(-1);
+  assert.equal(changed.type, "luxe-whiteboard:sourceChanged");
+  assert.equal(changed.sourceHash, "hash-2");
+  assert.equal(changed.source, "flowchart TD; A-->C");
+});
+
+test("a reload that does not change the diagram leaves the open whiteboard alone", async () => {
+  const chrome = await createChromeHarness({
+    artifactSrc: "/artifact/abc/index.html",
+    fetchImpl: async (url) => whiteboardFetch(url),
+  });
+  await openOverlayWhiteboard(chrome);
+  const postedBefore = chrome.postedToWhiteboard.length;
+
+  chrome.eventSource().listeners.get("reload")();
+  await flushPromises();
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(
+    chrome.postedToWhiteboard.slice(postedBefore).some((message) => message.type === "luxe-whiteboard:sourceChanged"),
+    false,
+  );
+});
+
+test("artifact reload no longer waits on anything inside the artifact", async () => {
+  const chrome = await createChromeHarness({
+    artifactSrc: "/artifact/abc/index.html",
+    fetchImpl: async (url) => whiteboardFetch(url),
+  });
+  const initialLoadCount = chrome.srcLoads.length;
+
+  chrome.element("reloadArtifact").click();
+  await flushPromises();
+
+  assert.equal(chrome.srcLoads.length, initialLoadCount + 1);
+  assert.equal(chrome.element("artifact").src, "/artifact/abc/index.html");
 });
 
 test("server restart flushes an authenticated overlay before reloading", async () => {
@@ -1243,22 +1331,7 @@ test("server restart flushes an authenticated overlay before reloading", async (
       return whiteboardFetch(url);
     },
   });
-  const inline = await initializeInlineWhiteboard(chrome);
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:maximize",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-  });
-  const teardown = inline.posted.at(-1);
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:teardownReady",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-    flushId: teardown.flushId,
-  });
-  chrome.sendWhiteboardMessage({ type: "luxe-whiteboard:ready", diagramIndex: 0, channelToken: "overlay-channel" });
-  await flushPromises();
-  await flushPromises();
+  await openOverlayWhiteboard(chrome);
 
   const restart = chrome.eventSource().listeners.get("chrome-reload")();
   await flushPromises();
@@ -1293,14 +1366,14 @@ test("server restart bounds the wait for a whiteboard flush", async () => {
       return whiteboardFetch(url);
     },
   });
-  const inline = await initializeInlineWhiteboard(chrome);
+  await openOverlayWhiteboard(chrome);
 
   const restart = chrome.eventSource().listeners.get("chrome-reload")();
   await flushPromises();
   chrome.runTimers(100);
   await flushPromises();
 
-  assert.equal(inline.posted.at(-1).type, "luxe-whiteboard:flush");
+  assert.equal(chrome.postedToWhiteboard.at(-1).type, "luxe-whiteboard:flush");
   chrome.runTimers(1500);
   await restart;
 
@@ -1321,20 +1394,10 @@ test("whiteboard close stays responsive while overlay initialization is pending"
       return whiteboardFetch(url);
     },
   });
-  const inline = await initializeInlineWhiteboard(chrome);
 
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:maximize",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-  });
-  const maximizePrepare = inline.posted.at(-1);
-  chrome.sendInlineWhiteboardMessage(inline, {
-    type: "luxe-whiteboard:teardownReady",
-    diagramIndex: 0,
-    channelId: "inline-channel",
-    flushId: maximizePrepare.flushId,
-  });
+  chrome.sendFrameMessage({ type: "luxe:openWhiteboard", diagramIndex: 0 });
+  await flushPromises();
+  await flushPromises();
 
   delayOverlaySources = true;
   chrome.sendWhiteboardMessage({ type: "luxe-whiteboard:ready", diagramIndex: 0, channelToken: "overlay-channel" });
@@ -1342,7 +1405,7 @@ test("whiteboard close stays responsive while overlay initialization is pending"
   chrome.element("whiteboardClose").click();
 
   assert.equal(chrome.element("whiteboardFrame").src, "about:blank");
-  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:resumeWhiteboard");
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:whiteboardClosed");
   assert.equal(
     chrome.postedToWhiteboard.some((message) => message.type === "luxe-whiteboard:prepareTeardown"),
     false,

@@ -3,6 +3,7 @@
 import { parseMermaidToExcalidraw } from "@excalidraw/mermaid-to-excalidraw";
 import { convertToExcalidrawElements, exportToCanvas, FONT_FAMILY } from "@excalidraw/excalidraw";
 
+import { LUXE_MERMAID_THEME_VARIABLES } from "../../src/mermaid-theme.js";
 import {
   convertExcalidrawSkeletonsAfterFontsLoad,
   findDuplicateElementIds,
@@ -75,7 +76,10 @@ function withoutMetrics(element) {
 }
 
 async function run() {
-  const parsed = await parseMermaidToExcalidraw(fixture.source, { themeVariables: { fontSize: "16px" } });
+  // The same block the whiteboard frame passes, imported rather than restated:
+  // this fixture only proves anything about real rendering if it converts with
+  // the metrics the product actually ships.
+  const parsed = await parseMermaidToExcalidraw(fixture.source, { themeVariables: LUXE_MERMAID_THEME_VARIABLES });
   let fallbackElements = [];
   const elements = await convertExcalidrawSkeletonsAfterFontsLoad(parsed.elements, {
     convert: materialize,

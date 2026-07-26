@@ -68,6 +68,11 @@ await esbuild.build({
   platform: "browser",
   conditions: ["production"],
   loader: { ".woff2": "file", ".woff": "file", ".ttf": "file" },
+  // The shell stylesheet names the chrome faces by their served URL. They are
+  // answered by the server's /fonts route (which sets the CORS header this
+  // opaque-origin frame needs), not vendored into the bundle, so esbuild must
+  // leave the reference alone rather than try to resolve it on disk.
+  external: ["/fonts/*"],
   define: {
     "process.env.NODE_ENV": '"production"',
     "process.env.IS_PREACT": '"false"',

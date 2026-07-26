@@ -1,14 +1,23 @@
 /* global document, window, FileReader, location */
 
-// Browser entry for the whiteboard frame. It runs in two placements, both
-// sandboxed (`allow-scripts allow-popups`, no `allow-same-origin`): inline,
-// where the artifact SDK embeds one frame in place of each rendered Mermaid
-// diagram; and overlay,
-// where the chrome hosts one frame full-viewport (reached from the inline
-// frame's fullscreen action). The `mode` field of the init message selects the
-// placement-specific UI; everything else is identical. Bundled by
-// `scripts/build.js` (esbuild) together with Excalidraw, the Mermaid
-// converter, its own exactly-pinned mermaid, and React into
+// Browser entry for the whiteboard frame. Luxe is fullscreen-first: there is
+// exactly one placement, the chrome's full-viewport overlay, opened when the
+// reader presses the quiet Edit affordance the artifact SDK draws over a
+// rendered Mermaid diagram. The inline diagram itself stays plain themed
+// Mermaid - no nested editor, no hidden container - so a page of diagrams
+// scrolls and prints like a page.
+//
+// This is a scoped rewrite of the two-placement upstream, not a subtraction.
+// Everything the editor needs to be trustworthy was built unconditionally for
+// both placements and is kept here verbatim: the note field, the image-fallback
+// banner, the stale-source banner with its re-convert-versus-keep-editing
+// prompt (the guard that keeps stale edits from ever merging silently), the
+// status line, and `state.setLocked`, which the teardown flush uses to freeze
+// the canvas while the final save is in flight.
+//
+// The frame is sandboxed (`allow-scripts allow-popups`, no `allow-same-origin`)
+// and bundled by `scripts/build.js` (esbuild) together with Excalidraw, the
+// Mermaid converter, its own exactly-pinned mermaid, and React into
 // `dist/whiteboard/whiteboard.js`, so nothing here loads from the network.
 //
 // The frame owns all whiteboard UI. It holds no server access; the chrome does
@@ -29,6 +38,7 @@ import { createRoot } from "react-dom/client";
 import "@excalidraw/excalidraw/index.css";
 import "./whiteboard-frame.css";
 
+import { LUXE_MERMAID_THEME_VARIABLES, LUXE_WHITEBOARD_CANVAS_BACKGROUND } from "./mermaid-theme.js";
 import {
   convertExcalidrawSkeletonsAfterFontsLoad,
   createWhiteboardPersistencePayload,
@@ -42,9 +52,15 @@ import {
 } from "./whiteboard-core.js";
 
 const SAVE_DEBOUNCE_MS = 800;
+// "Save to machine" is the one control whose busy state is cleared by a reply
+// from the chrome rather than by anything inside this frame. If that reply never
+// arrives - the overlay is torn down mid-flight, the chrome navigates, the
+// channel is gone - the button would stay disabled for the life of the frame.
+// The timeout is the floor under that: generous enough that a large PNG write
+// on a slow disk finishes first, short enough that the user is not stuck.
+const SAVE_TO_MACHINE_TIMEOUT_MS = 20000;
 
 const state = {
-  mode: "overlay",
   diagramIndex: 0,
   diagramId: "",
   // Hash of the Mermaid source this scene was converted from. Stays at the old
@@ -63,8 +79,11 @@ const state = {
   teardownFlushId: "",
   flushIds: new Set(),
   queueBusy: false,
-  // Inline frames boot locked (view mode) so a page full of embedded
-  // whiteboards scrolls normally; the first click on the canvas unlocks it.
+  saveBusy: false,
+  saveToMachineTimer: 0,
+  // Load-bearing in the overlay teardown flush, not a leftover of the inline
+  // placement: `prepareTeardown` locks the canvas into view mode so no edit can
+  // land between the final save being posted and the overlay closing.
   setLocked: null,
 };
 
@@ -98,9 +117,7 @@ function setBanner(id, text) {
   banner.hidden = !text;
 }
 
-function buildShell(theme, mode) {
-  document.body.dataset.luxeWhiteboardTheme = theme;
-  document.body.dataset.luxeWhiteboardMode = mode;
+function buildShell() {
   const shell = el("div", { id: "wbShell" });
   const header = el("header", { id: "wbHeader" });
   const title = el("div", { id: "wbTitle", textContent: "Whiteboard" });
@@ -109,23 +126,21 @@ function buildShell(theme, mode) {
     placeholder: "Optional note for the agent about these edits...",
     autocomplete: "off",
   });
+  // Ephemeral by default (D5): the scene autosaves to the session sidecar and
+  // is swept when the session goes away. "Save to machine" is the explicit
+  // keep, writing the scene and a PNG next to the artifact and marking the
+  // sidecar retained so no cleanup pass touches it again.
+  const saveButton = el("button", {
+    id: "wbSaveToMachine",
+    type: "button",
+    textContent: "Save to machine",
+    title: "Write this whiteboard next to the artifact as .excalidraw and .png",
+  });
   const queueButton = el("button", { id: "wbQueue", type: "button", textContent: "Queue feedback" });
-  // In overlay mode the chrome renders the close control on top of this
-  // header's right edge (it must work even when this frame fails to boot), so
-  // the header reserves that space via CSS instead of adding its own close.
-  // Inline frames offer a fullscreen action instead, which asks the chrome to
-  // reopen this diagram in the overlay.
-  header.append(title, note, queueButton);
-  if (mode === "inline") {
-    const fullscreenButton = el("button", {
-      id: "wbFullscreen",
-      type: "button",
-      textContent: "Fullscreen",
-      title: "Open this whiteboard full screen",
-    });
-    fullscreenButton.onclick = () => post({ type: "luxe-whiteboard:maximize", diagramIndex: state.diagramIndex });
-    header.append(fullscreenButton);
-  }
+  // The chrome renders the close control on top of this header's right edge (it
+  // must work even when this frame fails to boot), so the header reserves that
+  // space via CSS instead of adding its own close.
+  header.append(title, note, saveButton, queueButton);
   const fallbackBanner = el("div", { id: "wbFallbackBanner", className: "wb-banner", hidden: true });
   const staleBanner = el("div", { id: "wbStaleBanner", className: "wb-banner wb-banner-warn", hidden: true });
   const status = el("div", { id: "wbStatus", className: "wb-status", hidden: true });
@@ -159,6 +174,7 @@ function buildShell(theme, mode) {
   document.body.append(shell);
 
   queueButton.onclick = () => queueFeedback().catch((error) => showStatus(`Queue failed: ${describeError(error)}`));
+  saveButton.onclick = () => saveToMachine().catch((error) => showStatus(`Save failed: ${describeError(error)}`));
   note.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.isComposing) {
       event.preventDefault();
@@ -316,26 +332,30 @@ function onLinkOpen(element, event) {
   showLinkConfirmation(safe);
 }
 
-// Inline frames start locked in view mode behind a click-catcher: a page of
-// embedded whiteboards must scroll like a page, not trap every wheel event in
-// canvas zoom. The first click unlocks this one editor.
-function EditorApp({ elements, appState, files, theme, startLocked }) {
-  const [locked, setLocked] = React.useState(startLocked);
+// The overlay owns the viewport, so the editor starts unlocked - there is no
+// page behind it whose scrolling could be trapped. `setLocked` is still exposed
+// on `state` because the teardown flush locks the canvas while the last save is
+// in flight, and unlocks it again if that save fails.
+function EditorApp({ elements, appState, files }) {
+  const [locked, setLocked] = React.useState(false);
   state.setLocked = setLocked;
   return React.createElement(
     "div",
     { style: { position: "relative", width: "100%", height: "100%" } },
     React.createElement(Excalidraw, {
       initialData: { elements, appState, files: files || undefined, scrollToContent: true },
-      theme,
+      // Light only. The theme must reach Excalidraw through this prop alone -
+      // putting it in appState as well double-applies the invert filter and
+      // washes the canvas out (see whiteboard-core's persistence strip).
+      theme: "light",
       viewModeEnabled: locked,
       onChange: scheduleSave,
       onLinkOpen,
       excalidrawAPI: (api) => {
         state.api = api;
-        // Fit the whole scene into the frame - inline frames are far smaller
-        // than the scene's natural 100% size, and a zoomed-in corner of a
-        // diagram reads as broken.
+        // Fit the whole scene into the viewport: a scene converted at its
+        // natural 100% size can open as a zoomed-in corner, which reads as
+        // broken.
         window.setTimeout(() => {
           try {
             api.scrollToContent(api.getSceneElements(), { fitToContent: true });
@@ -352,36 +372,23 @@ function EditorApp({ elements, appState, files, theme, startLocked }) {
         },
       },
     }),
+    // Only the teardown flush locks the canvas now, so this catcher is the
+    // visible "your last edit is being saved" state rather than an unlock
+    // affordance. It deliberately swallows input instead of offering a way out.
     locked
       ? React.createElement(
           "div",
-          {
-            className: "wb-activate",
-            role: "button",
-            tabIndex: 0,
-            onClick: () => setLocked(false),
-            onKeyDown: (event) => {
-              if (event.key === "Enter" || event.key === " ") setLocked(false);
-            },
-          },
-          React.createElement("span", { className: "wb-activate-label" }, "Click to edit"),
+          { className: "wb-activate", "aria-live": "polite" },
+          React.createElement("span", { className: "wb-activate-label" }, "Saving your edits..."),
         )
       : null,
   );
 }
 
-function mountEditor({ elements, appState, files, theme }) {
+function mountEditor({ elements, appState, files }) {
   const editorHost = document.getElementById("wbEditor");
   const root = createRoot(editorHost);
-  root.render(
-    React.createElement(EditorApp, {
-      elements,
-      appState,
-      files,
-      theme,
-      startLocked: state.mode === "inline",
-    }),
-  );
+  root.render(React.createElement(EditorApp, { elements, appState, files }));
 }
 
 const textMetricsCanvas = document.createElement("canvas");
@@ -425,8 +432,14 @@ async function loadSceneFonts(elements, files) {
 }
 
 async function convertSource(source) {
+  // The full Luxe block, imported rather than restated, so a converted scene
+  // opens in the same palette as the inline diagram it came from. This call
+  // site also drives Excalidraw's synchronous text measurement, so changing any
+  // value here (fontFamily and fontSize above all) changes glyph metrics for
+  // every scene ever saved - which is why WHITEBOARD_TEXT_METRICS_VERSION must
+  // be bumped in lockstep.
   const { elements: skeletons, files } = await parseMermaidToExcalidraw(source, {
-    themeVariables: { fontSize: "16px" },
+    themeVariables: LUXE_MERMAID_THEME_VARIABLES,
   });
   const materialize = (input) => {
     // Preserve Mermaid node/edge identity for edit summaries; regenerate only
@@ -448,12 +461,14 @@ async function convertSource(source) {
 }
 
 // Theme is passed only through the <Excalidraw theme> prop - putting it in
-// appState as well double-applies the dark-mode invert filter and washes the
-// canvas out. The background stays a light paper color in both themes; dark
-// mode derives its rendering from it via Excalidraw's own filter.
+// appState as well double-applies the invert filter and washes the canvas out.
+// The background is the Luxe canvas, so an Excalidraw scene sits on the same
+// paper as the artifact page around it. It is supplied fresh on every mount
+// because whiteboard-core strips viewBackgroundColor at the persistence
+// boundary; that strip is what lets a token change repaint every saved scene.
 function defaultAppState() {
   return {
-    viewBackgroundColor: "#ffffff",
+    viewBackgroundColor: LUXE_WHITEBOARD_CANVAS_BACKGROUND,
   };
 }
 
@@ -470,7 +485,7 @@ async function startFromConversion(init) {
       "This diagram type is not natively editable, so it is shown as an image - draw, annotate, and add shapes on top.",
     );
   }
-  mountEditor({ elements, appState: defaultAppState(), files, theme: init.theme });
+  mountEditor({ elements, appState: defaultAppState(), files });
   scheduleSave();
 }
 
@@ -515,7 +530,6 @@ async function startFromSavedScene(init) {
     elements,
     appState: { ...defaultAppState(), ...savedAppState },
     files: state.files,
-    theme: init.theme,
   });
   if (savedMetricsVersion < WHITEBOARD_TEXT_METRICS_VERSION) scheduleSave();
 }
@@ -552,17 +566,7 @@ async function queueFeedback() {
   try {
     const scene = currentScene();
     const summary = summarizeSceneEdits(state.baselineElements, scene.elements);
-    const appState = state.api.getAppState();
-    const blob = await exportToBlob({
-      elements: state.api.getSceneElements(),
-      appState: {
-        exportBackground: true,
-        viewBackgroundColor: appState.viewBackgroundColor || "#ffffff",
-      },
-      files: state.api.getFiles() || null,
-      mimeType: "image/png",
-    });
-    const pngDataUrl = await blobToDataUrl(blob);
+    const pngDataUrl = await exportScenePng();
     post({
       type: "luxe-whiteboard:queueFeedback",
       diagramIndex: state.diagramIndex,
@@ -577,6 +581,65 @@ async function queueFeedback() {
   } catch (error) {
     resetQueueButton();
     throw error;
+  }
+}
+
+// The queue-feedback PNG and the save-to-machine PNG are the same image, and
+// both must land on Luxe paper rather than Excalidraw's default white: the
+// agent and the user see this file, not the canvas. The live appState carries
+// the mounted background (whiteboard-core strips it before persistence), so the
+// fallback is the same token rather than white.
+async function exportScenePng() {
+  const appState = state.api.getAppState();
+  const blob = await exportToBlob({
+    elements: state.api.getSceneElements(),
+    appState: {
+      exportBackground: true,
+      viewBackgroundColor: appState.viewBackgroundColor || LUXE_WHITEBOARD_CANVAS_BACKGROUND,
+    },
+    files: state.api.getFiles() || null,
+    mimeType: "image/png",
+  });
+  return blobToDataUrl(blob);
+}
+
+// D5's explicit keep. Everything else about the save protocol is untouched:
+// this writes a copy next to the artifact and marks the sidecar retained, it
+// does not change what or when the editor autosaves.
+async function saveToMachine() {
+  if (!state.api || state.saveBusy) return;
+  state.saveBusy = true;
+  const saveButton = /** @type {HTMLButtonElement} */ (document.getElementById("wbSaveToMachine"));
+  saveButton.disabled = true;
+  saveButton.textContent = "Saving...";
+  try {
+    const scene = currentScene();
+    const pngDataUrl = await exportScenePng();
+    post({
+      type: "luxe-whiteboard:saveToMachine",
+      diagramIndex: state.diagramIndex,
+      ...createWhiteboardPersistencePayload(state, scene),
+      pngDataUrl,
+    });
+    window.clearTimeout(state.saveToMachineTimer);
+    state.saveToMachineTimer = window.setTimeout(() => {
+      resetSaveButton();
+      showStatus("Save to machine got no reply. It may not have been written - try again.", { transient: false });
+    }, SAVE_TO_MACHINE_TIMEOUT_MS);
+  } catch (error) {
+    resetSaveButton();
+    throw error;
+  }
+}
+
+function resetSaveButton() {
+  window.clearTimeout(state.saveToMachineTimer);
+  state.saveToMachineTimer = 0;
+  state.saveBusy = false;
+  const saveButton = /** @type {HTMLButtonElement | null} */ (document.getElementById("wbSaveToMachine"));
+  if (saveButton) {
+    saveButton.disabled = false;
+    saveButton.textContent = "Save to machine";
   }
 }
 
@@ -599,29 +662,29 @@ function resetQueueButton() {
 }
 
 async function handleInit(init) {
-  state.mode = init.mode === "inline" ? "inline" : "overlay";
   state.diagramIndex = Number(init.diagramIndex) || 0;
   state.diagramId = String(init.diagramId || "");
   state.currentSource = String(init.source || "");
   state.currentSourceHash = String(init.sourceHash || "");
-  const theme = init.theme === "dark" ? "dark" : "light";
   document.getElementById("wbTitle").textContent = `Whiteboard · diagram ${state.diagramIndex + 1}`;
 
   const saved = init.saved && typeof init.saved === "object" && init.saved.scene ? init.saved : null;
   try {
     if (!saved) {
-      await startFromConversion({ ...init, theme });
+      await startFromConversion(init);
       return;
     }
     if (saved.source_hash === init.sourceHash) {
-      await startFromSavedScene({ ...init, saved, theme });
+      await startFromSavedScene({ ...init, saved });
       return;
     }
+    // Stale source. This choice is the guard that keeps edits made against an
+    // older diagram from merging into a newer one without the user saying so.
     const choice = await offerStaleChoice();
     if (choice === "keep") {
-      await startFromSavedScene({ ...init, saved, theme });
+      await startFromSavedScene({ ...init, saved });
     } else {
-      await startFromConversion({ ...init, theme });
+      await startFromConversion(init);
     }
   } catch (error) {
     showStatus(`Could not open this diagram as a whiteboard: ${describeError(error)}`, { transient: false });
@@ -654,7 +717,7 @@ function main() {
     if (msg.type === "luxe-whiteboard:init" && !initialized && typeof msg.channelId === "string" && msg.channelId) {
       initialized = true;
       state.channelId = msg.channelId;
-      buildShell(msg.theme === "dark" ? "dark" : "light", msg.mode === "inline" ? "inline" : "overlay");
+      buildShell();
       handleInit(msg);
     }
     if (!initialized || msg.channelId !== state.channelId) return;
@@ -662,6 +725,19 @@ function main() {
     if (msg.type === "luxe-whiteboard:prepareTeardown") prepareTeardown(msg);
     if (msg.type === "luxe-whiteboard:flush") flushSaveNow(msg);
     if (msg.type === "luxe-whiteboard:saveResult") handleSaveResult(msg);
+    if (msg.type === "luxe-whiteboard:saveToMachineResult") {
+      resetSaveButton();
+      if (msg.ok) {
+        showStatus(
+          `Saved to ${String(msg.scenePath || "")}${msg.previewPath ? ` and ${String(msg.previewPath)}` : ""}`,
+          {
+            transient: false,
+          },
+        );
+      } else {
+        showStatus(`Save failed: ${String(msg.error || "unknown error")}`, { transient: false });
+      }
+    }
     if (msg.type === "luxe-whiteboard:queueResult") {
       resetQueueButton();
       if (msg.ok) {

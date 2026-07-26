@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -323,4 +324,39 @@ test("isModeToggleHotkeyEvent rejects extra shift or alt modifiers", () => {
 test("isModeToggleHotkeyEvent ignores other keys even with a modifier held", () => {
   assert.equal(isModeToggleHotkeyEvent({ key: "e", metaKey: true }), false);
   assert.equal(isModeToggleHotkeyEvent({ key: "Enter", metaKey: true }), false);
+});
+
+// ---------------------------------------------------------------------------
+// Fullscreen-first diagrams. The SDK no longer embeds an editor per diagram; it
+// leaves the rendered Mermaid alone and adds one affordance that ASKS the chrome
+// for an editor. These are source contracts rather than DOM behaviour, because
+// the affordance's behaviour is exercised end to end in a real browser - but
+// each of them is a regression that would otherwise land silently.
+// ---------------------------------------------------------------------------
+const sdkSource = await readFile(new URL("../src/artifact-sdk.js", import.meta.url), "utf8");
+
+test("the SDK embeds no whiteboard editor and hides no diagram", () => {
+  assert.doesNotMatch(sdkSource, /whiteboard-frame\?/, "the SDK still builds a whiteboard frame URL");
+  assert.doesNotMatch(sdkSource, /whiteboard-inline/, "the SDK still embeds an inline whiteboard");
+  assert.doesNotMatch(sdkSource, /container\.style\.display = "none"/, "the SDK still hides the Mermaid container");
+  assert.doesNotMatch(sdkSource, /luxe:suspendWhiteboard|luxe:resumeWhiteboard/);
+});
+
+test("the affordance asks the chrome to open a whiteboard, and carries only an index", () => {
+  assert.match(sdkSource, /parent\.postMessage\(\{ type: "luxe:openWhiteboard", diagramIndex: entry\.index \}, "\*"\)/);
+  assert.match(sdkSource, /setAttribute\("data-luxe-ui", "whiteboard-edit"\)/);
+});
+
+test("the affordance steps aside for annotation and for the diagram it already opened", () => {
+  assert.match(sdkSource, /entry\.button\.disabled = busy \|\| annotationMode/);
+  assert.match(sdkSource, /luxe:whiteboardOpened/);
+  assert.match(sdkSource, /luxe:whiteboardClosed/);
+});
+
+test("the affordance reads its colours from the tokens, never from literals", () => {
+  // The same rule the rest of the SDK follows: hex belongs in luxe-tokens.css.
+  assert.deepEqual(sdkSource.match(/#[0-9a-fA-F]{3,8}\b/g), null);
+  for (const token of ["radius-pill", "strong", "surface-2", "ink-2", "font-sans", "text-label"]) {
+    assert.match(sdkSource, new RegExp(`luxeToken\\("${token}"`), `the affordance hardcodes ${token}`);
+  }
 });

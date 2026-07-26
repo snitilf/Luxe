@@ -22,12 +22,14 @@ export const PLAYBOOKS = [
       "Use page-scoped class names and avoid generic names like .node that can collide with diagram libraries.",
       "Prefer top-down flow for multi-step diagrams unless the flow is genuinely linear and short.",
       "Quote labels that contain punctuation or code-like names, and use explicit line breaks where the renderer supports them.",
-      "Initialize Mermaid to match the page theme and re-render when the theme changes: pick the Mermaid theme from the effective page appearance (light or dark) at render time, and use the theme-aware `luxe design` Mermaid snippet rather than hardcoding a single theme, since Mermaid does not restyle an already-rendered SVG when the viewer toggles the page theme.",
+      "If the artifact also charts data, follow the chart rules `luxe design` prints under `charts`: fixed slot order, and every chart carries direct labels, printed values, or a table view. A legend on its own is not enough.",
+      "Initialize Mermaid with the `luxe design` Mermaid snippet exactly as printed. It carries the Luxe `themeVariables` block, which is what makes a diagram inherit the system; a bare `theme:` name leaves Mermaid on its own beige fills and purple borders, which read as a foreign object dropped into the page.",
+      "Reserve the annotation gold for annotation. It is never a node fill, an edge colour, or a highlight inside a diagram.",
     ],
     pitfalls: [
       "Do not cram every file or function into one diagram when a layered explanation would be clearer.",
       "Do not hand-build boxes-and-arrows from div/flexbox for a flow: it does not auto-route edges and reads worse than Mermaid; reach for Mermaid or SVG for richly annotated nodes.",
-      "Do not let default diagram colors clash with the page palette or dark mode.",
+      "Do not let default diagram colors into the page: initializing Mermaid without the Luxe `themeVariables` block is the usual way this happens.",
       "Do not present unverified architecture claims as facts. Cite the files or commands that support them.",
     ],
     luxe_notes: [
@@ -137,8 +139,11 @@ export const PLAYBOOKS = [
 <script type="module">
   import { File, FileDiff } from "https://esm.sh/@pierre/diffs@1.2.10?bundle";
 
-  const theme = { light: "github-light", dark: "github-dark" };
-  const options = { theme, themeType: "dark", overflow: "wrap" };
+  // Inline the JSON \`luxe design\` prints as code_theme.shiki_theme_json, or load it
+  // from a sibling file - the artifact must stay portable, so do not fetch it remotely.
+  const luxeShikiTheme = { /* ...code_theme.shiki_theme_json... */ };
+
+  const options = { theme: luxeShikiTheme, themeType: "light", overflow: "wrap" };
   const oldFile = {
     name: "src/greeting.ts",
     contents: "export function greet(name: string) {\\n  return \\"Hello \\" + name;\\n}\\n\\nconsole.log(greet(\\"Luxe\\"));\\n",
@@ -161,13 +166,13 @@ export const PLAYBOOKS = [
 
 </script>
 \`\`\``,
-      "Pick a Shiki theme pair that matches the artifact's DaisyUI or Tailwind direction and light or dark mode; replace the GitHub pair above when the page is not GitHub-like.",
+      "Register the bespoke Luxe Shiki theme printed by `luxe design` (`code_theme.shiki_theme_json`) and name it in the `theme` option, replacing the GitHub pair above. It is built against the Luxe code plane, and every one of its syntax tokens is deep enough to survive on the added and removed diff tints.",
       'Use FileDiff diffStyle: "split" for side-by-side review and diffStyle: "unified" for stacked reading; keep overflow: "wrap" unless horizontal alignment is essential.',
       "Use @pierre/diffs line annotations, selections, and headers when calling out specific lines so notes stay attached to code.",
     ],
     pitfalls: [
       "Do not render code as static screenshots, plain <pre> blocks, or markdown pasted into HTML.",
-      "Do not choose an arbitrary default Shiki theme that clashes with the page palette or dark mode.",
+      "Do not choose an arbitrary stock Shiki theme. Its palette will not match the Luxe code plane, and its pale syntax tokens wash out on the diff tints.",
       "Do not show huge unrelated files when a focused render range, parsed patch file, or grouped summary would be clearer.",
       "Do not separate a claim from the code lines that prove it.",
     ],

@@ -30,6 +30,7 @@ import {
   pollWaitBannerText,
   pollWaitTickText,
   resolveServerEntry,
+  saveDiagramCommand,
   shutdownServerOnPort,
   shouldForceRestartForLocalBuild,
   shouldKillProcessOnPort,
@@ -41,6 +42,7 @@ import {
   VERSION,
 } from "../src/cli.js";
 import { DESIGN_PRIORITY_RULE, DESIGN_SYSTEM_HINT } from "../src/design-reference.js";
+import { LUXE_MERMAID_THEME_VARIABLES } from "../src/mermaid-theme.js";
 import { serve } from "../src/server.js";
 import { canonicalFile, sessionKey } from "../src/session-store.js";
 
@@ -285,9 +287,13 @@ test("design output prints copy-pasteable CDN URLs so agents can opt in to Daisy
   assert.equal("opt_out" in output.design, false);
   assert.equal("rule" in output.design, false);
   assert.equal(output.design.latest_docs, "https://daisyui.com/components/");
-  assert.equal(output.themes.length, 35);
-  assert.ok(output.themes.includes("luxury"));
-  assert.ok(output.themes.includes("silk"));
+  // D1: one theme block replaces the stock catalogue. Nothing may point an
+  // agent at a DaisyUI theme any more.
+  assert.equal("themes" in output, false);
+  assert.match(output.luxe_theme_snippet, /data-theme="luxe"/);
+  assert.match(output.luxe_theme_snippet, /--color-base-100: #ffffff/);
+  assert.match(output.luxe_theme_snippet, /--color-primary: #463527/);
+  assert.doesNotMatch(output.luxe_theme_snippet, /\bdark\b/i);
   assert.ok(output.components.actions.includes("button"));
   assert.ok(output.components.data_display.includes("card"));
   assert.ok(output.components.feedback.includes("alert"));
@@ -299,12 +305,61 @@ test("design output prints copy-pasteable CDN URLs so agents can opt in to Daisy
   assert.ok(output.reference.mockup.notes.some((item) => item.includes("line numbers")));
 });
 
-test("design output recommends luxury as the default theme and warns against @apply on DaisyUI classes", () => {
+test("design output prescribes the one Luxe theme and warns against @apply on DaisyUI classes", () => {
   const output = createDesignOutput();
 
-  assert.ok(output.theme_usage.some((item) => /default.*luxury|luxury.*default/i.test(item)));
+  assert.ok(output.theme_usage.some((item) => /exactly one theme and it is light/i.test(item)));
+  assert.ok(output.theme_usage.some((item) => /Do not set `data-theme` to one of DaisyUI's stock themes/.test(item)));
   assert.ok(output.theme_usage.some((item) => item.includes("@apply") && /daisyui/i.test(item)));
   assert.ok(output.theme_usage.some((item) => /aborts the entire|no Tailwind styles/i.test(item)));
+  // Done-criterion: no "dark" string literals survive in shipped guidance.
+  for (const item of output.theme_usage) assert.doesNotMatch(item, /\bdark\b/i);
+});
+
+// UI-REVAMP 2.7's load-bearing rule has no chart component to live in, because
+// this product ships none, so `luxe design` is where it reaches an author.
+test("design output carries the chart palette and its labelling rule", () => {
+  const output = createDesignOutput();
+
+  assert.match(output.charts.labelling_rule, /direct labels, printed values, or an accompanying table view/);
+  assert.match(output.charts.labelling_rule, /legend alone is not sufficient/i);
+  assert.match(output.charts.labelling_rule, /below the 3:1 contrast floor/);
+  assert.deepEqual(output.charts.palette, [
+    "#527dc1",
+    "#b95d4a",
+    "#50a67e",
+    "#d7a44c",
+    "#5a8637",
+    "#ce7d93",
+    "#7660a3",
+    "#d36e4f",
+  ]);
+  assert.ok(output.charts.palette_rules.some((rule) => /Fixed order, never cycled/.test(rule)));
+  assert.ok(output.charts.palette_rules.some((rule) => /cap at four/.test(rule)));
+  assert.equal(output.charts.sequential.length, 5);
+  assert.equal(output.charts.diverging.length, 7);
+});
+
+// UI-REVAMP 2.9 mandates a bespoke Shiki theme. It is JSON handed to a third
+// party, so it is serialized here rather than referenced as CSS variables.
+test("design output ships the bespoke Luxe Shiki theme as usable JSON", () => {
+  const output = createDesignOutput();
+  const theme = JSON.parse(output.code_theme.shiki_theme_json);
+
+  assert.equal(theme.name, "luxe");
+  assert.equal(theme.type, "light");
+  assert.equal(theme.colors["editor.background"], "#f7f4ec");
+  assert.equal(theme.colors["diffEditor.insertedTextBackground"], "#e8f1dd");
+  assert.equal(theme.colors["diffEditor.removedTextBackground"], "#f9e6e0");
+  const foreground = (scope) => theme.tokenColors.find((entry) => entry.scope.includes(scope))?.settings.foreground;
+  assert.equal(foreground("keyword"), "#963f8b");
+  assert.equal(foreground("string"), "#4a7a2a");
+  assert.equal(foreground("constant.numeric"), "#9a5b06");
+  assert.equal(foreground("comment"), "#746b56");
+  assert.equal(foreground("entity.name.function"), "#2f5e9e");
+  assert.equal(foreground("entity.name.type"), "#b8511f");
+  assert.equal(foreground("punctuation"), "#7a7466");
+  assert.match(output.code_theme.note, /bespoke Shiki theme/);
 });
 
 test("playbook index output lists known playbooks with concise descriptions", () => {
@@ -338,219 +393,159 @@ test("diagram playbook names the hand-built flow anti-pattern", () => {
   assert.ok(output.playbook.pitfalls.some((item) => /does not auto-route edges/i.test(item)));
 });
 
-test("diagram playbook tells agents to keep Mermaid theming in sync with the page theme", () => {
+test("diagram playbook prescribes the Luxe themeVariables block, not a theme name", () => {
   const output = createPlaybookOutput(["diagram"]);
 
   assert.ok(
-    output.playbook.design_rules.some(
-      (item) => /mermaid/i.test(item) && /theme/i.test(item) && /re-render/i.test(item),
-    ),
-    "diagram playbook must tell agents to theme Mermaid to the page and re-render on theme change",
+    output.playbook.design_rules.some((item) => /themeVariables/.test(item) && /luxe design/.test(item)),
+    "diagram playbook must send agents to the Luxe Mermaid snippet and name the themeVariables block",
   );
+  assert.ok(
+    output.playbook.design_rules.some((item) => /annotation gold/i.test(item) && /never a node fill/i.test(item)),
+    "the one accent stays reserved inside diagrams too",
+  );
+  assert.ok(
+    output.playbook.design_rules.some((item) => /direct labels, printed values, or a table view/i.test(item)),
+    "an artifact that diagrams often also charts; the labelling rule has to reach it",
+  );
+  assert.ok(output.playbook.pitfalls.some((item) => /without the Luxe `themeVariables` block/.test(item)));
+  // No "dark" anywhere in shipped playbook guidance.
+  for (const item of [...output.playbook.design_rules, ...output.playbook.pitfalls, ...output.playbook.choose]) {
+    assert.doesNotMatch(item, /\bdark\b/i);
+  }
 });
 
-test("design output emits a theme-aware Mermaid init that re-renders on page-theme change", () => {
-  const snippet = createDesignOutput().diagram_tooling.mermaid_cdn_snippet;
+test("code playbook points at the bespoke Luxe Shiki theme instead of a stock pair", () => {
+  const output = createPlaybookOutput(["code"]);
 
-  // The old bug: a single hardcoded Mermaid theme that ignores the page theme.
-  assert.doesNotMatch(snippet, /theme:\s*["']base["']/);
-
-  // It must choose the Mermaid theme from the page's effective light/dark
-  // appearance, covering both a data-theme toggle and the OS preference.
-  assert.match(snippet, /prefers-color-scheme:\s*dark/);
-  assert.match(snippet, /["']dark["']/);
-  assert.match(snippet, /["']default["']/);
-  assert.match(snippet, /backgroundColor/);
-
-  // Mermaid does not restyle an already-rendered SVG, so the snippet must
-  // re-render: it drives rendering itself and reacts to theme changes.
-  assert.match(snippet, /startOnLoad:\s*false/);
-  assert.match(snippet, /mermaid\.run/);
-  assert.match(snippet, /MutationObserver/);
-  assert.match(snippet, /data-theme/);
-  assert.match(snippet, /document\.addEventListener\(["']change["'],\s*queueRender,\s*true\)/);
-  assert.match(snippet, /document\.addEventListener\(\s*["']transitionend["']/);
-  assert.match(snippet, /background-color/);
-  assert.match(snippet, /function compositeRgba/);
-  assert.match(snippet, /colorScheme/);
-  assert.match(snippet, /addEventListener\(["']change["']/);
+  assert.ok(output.playbook.design_rules.some((item) => /code_theme\.shiki_theme_json/.test(item)));
+  assert.ok(output.playbook.pitfalls.some((item) => /arbitrary stock Shiki theme/.test(item)));
+  for (const item of [...output.playbook.design_rules, ...output.playbook.pitfalls]) {
+    assert.doesNotMatch(item, /\bdark\b/i);
+  }
 });
 
-test("theme-aware Mermaid snippet serializes rapid theme-change renders", async () => {
-  const snippet = createDesignOutput()
-    // Strip everything up to and including the module opener: the snippet now leads with an
-    // import map carrying the Mermaid SRI digest, and only the module body is evaluable here.
-    .diagram_tooling.mermaid_cdn_snippet.replace(/^[\s\S]*?<script type="module">\n/, "")
+// Light only. The whole page-background probe, the prefers-color-scheme
+// listener, and the MutationObserver that kept diagrams in step with a theme
+// that could flip are deleted rather than retuned, and the block that replaces
+// them is imported from src/mermaid-theme.js rather than restated here.
+test("the Mermaid snippet initializes once with the shared Luxe theme block", async () => {
+  const output = createDesignOutput();
+  const snippet = output.diagram_tooling.mermaid_cdn_snippet;
+
+  assert.doesNotMatch(snippet, /prefers-color-scheme/);
+  assert.doesNotMatch(snippet, /matchMedia/);
+  assert.doesNotMatch(snippet, /MutationObserver/);
+  assert.doesNotMatch(snippet, /\bdark\b/i);
+  assert.match(snippet, /theme":\s*"base"/);
+  assert.match(snippet, /themeVariables/);
+
+  const body = snippet
+    .replace(/^[\s\S]*?<script type="module">\n/, "")
     .replace(/\n<\/script>$/, "")
     .replace(/^\s*import mermaid from "[^"]+";\n/m, "");
-  let dark = false;
-  let observedThemeMutations = false;
-  const observedThemeTargets = [];
-  const documentListeners = new Map();
-  const initializedThemes = [];
-  const mediaListeners = [];
-  const pendingRenders = [];
+
+  const initializedWith = [];
   const loggedRenderErrors = [];
+  const runCalls = [];
   let nextRenderError;
-  let activeRenders = 0;
-  let maxActiveRenders = 0;
-  let bodyColor = "white";
-  let rootColor = "white";
-  let rootColorScheme = "normal";
-  const paint = {
-    color: "",
-    clearRect() {},
-    set fillStyle(color) {
-      this.color = color;
-    },
-    fillRect() {},
-    getImageData() {
-      const colors = {
-        black: [0, 0, 0, 255],
-        transparent: [0, 0, 0, 0],
-        white: [255, 255, 255, 255],
-        "white-40": [255, 255, 255, 102],
-      };
-      return { data: colors[this.color] };
-    },
-  };
-  const diagram = {
-    textContent: "flowchart TD\\n  A --> B",
-    removeAttribute() {},
-  };
+  const diagram = { id: "d1" };
   const document = {
-    body: { id: "body" },
-    documentElement: { id: "root" },
     readyState: "complete",
-    createElement() {
-      return { getContext: () => paint };
-    },
     querySelectorAll() {
       return [diagram];
     },
-    addEventListener(type, callback, capture) {
-      documentListeners.set(type, { callback, capture });
-    },
-  };
-  const darkQuery = {
-    get matches() {
-      return dark;
-    },
-    addEventListener(type, callback) {
-      assert.equal(type, "change");
-      mediaListeners.push(callback);
-    },
   };
   const window = {
-    matchMedia() {
-      return darkQuery;
-    },
     addEventListener() {
-      assert.fail("the snippet should render immediately after document load");
+      assert.fail("a complete document must render immediately, with no load listener");
     },
   };
-  class TestMutationObserver {
-    constructor() {
-      observedThemeMutations = true;
-    }
-
-    observe(target) {
-      observedThemeTargets.push(target);
-    }
-  }
   const mermaid = {
-    initialize({ theme }) {
-      initializedThemes.push(theme);
+    initialize(config) {
+      initializedWith.push(config);
     },
-    run() {
-      activeRenders += 1;
-      maxActiveRenders = Math.max(maxActiveRenders, activeRenders);
+    run(options) {
+      runCalls.push(options);
       if (nextRenderError) {
         const error = nextRenderError;
         nextRenderError = undefined;
-        activeRenders -= 1;
         return Promise.reject(error);
       }
-      return new Promise((resolve) => {
-        pendingRenders.push(() => {
-          activeRenders -= 1;
-          resolve();
-        });
-      });
+      return Promise.resolve();
     },
   };
-  function finishNextRender() {
-    const finish = pendingRenders.shift();
-    if (!finish) throw new Error("expected a pending Mermaid render");
-    finish();
-  }
 
-  new Function("mermaid", "window", "document", "MutationObserver", "getComputedStyle", "console", snippet)(
+  new Function("mermaid", "window", "document", "console", body)(mermaid, window, document, {
+    error: (...args) => loggedRenderErrors.push(args),
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  // Initialized exactly once, and never re-initialized: nothing can flip.
+  assert.equal(initializedWith.length, 1);
+  assert.equal(initializedWith[0].theme, "base");
+  assert.equal(initializedWith[0].securityLevel, "strict");
+  assert.equal(initializedWith[0].startOnLoad, false);
+  // The whole block reaches the page, values and all. What those values must be
+  // is pinned against the tokens in design-tokens-derived.test.js; what matters
+  // here is that the snippet serializes the shared object rather than a subset.
+  assert.deepEqual(initializedWith[0].themeVariables, LUXE_MERMAID_THEME_VARIABLES);
+  assert.deepEqual(runCalls, [{ nodes: [diagram] }]);
+  assert.deepEqual(loggedRenderErrors, []);
+});
+
+test("a diagram that fails to render is logged, not thrown into the artifact", async () => {
+  const body = createDesignOutput()
+    .diagram_tooling.mermaid_cdn_snippet.replace(/^[\s\S]*?<script type="module">\n/, "")
+    .replace(/\n<\/script>$/, "")
+    .replace(/^\s*import mermaid from "[^"]+";\n/m, "");
+  const loggedRenderErrors = [];
+  const renderError = new Error("invalid Mermaid syntax");
+  const mermaid = {
+    initialize() {},
+    run: () => Promise.reject(renderError),
+  };
+
+  new Function("mermaid", "window", "document", "console", body)(
     mermaid,
-    window,
-    document,
-    TestMutationObserver,
-    (element) => ({
-      backgroundColor: element === document.body ? bodyColor : rootColor,
-      colorScheme: element === document.documentElement ? rootColorScheme : "normal",
-    }),
+    { addEventListener() {} },
+    {
+      readyState: "complete",
+      querySelectorAll: () => [{ id: "d1" }],
+    },
     { error: (...args) => loggedRenderErrors.push(args) },
   );
-
-  assert.equal(mediaListeners.length, 1);
-  assert.equal(observedThemeMutations, true);
-  assert.deepEqual(observedThemeTargets, [document.documentElement, document.body]);
-  const changeListener = documentListeners.get("change");
-  assert.equal(typeof changeListener?.callback, "function");
-  assert.equal(changeListener?.capture, true);
-  const transitionListener = documentListeners.get("transitionend");
-  assert.equal(typeof transitionListener?.callback, "function");
-  assert.equal(transitionListener?.capture, true);
-  assert.deepEqual(initializedThemes, ["default"]);
-  bodyColor = "white-40";
-  rootColor = "black";
-  transitionListener.callback({ propertyName: "color" });
-  assert.deepEqual(initializedThemes, ["default"]);
-  transitionListener.callback({ propertyName: "background-color" });
-  assert.equal(maxActiveRenders, 1);
-  assert.deepEqual(initializedThemes, ["default"]);
-
-  finishNextRender();
-  await Promise.resolve();
-  assert.deepEqual(initializedThemes, ["default", "dark"]);
-  assert.equal(maxActiveRenders, 1);
-
-  finishNextRender();
-  await Promise.resolve();
-  assert.equal(activeRenders, 0);
-  assert.equal(initializedThemes.filter((entry) => entry === "dark").length, 1);
-
-  bodyColor = "transparent";
-  rootColor = "transparent";
-  rootColorScheme = "light";
-  changeListener.callback();
-  assert.deepEqual(initializedThemes, ["default", "dark", "default"]);
-  finishNextRender();
-  await Promise.resolve();
-
-  rootColorScheme = "dark";
-  transitionListener.callback({ propertyName: "background-color" });
-  assert.deepEqual(initializedThemes, ["default", "dark", "default", "dark"]);
-  finishNextRender();
-  await Promise.resolve();
-
-  const renderError = new Error("invalid Mermaid syntax");
-  nextRenderError = renderError;
-  rootColorScheme = "light";
-  transitionListener.callback({ propertyName: "background-color" });
   await Promise.resolve();
   await Promise.resolve();
+  await Promise.resolve();
+
   assert.deepEqual(loggedRenderErrors, [["Mermaid diagram render failed:", renderError]]);
+});
 
-  changeListener.callback();
-  assert.equal(activeRenders, 1);
-  finishNextRender();
+test("an artifact with no diagrams never calls into Mermaid at all", async () => {
+  const body = createDesignOutput()
+    .diagram_tooling.mermaid_cdn_snippet.replace(/^[\s\S]*?<script type="module">\n/, "")
+    .replace(/\n<\/script>$/, "")
+    .replace(/^\s*import mermaid from "[^"]+";\n/m, "");
+  let ran = 0;
+
+  new Function("mermaid", "window", "document", "console", body)(
+    {
+      initialize() {},
+      run() {
+        ran += 1;
+        return Promise.resolve();
+      },
+    },
+    { addEventListener() {} },
+    { readyState: "complete", querySelectorAll: () => [] },
+    console,
+  );
   await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(ran, 0);
 });
 
 test("playbook detail output returns focused Luxe-native guidance", () => {
@@ -1577,4 +1572,120 @@ test("stop command reports when no server is running", async () => {
   } finally {
     await rm(dir, { force: true, recursive: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// The agent-facing half of "Save to machine" (D5). It works directly on the
+// sidecar, deliberately: the browser control's route is same-origin guarded,
+// which is right for a browser control and wrong for a header-less CLI.
+// ---------------------------------------------------------------------------
+async function withSaveDiagramFixture(run) {
+  const dir = await mkdtemp(`${os.tmpdir()}/luxe-save-diagram-`);
+  const previousStateDir = process.env.LUXE_STATE_DIR;
+  const state = `${dir}/state`;
+  process.env.LUXE_STATE_DIR = state;
+  const artifact = `${dir}/report.html`;
+  await writeFile(artifact, '<!doctype html><html><body><pre class="mermaid">flowchart TD\n A-->B</pre></body></html>');
+  const store = await import("../src/whiteboard-store.js");
+  const key = sessionKey(await canonicalFile(artifact));
+  try {
+    await run({ dir, state, artifact, key, store, realArtifact: await canonicalFile(artifact) });
+  } finally {
+    if (previousStateDir === undefined) delete process.env.LUXE_STATE_DIR;
+    else process.env.LUXE_STATE_DIR = previousStateDir;
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function seedSidecar({ state, key, store }, index, extra = {}) {
+  await store.saveWhiteboard(state, key, index, {
+    sourceHash: "hash",
+    textMetricsVersion: 2,
+    scene: { elements: [{ id: "A", type: "rectangle" }], appState: {}, files: {} },
+    baseline: { elements: [{ id: "A", type: "rectangle" }] },
+    ...extra,
+  });
+}
+
+test("save-diagram keeps the only whiteboard without needing an index", async () => {
+  await withSaveDiagramFixture(async (fixture) => {
+    await seedSidecar(fixture, 0);
+
+    const output = await saveDiagramCommand([fixture.artifact]);
+
+    assert.equal(output.saved_whiteboard.diagram_index, 0);
+    assert.equal(output.saved_whiteboard.retained, true);
+    assert.equal(output.saved_whiteboard.scene_path, `${fixture.realArtifact.replace(/\.html$/, "")}.wb0.excalidraw`);
+    assert.equal(JSON.parse(await readFile(output.saved_whiteboard.scene_path, "utf8")).type, "excalidraw");
+    assert.equal(await fixture.store.isWhiteboardRetained(fixture.state, fixture.key, 0), true);
+    // No PNG has been exported yet, so the result says so instead of pretending.
+    assert.equal(output.saved_whiteboard.preview_path, "");
+    assert.match(output.next_step, /No PNG was written/);
+  });
+});
+
+test("save-diagram reuses the PNG the browser already exported", async () => {
+  await withSaveDiagramFixture(async (fixture) => {
+    await seedSidecar(fixture, 0);
+    await fixture.store.writeWhiteboardFeedbackFiles(fixture.state, fixture.key, 0, {
+      scene: { elements: [], appState: {}, files: {} },
+      pngDataUrl:
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    });
+
+    const output = await saveDiagramCommand([fixture.artifact]);
+
+    assert.ok(output.saved_whiteboard.preview_path.endsWith(".wb0.png"));
+    assert.ok((await readFile(output.saved_whiteboard.preview_path)).length > 0);
+    assert.match(output.next_step, /survive session cleanup/);
+  });
+});
+
+test("save-diagram refuses to guess when the artifact has several whiteboards", async () => {
+  await withSaveDiagramFixture(async (fixture) => {
+    await seedSidecar(fixture, 0);
+    await seedSidecar(fixture, 2);
+
+    await assert.rejects(saveDiagramCommand([fixture.artifact]), (error) => {
+      const failure = /** @type {AxiError & { suggestions: string[] }} */ (error);
+      assert.ok(failure instanceof AxiError);
+      assert.match(failure.message, /2 whiteboards/);
+      assert.ok(failure.suggestions.some((item) => item.includes("0, 2")));
+      return true;
+    });
+
+    const output = await saveDiagramCommand([fixture.artifact, "--diagram", "2"]);
+    assert.equal(output.saved_whiteboard.diagram_index, 2);
+  });
+});
+
+test("save-diagram explains itself when there is nothing to save", async () => {
+  await withSaveDiagramFixture(async (fixture) => {
+    await assert.rejects(saveDiagramCommand([fixture.artifact]), (error) => {
+      assert.match(String(/** @type {Error} */ (error).message), /No whiteboard scenes exist/);
+      return true;
+    });
+
+    await seedSidecar(fixture, 0);
+    await assert.rejects(saveDiagramCommand([fixture.artifact, "--diagram", "5"]), (error) => {
+      const failure = /** @type {AxiError & { suggestions: string[] }} */ (error);
+      assert.match(failure.message, /No whiteboard scene for diagram 5/);
+      assert.ok(failure.suggestions.some((item) => item.includes("0")));
+      return true;
+    });
+
+    await assert.rejects(saveDiagramCommand([]), (error) => {
+      assert.match(String(/** @type {Error} */ (error).message), /HTML file path is required/);
+      return true;
+    });
+  });
+});
+
+test("save-diagram help and the command set advertise the ephemeral contract", () => {
+  const help = getCommandHelp("save-diagram");
+
+  assert.match(help, /Whiteboard scenes are ephemeral by default/);
+  assert.match(help, /<artifact-basename>\.wb<n>\.excalidraw/);
+  assert.match(help, /counting from 0/);
+  assert.deepEqual(normalizeArgv(["save-diagram", "a.html"]), ["save-diagram", "a.html"]);
 });
