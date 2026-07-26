@@ -416,6 +416,35 @@ test("cross-origin GET cannot drain poll feedback before the guarded CLI POST", 
   }
 });
 
+test("concurrent guarded polls deliver queued feedback at most once", async () => {
+  const ctx = await startServer();
+  try {
+    const queued = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({ prompts: [{ uid: "1", prompt: "deliver this once" }] }),
+    });
+    assert.equal(queued.status, 200);
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        fetch(`${ctx.base}/api/poll`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ file: ctx.artifact, timeoutMs: 0 }),
+        }).then((res) => res.json()),
+      ),
+    );
+
+    const delivered = results.filter((result) => result.status === "feedback");
+    assert.equal(delivered.length, 1);
+    assert.equal(delivered[0].prompts[0].prompt, "deliver this once");
+    assert.equal(results.filter((result) => result.status === "waiting").length, 7);
+  } finally {
+    await ctx.close();
+  }
+});
+
 // state.json holds every project's prompts, chat history and DOM snapshots in one shared file.
 // POSIX modes are the control; on Windows they are not the ACL that matters and chmod is a
 // no-op, so the assertions are skipped rather than pretended.
