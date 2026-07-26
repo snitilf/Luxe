@@ -1,6 +1,6 @@
 {
   "name": "editeur-luxe",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Luxe - interactive review and visual artifact tooling for agents",
   "type": "module",
   "bin": {
