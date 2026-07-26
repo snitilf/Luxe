@@ -652,6 +652,10 @@ async function ensureServer({ forceRestart = false } = {}) {
   }
   throw new AxiError("Luxe Editor server did not start", "SERVER_ERROR", [
     `Run \`luxe server --port ${port}\` to inspect server startup`,
+    // The detached server writes its own startup failure to the log, so the cause
+    // (most often another process already listening on the port) is one file away.
+    "Inspect `~/.luxe/server.log` (`LUXE_STATE_DIR/server.log` when set) for the reason the server exited",
+    `Set LUXE_PORT to a free port if another process already listens on ${port}`,
   ]);
 }
 

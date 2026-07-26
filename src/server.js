@@ -68,7 +68,7 @@ const WHITEBOARD_CHANNEL_TOKEN_TTL_MS = 5 * 60_000;
 // The whiteboard frame bundle (Excalidraw + Mermaid converter + React) is
 // produced by `scripts/build.js` into dist/whiteboard. Packaged runs find it
 // next to the served bundle; source runs (node bin/luxe.js) fall back to
-// the repo's dist output, so `pnpm run build` must have run at least once.
+// the repo's dist output, so `npm run build` must have run at least once.
 export function defaultFontsDir() {
   const packaged = fileURLToPath(new URL("./fonts", import.meta.url));
   if (existsSync(packaged)) return packaged;
@@ -648,7 +648,7 @@ export async function serve({
       if (!existsSync(file)) {
         res
           .status(404)
-          .send(existsSync(whiteboardAssetsDir) ? "Not found" : "Whiteboard bundle missing - run `pnpm run build`");
+          .send(existsSync(whiteboardAssetsDir) ? "Not found" : "Whiteboard bundle missing - run `npm run build`");
         return;
       }
       res.setHeader("access-control-allow-origin", "*");
