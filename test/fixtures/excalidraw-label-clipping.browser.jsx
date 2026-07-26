@@ -8,6 +8,7 @@ import {
   convertExcalidrawSkeletonsAfterFontsLoad,
   findDuplicateElementIds,
   repairSavedSceneTextMetrics,
+  sceneIsImageFallback,
 } from "../../src/whiteboard-core.js";
 import fixture from "./excalidraw-label-clipping.json" with { type: "json" };
 
@@ -73,6 +74,39 @@ function withoutMetrics(element) {
   delete copy.width;
   delete copy.height;
   return copy;
+}
+
+async function nativeConversionResults() {
+  const fixtures = {
+    subgraph: `flowchart TD
+  subgraph Processing
+    A[Input] --> B[Output]
+  end`,
+    class: `classDiagram
+  class Animal {
+    +String name
+    +eat()
+  }
+  Animal <|-- Dog`,
+    er: `erDiagram
+  CUSTOMER ||--o{ ORDER : places
+  CUSTOMER {
+    string name
+  }
+  ORDER {
+    int id
+  }`,
+    state: `stateDiagram-v2
+  [*] --> Idle
+  Idle --> Running : start
+  Running --> [*]`,
+  };
+  const results = {};
+  for (const [name, source] of Object.entries(fixtures)) {
+    const parsed = await parseMermaidToExcalidraw(source, { themeVariables: LUXE_MERMAID_THEME_VARIABLES });
+    results[name] = !sceneIsImageFallback(materialize(parsed.elements));
+  }
+  return results;
 }
 
 async function run() {
@@ -168,6 +202,7 @@ async function run() {
     multilineLines: multiline.text.split("\n").length,
     repaired: repaired.repaired,
     opaquePixels,
+    nativeConversions: await nativeConversionResults(),
   };
 }
 

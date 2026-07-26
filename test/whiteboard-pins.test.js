@@ -9,6 +9,8 @@ import test from "node:test";
 // EXACTLY - independent of the newer Mermaid CDN version artifacts use for
 // rendering. If a bump is attempted, this test forces a deliberate re-probe of
 // native conversion before it lands.
+// The temporary security decision and its exact advisories live in
+// docs/security/mermaid-11.12-risk-acceptance.md.
 
 const REQUIRED_EXACT_PINS = {
   mermaid: "11.12.1",
@@ -63,4 +65,27 @@ test("the converter and editor resolve to their pinned versions", () => {
     readJson("../node_modules/@excalidraw/excalidraw/package.json").version,
     REQUIRED_EXACT_PINS["@excalidraw/excalidraw"],
   );
+});
+
+test("the retained Mermaid pin has an explicit advisory-specific risk acceptance", () => {
+  const acceptance = readFileSync(
+    new URL("../docs/security/mermaid-11.12-risk-acceptance.md", import.meta.url),
+    "utf8",
+  );
+  const bundle = readFileSync(new URL("../dist/whiteboard/whiteboard.js", import.meta.url), "utf8");
+
+  assert.match(acceptance, /mermaid@11\.12\.1/);
+  assert.match(acceptance, /@excalidraw\/mermaid-to-excalidraw@2\.2\.2/);
+  for (const advisory of [
+    "GHSA-87f9-hvmw-gh4p",
+    "GHSA-ghcm-xqfw-q4vr",
+    "GHSA-xcj9-5m2h-648r",
+    "GHSA-6m6c-36f7-fhxh",
+    "GHSA-r5fr-rjxr-66jc",
+  ]) {
+    assert.match(acceptance, new RegExp(advisory));
+  }
+  assert.match(acceptance, /Attempt 1/);
+  assert.match(acceptance, /Attempt 2/);
+  assert.doesNotMatch(bundle, /templateSettings|Invalid imports option|lodash\.template|importsKeys/);
 });
