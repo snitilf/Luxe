@@ -472,6 +472,29 @@ async function saveScene(ctx, index, body = {}) {
   assert.equal(response.status, 200);
 }
 
+async function seedIdleShutdownScene(dir, body = {}) {
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, ARTIFACT_HTML);
+  const stateFile = path.join(dir, "state.json");
+  const seedServer = await serve({ port: 0, stateFile, idleTimeoutMs: null });
+  const base = `http://127.0.0.1:${seedServer.port}`;
+  try {
+    const opened = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    }).then((res) => res.json());
+    await saveScene(
+      { base, key: opened.key, sameOrigin: { "content-type": "application/json", origin: base } },
+      0,
+      body,
+    );
+    return { key: opened.key, stateFile };
+  } finally {
+    await seedServer.close();
+  }
+}
+
 test("POST save-to-machine writes both files next to the artifact and returns their paths", async () => {
   const ctx = await startWhiteboardServer();
   try {
@@ -709,22 +732,13 @@ test("F3 exit 3: the startup sweep leaves a still-open session's scenes alone", 
 test("F3 exit 2: idle shutdown sweeps an unedited scene", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-wb-idle-"));
   try {
-    const artifact = path.join(dir, "artifact.html");
-    await writeFile(artifact, ARTIFACT_HTML);
-    const stateFile = path.join(dir, "state.json");
+    const { key, stateFile } = await seedIdleShutdownScene(dir);
     const server = await serve({ port: 0, stateFile, idleTimeoutMs: 20 });
-    const base = `http://127.0.0.1:${server.port}`;
-    const opened = await fetch(`${base}/api/sessions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ file: artifact }),
-    }).then((res) => res.json());
-    await saveScene({ base, key: opened.key, sameOrigin: { "content-type": "application/json", origin: base } }, 0);
 
     await server.done;
 
     const { loadWhiteboard } = await import("../src/whiteboard-store.js");
-    assert.equal(await loadWhiteboard(dir, opened.key, 0), null);
+    assert.equal(await loadWhiteboard(dir, key, 0), null);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -735,18 +749,7 @@ test("F3 exit 2: idle shutdown sweeps an unedited scene", async () => {
 test("F3 exit 2: idle shutdown leaves a scene with unsaved edits in place", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-wb-idle-dirty-"));
   try {
-    const artifact = path.join(dir, "artifact.html");
-    await writeFile(artifact, ARTIFACT_HTML);
-    const stateFile = path.join(dir, "state.json");
-    const server = await serve({ port: 0, stateFile, idleTimeoutMs: 20 });
-    const base = `http://127.0.0.1:${server.port}`;
-    const opened = await fetch(`${base}/api/sessions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ file: artifact }),
-    }).then((res) => res.json());
-    const ctx = { base, key: opened.key, sameOrigin: { "content-type": "application/json", origin: base } };
-    await saveScene(ctx, 0, {
+    const { key, stateFile } = await seedIdleShutdownScene(dir, {
       scene: {
         elements: [
           { id: "A", type: "rectangle" },
@@ -757,11 +760,12 @@ test("F3 exit 2: idle shutdown leaves a scene with unsaved edits in place", asyn
       },
       baseline: { elements: [{ id: "A", type: "rectangle" }] },
     });
+    const server = await serve({ port: 0, stateFile, idleTimeoutMs: 20 });
 
     await server.done;
 
     const { loadWhiteboard } = await import("../src/whiteboard-store.js");
-    assert.ok(await loadWhiteboard(dir, opened.key, 0), "in-progress edits must survive an idle shutdown");
+    assert.ok(await loadWhiteboard(dir, key, 0), "in-progress edits must survive an idle shutdown");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

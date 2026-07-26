@@ -1,7 +1,7 @@
 // Gates for the Luxe design system: one token source, four font sizes, two
 // weights, light only, and a font pipeline that actually ships.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { cp, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -178,8 +178,7 @@ test("fonts are served with the woff2 MIME type and a CORS header", async () => 
 test("the packed tarball contains the fonts and their licences", () => {
   // --ignore-scripts: the build already ran (npm run check), and prepack would
   // rebuild the whole whiteboard bundle for a file listing.
-  const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
-  const output = execFileSync(npmExecutable, ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+  const output = execSync("npm pack --dry-run --json --ignore-scripts", {
     cwd: new URL("..", import.meta.url),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
