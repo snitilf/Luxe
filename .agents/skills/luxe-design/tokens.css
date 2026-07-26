@@ -99,19 +99,35 @@
   --info-bg: #e9eef5;
   --info-border: #c6d3e3;
 
-  /* ---- Charts - the Bisque palette (spec 2.7) --------------------------- *
+  /* ---- Charts - the Café palette (spec 2.7) ----------------------------- *
    * Eight slots, FIXED ORDER, never cycled and never reshuffled: the order is
    * the colour-blind safety mechanism. Scatter/bubble/choropleth cap at four.
-   * Three slots sit below 3:1 on the canvas, so every chart must carry direct
-   * labels, printed values, or a table view - a legend alone is not enough. */
-  --chart-1: #527dc1;
-  --chart-2: #b95d4a;
-  --chart-3: #50a67e;
-  --chart-4: #d7a44c;
-  --chart-5: #5a8637;
-  --chart-6: #ce7d93;
-  --chart-7: #7660a3;
-  --chart-8: #d36e4f;
+   * Two slots sit below 3:1 on the canvas, so every chart must carry direct
+   * labels, printed values, or a table view - a legend alone is not enough.
+   *
+   * Warm and muted so the series sit with the cocoa and the paper instead of
+   * reading as primaries dropped onto them. Warmth is hue angle, not low
+   * chroma: the first attempt at this desaturated instead of rotating, and
+   * five of eight slots fell under the chroma floor and read as grey.
+   *
+   * Measured, not chosen. Every slot clears the OKLCH lightness band and the
+   * chroma floor; the worst adjacent pair holds ΔE 14.7 under simulated
+   * deuteranopia against a target of 8 (Bisque managed 8.1), and 15.8 under
+   * normal vision against a floor of 15.
+   *
+   * Two slots look less dusty than the rest and cannot be fixed: pulling the
+   * eucalyptus greyer drops it under the chroma floor, and deepening the plum
+   * toward mauve collapses it into its dusty-rose NEIGHBOUR - slots 6 and 7 are
+   * adjacent, so the fixed order is what holds them apart. Both were tried and
+   * both failed the gates. */
+  --chart-1: #4c77bc; /* denim */
+  --chart-2: #a55639; /* terracotta */
+  --chart-3: #56b28f; /* eucalyptus */
+  --chart-4: #95630c; /* caramel */
+  --chart-5: #8aa960; /* sage */
+  --chart-6: #a64d5f; /* dusty rose */
+  --chart-7: #a87dbe; /* plum */
+  --chart-8: #a45a29; /* cinnamon */
 
   /* Mark specs: 2px strokes, round caps and joins, 4px end dots ringed 2px in
    * --canvas, gridlines in --hair, axis text --ink-2 at 14px, 2px surface gap
@@ -121,20 +137,29 @@
   --chart-dot-ring: 2px;
   --chart-stack-gap: 2px;
 
-  /* ---- Sequential and diverging (spec 2.8) ------------------------------ */
-  --seq-1: #dbe4f4;
-  --seq-2: #a8bfe6;
-  --seq-3: #6f93d2;
-  --seq-4: #3a6fc4;
-  --seq-5: #274d8d;
+  /* ---- Sequential and diverging (spec 2.8) ------------------------------ *
+   * Sequential is one hue, light to dark, on the same 262 degree denim as
+   * --chart-1 so a heatmap belongs to the categorical family. It starts at a
+   * mid tone rather than a pale tint: the previous ramp opened on #dbe4f4,
+   * which is 1.17:1 against the ivory canvas - the lowest band of every
+   * heatmap was invisible on the page it was drawn on. The light end now
+   * clears 2.46:1, and the steps keep >= 0.06 OKLCH lightness between them. */
+  --seq-1: #7c9edd;
+  --seq-2: #6283bf;
+  --seq-3: #4868a2;
+  --seq-4: #304e86;
+  --seq-5: #19356b;
 
-  --div-1: #274d8d;
-  --div-2: #3a6fc4;
-  --div-3: #a8bfe6;
+  /* Diverging takes its poles from the palette's own denim and terracotta, so
+   * polarity reads as the same family rather than a second colour system. Each
+   * wing is a monotone ramp in a single hue; the midpoint is unchanged. */
+  --div-1: #234993;
+  --div-2: #4d70b2;
+  --div-3: #8199c4;
   --div-4: #e9e5da; /* the system's warm grey: "no change" reads as paper */
-  --div-5: #dba193;
-  --div-6: #b8452f;
-  --div-7: #7e2c1d;
+  --div-5: #bf8a78;
+  --div-6: #a7593f;
+  --div-7: #852b06;
 
   /* ---- Code and diff (spec 2.9) ----------------------------------------- */
   --code-bg: #f7f4ec;

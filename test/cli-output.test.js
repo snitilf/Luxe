@@ -327,14 +327,14 @@ test("design output carries the chart palette and its labelling rule", () => {
   assert.match(output.charts.labelling_rule, /legend alone is not sufficient/i);
   assert.match(output.charts.labelling_rule, /below the 3:1 contrast floor/);
   assert.deepEqual(output.charts.palette, [
-    "#527dc1",
-    "#b95d4a",
-    "#50a67e",
-    "#d7a44c",
-    "#5a8637",
-    "#ce7d93",
-    "#7660a3",
-    "#d36e4f",
+    "#4c77bc",
+    "#a55639",
+    "#56b28f",
+    "#95630c",
+    "#8aa960",
+    "#a64d5f",
+    "#a87dbe",
+    "#a45a29",
   ]);
   assert.ok(output.charts.palette_rules.some((rule) => /Fixed order, never cycled/.test(rule)));
   assert.ok(output.charts.palette_rules.some((rule) => /cap at four/.test(rule)));

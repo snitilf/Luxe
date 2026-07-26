@@ -23,6 +23,77 @@ async function token(name) {
   return match[1].trim();
 }
 
+// ---- Colour maths -----------------------------------------------------------
+// Enough of it to assert the properties the chart palette was selected for. These
+// mirror the data-viz skill's validator; they live here rather than being imported
+// because that script ships with the skill, not with this repo, and a test may not
+// depend on a path that only exists while the skill is loaded.
+
+function linearRgb(hex) {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+}
+
+/** @param {number[]} rgb linear-light sRGB */
+function oklab(rgb) {
+  const [r, g, b] = rgb;
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+
+// Machado, Oliveira & Fernandes (2009) at severity 1.0, applied in linear RGB.
+const MACHADO = {
+  protan: [
+    [0.152286, 1.052583, -0.204868],
+    [0.114503, 0.786281, 0.099216],
+    [-0.003882, -0.048116, 1.051998],
+  ],
+  deutan: [
+    [0.367322, 0.860646, -0.227968],
+    [0.280085, 0.672501, 0.047413],
+    [-0.01182, 0.04294, 0.968881],
+  ],
+};
+
+function simulate(rgb, kind) {
+  if (!kind) return rgb;
+  return MACHADO[kind].map((row) => row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2]);
+}
+
+function oklchLightness(hex) {
+  return oklab(linearRgb(hex))[0];
+}
+
+function oklchChroma(hex) {
+  const [, a, b] = oklab(linearRgb(hex));
+  return Math.hypot(a, b);
+}
+
+/** Euclidean distance in OKLab, x100, optionally under a simulated CVD. */
+function cvdDeltaE(hexA, hexB, kind) {
+  const a = oklab(simulate(linearRgb(hexA), kind));
+  const b = oklab(simulate(linearRgb(hexB), kind));
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) * 100;
+}
+
+function wcagContrast(hexA, hexB) {
+  const lum = (hex) => {
+    const [r, g, b] = linearRgb(hex);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [hi, lo] = [lum(hexA), lum(hexB)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 // notes/UI-REVAMP.md section 3, verbatim. A bare `theme:` name is not enough -
 // Mermaid's own defaults ship beige fills and purple borders.
 test("the Mermaid theme block is the spec's values and nothing else", async () => {
@@ -41,14 +112,14 @@ test("the Mermaid theme block is the spec's values and nothing else", async () =
     noteBkgColor: "#faf0d8",
     // Section 2.7's palette and section 2.6's status colours, carried into the
     // series variables section 3 does not name. Pinned key by key below.
-    pie1: "#527dc1",
-    pie2: "#b95d4a",
-    pie3: "#50a67e",
-    pie4: "#d7a44c",
-    pie5: "#5a8637",
-    pie6: "#ce7d93",
-    pie7: "#7660a3",
-    pie8: "#d36e4f",
+    pie1: "#4c77bc",
+    pie2: "#a55639",
+    pie3: "#56b28f",
+    pie4: "#95630c",
+    pie5: "#8aa960",
+    pie6: "#a64d5f",
+    pie7: "#a87dbe",
+    pie8: "#a45a29",
     pieOpacity: "1",
     pieStrokeColor: "#f7f4ee",
     pieStrokeWidth: "2px",
@@ -65,7 +136,7 @@ test("the Mermaid theme block is the spec's values and nothing else", async () =
     activeTaskBorderColor: "#3c5f8f",
     critBkgColor: "#f9e8e2",
     critBorderColor: "#b3341f",
-    todayLineColor: "#5c564a",
+    todayLineColor: "#211e17",
   });
 
   assert.equal(LUXE_MERMAID_THEME_VARIABLES.background, await token("canvas"));
@@ -93,7 +164,7 @@ test("the Mermaid theme block is the spec's values and nothing else", async () =
 // section 3 exists to prevent. The eight slots go in section 2.7's FIXED order:
 // the order is the colour-blind safety mechanism, so a reshuffle here is a
 // correctness bug, not a preference.
-test("Mermaid series colours are the Bisque palette in the spec's fixed order", async () => {
+test("Mermaid series colours are the Café palette in the spec's fixed order", async () => {
   const variables = /** @type {Record<string, string>} */ (LUXE_MERMAID_THEME_VARIABLES);
   for (let slot = 1; slot <= 8; slot += 1) {
     assert.equal(variables[`pie${slot}`], await token(`chart-${slot}`), `pie${slot} is not chart slot ${slot}`);
@@ -128,10 +199,13 @@ test("Mermaid Gantt colours are tokens, never Mermaid's red/navy/lightgrey", asy
   assert.equal(variables.activeTaskBorderColor, await token("info-fg"));
   assert.equal(variables.critBkgColor, await token("error-bg"));
   assert.equal(variables.critBorderColor, await token("error-fg"));
-  // The today marker means "now", not "wrong", so it takes the neutral line ink
-  // rather than a status colour it would then share with critBorderColor.
-  assert.equal(variables.todayLineColor, await token("ink-2"));
+  // The today marker means "now", not "wrong", so it takes an ink rather than a status
+  // colour it would then share with critBorderColor. It also has to be distinguishable
+  // from the ordinary rules: at --ink-2 it was the same value as lineColor, so "now" was
+  // drawn in the ink used for every axis and edge on the chart.
+  assert.equal(variables.todayLineColor, await token("ink-1"));
   assert.notEqual(variables.todayLineColor, variables.critBorderColor);
+  assert.notEqual(variables.todayLineColor, variables.lineColor);
 
   for (const value of Object.values(variables)) {
     assert.doesNotMatch(value, /^(red|navy|white|black|lightgrey|grey)$/i, `${value} is a Mermaid default literal`);
@@ -261,6 +335,53 @@ test("the chart guidance is the token palette in the spec's fixed order", async 
   const diverging = [];
   for (let slot = 1; slot <= 7; slot += 1) diverging.push(await token(`div-${slot}`));
   assert.deepEqual(LUXE_CHART_GUIDANCE.diverging, diverging);
+});
+
+// The literals above only prove the four copies agree. These pin the properties the
+// palette was actually selected for, so a future "let's soften it a bit" is caught by a
+// failing test rather than by a reader who cannot tell two series apart. Thresholds are
+// the data-viz skill's: OKLCH chroma floor 0.10, adjacent CVD target ΔE 8, normal-vision
+// floor ΔE 15, non-text contrast 3:1.
+test("the chart palette holds the properties it was measured against", async () => {
+  const palette = [];
+  for (let slot = 1; slot <= 8; slot += 1) palette.push(await token(`chart-${slot}`));
+
+  for (const hex of palette) {
+    assert.ok(oklchChroma(hex) >= 0.1, `${hex} is under the chroma floor and reads grey`);
+    const L = oklchLightness(hex);
+    assert.ok(L >= 0.43 && L <= 0.77, `${hex} is outside the lightness band at L ${L.toFixed(3)}`);
+  }
+
+  for (let i = 0; i < palette.length - 1; i += 1) {
+    const pair = `${palette[i]}<->${palette[i + 1]}`;
+    for (const kind of ["protan", "deutan"]) {
+      const separation = cvdDeltaE(palette[i], palette[i + 1], kind);
+      assert.ok(separation >= 8, `${pair} only separates by ΔE ${separation.toFixed(1)} under ${kind}`);
+    }
+    const normal = cvdDeltaE(palette[i], palette[i + 1], null);
+    assert.ok(normal >= 15, `${pair} only separates by ΔE ${normal.toFixed(1)} under normal vision`);
+  }
+
+  // Exactly two slots are allowed under 3:1 on the canvas, and the labelling rule is what
+  // carries them. If a third ever drops under, the rule's own wording is wrong too.
+  const canvas = await token("canvas");
+  const lowContrast = palette.filter((hex) => wcagContrast(hex, canvas) < 3);
+  assert.equal(lowContrast.length, 2, `expected 2 slots under 3:1, found ${lowContrast.join(", ")}`);
+  assert.match(LUXE_CHART_GUIDANCE.labelling_rule, /Two of the eight/);
+});
+
+test("the sequential ramp is visible on the canvas it is drawn on", async () => {
+  const sequential = [];
+  for (let slot = 1; slot <= 5; slot += 1) sequential.push(await token(`seq-${slot}`));
+  const canvas = await token("canvas");
+
+  // The ramp this replaced opened on #dbe4f4 at 1.17:1, so the lowest band of every
+  // heatmap was invisible against the page.
+  assert.ok(wcagContrast(sequential[0], canvas) >= 2, `the lightest step ${sequential[0]} is under 2:1 on the canvas`);
+  for (let i = 0; i < sequential.length - 1; i += 1) {
+    const drop = oklchLightness(sequential[i]) - oklchLightness(sequential[i + 1]);
+    assert.ok(drop >= 0.06, `steps ${i + 1}->${i + 2} differ by only ΔL ${drop.toFixed(3)}`);
+  }
 });
 
 // Done-criterion: no "dark" string literals in shipped guidance. The check is

@@ -373,121 +373,121 @@
     },
     {
       "name": "--chart-1",
-      "value": "#527dc1",
+      "value": "#4c77bc",
       "kind": "color",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-2",
-      "value": "#b95d4a",
+      "value": "#a55639",
       "kind": "color",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-3",
-      "value": "#50a67e",
+      "value": "#56b28f",
       "kind": "color",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-4",
-      "value": "#d7a44c",
+      "value": "#95630c",
       "kind": "color",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-5",
-      "value": "#5a8637",
+      "value": "#8aa960",
       "kind": "color",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-6",
-      "value": "#ce7d93",
+      "value": "#a64d5f",
       "kind": "color",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-7",
-      "value": "#7660a3",
+      "value": "#a87dbe",
       "kind": "color",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-8",
-      "value": "#d36e4f",
+      "value": "#a45a29",
       "kind": "color",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-stroke",
       "value": "2px",
       "kind": "length",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-dot",
       "value": "4px",
       "kind": "length",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-dot-ring",
       "value": "2px",
       "kind": "length",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-stack-gap",
       "value": "2px",
       "kind": "length",
-      "group": "Charts - the Bisque palette (spec 2.7)"
+      "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--seq-1",
-      "value": "#dbe4f4",
+      "value": "#7c9edd",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
     {
       "name": "--seq-2",
-      "value": "#a8bfe6",
+      "value": "#6283bf",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
     {
       "name": "--seq-3",
-      "value": "#6f93d2",
+      "value": "#4868a2",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
     {
       "name": "--seq-4",
-      "value": "#3a6fc4",
+      "value": "#304e86",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
     {
       "name": "--seq-5",
-      "value": "#274d8d",
+      "value": "#19356b",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
     {
       "name": "--div-1",
-      "value": "#274d8d",
+      "value": "#234993",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
     {
       "name": "--div-2",
-      "value": "#3a6fc4",
+      "value": "#4d70b2",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
     {
       "name": "--div-3",
-      "value": "#a8bfe6",
+      "value": "#8199c4",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
@@ -499,19 +499,19 @@
     },
     {
       "name": "--div-5",
-      "value": "#dba193",
+      "value": "#bf8a78",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
     {
       "name": "--div-6",
-      "value": "#b8452f",
+      "value": "#a7593f",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
     {
       "name": "--div-7",
-      "value": "#7e2c1d",
+      "value": "#852b06",
       "kind": "color",
       "group": "Sequential and diverging (spec 2.8)"
     },
