@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, copyFile, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,7 @@ import {
 } from "./export-bundle.js";
 import { clientHost, defaultPort, ensureStateDir, hostForUrl, serverLogFile, stateDir, stateFile } from "./paths.js";
 import { findPlaybook, listPlaybooks, playbookIds, PLAYBOOK_ROUTER_HELP } from "./playbooks.js";
+import { PIERRE_DIFFS_ASSET_FILE, PIERRE_DIFFS_SHA384 } from "./pierre-diffs-vendor.js";
 import { resolveExportAssetPath, serve } from "./server.js";
 import { canonicalFile, sessionKey, SessionStore } from "./session-store.js";
 import {
@@ -26,7 +28,18 @@ import {
   whiteboardFeedbackPaths,
 } from "./whiteboard-store.js";
 
-const COMMANDS = new Set(["open", "poll", "end", "stop", "server", "playbook", "design", "export", "save-diagram"]);
+const COMMANDS = new Set([
+  "open",
+  "poll",
+  "end",
+  "stop",
+  "server",
+  "playbook",
+  "design",
+  "export",
+  "save-diagram",
+  "copy-code-assets",
+]);
 // SDK-reserved built-ins (e.g. `update`) must reach runAxiCli untouched; otherwise
 // the bare-arg normalization below would rewrite them into the hidden `open` command.
 const RESERVED = new Set(RESERVED_COMMANDS);
@@ -91,6 +104,7 @@ export async function run(argv) {
       server: serverCommand,
       export: exportCommand,
       "save-diagram": saveDiagramCommand,
+      "copy-code-assets": copyCodeAssetsCommand,
     },
     getCommandHelp: (command) => getCommandHelp(command, { agent }),
   });
@@ -152,6 +166,7 @@ export function createHomeOutput({ bin, sessions, includeSessions = true, agent 
       "Whiteboards are EPHEMERAL: every scene is deleted when the session ends, when the idle server shuts down, or by the sweep at the next server start. Keeping one is explicit - the user presses Save to machine in the whiteboard, or asks you to, and you run `luxe save-diagram <html-file> [--diagram <n>]`, which writes <artifact-basename>.wb<n>.excalidraw and .png next to the artifact and exempts that scene from cleanup",
       "Run `luxe end <html-file>` to end a session as the agent - ending it this way still allows a plain reopen later. When the user ends it from the browser instead, a later `luxe <html-file>` refuses to reopen it without `--reopen`",
       "Run `luxe export <html-file> [--out <path>]` to write a portable copy of the artifact - one HTML file with its LOCAL assets inlined - so it opens with no Luxe server and no sibling files. Remote CDN/font references are left as links, so it needs network to render those. Users can also export from the browser chrome's overflow menu",
+      "Before using the code playbook, run `luxe copy-code-assets <html-file>` to place its hash-checked browser bundle next to the artifact. Keep that local classic script until `luxe export` inlines it.",
       "Run `luxe stop` to shut down the background server (it also self-stops when idle or after the last session ends with nothing connected)",
       `Run \`luxe playbook <playbook_id>\` for focused artifact guidance. ${PLAYBOOK_ROUTER_HELP}`,
       DESIGN_SYSTEM_HINT,
@@ -177,6 +192,31 @@ export function createPlaybookOutput(args) {
   }
 
   return { playbook };
+}
+
+export async function copyCodeAssetsCommand(args) {
+  const artifact = await canonicalFile(String(args[0] || ""));
+  const source = fileURLToPath(new URL(`../dist/design/${PIERRE_DIFFS_ASSET_FILE}`, import.meta.url));
+  const destination = path.join(path.dirname(artifact), PIERRE_DIFFS_ASSET_FILE);
+  const sourceBytes = await readFile(source);
+  const sourceDigest = `sha384-${createHash("sha384").update(sourceBytes).digest("base64")}`;
+  if (sourceDigest !== PIERRE_DIFFS_SHA384) {
+    throw new AxiError("Vendored code-review asset failed its integrity check", "INTERNAL_ERROR", [
+      `Expected ${PIERRE_DIFFS_SHA384}; rebuild this Luxe installation before copying code assets.`,
+    ]);
+  }
+  try {
+    const existing = await readFile(destination);
+    if (!existing.equals(sourceBytes)) {
+      throw new AxiError("Refusing to overwrite a different code-review asset", "VALIDATION_ERROR", [
+        `Remove or rename ${destination} before running \`luxe copy-code-assets\` again.`,
+      ]);
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    await copyFile(source, destination);
+  }
+  return { code_asset: { file: destination, integrity: PIERRE_DIFFS_SHA384 } };
 }
 
 export function createOpenOutput({ file, url, status, agent = "generic" }) {
@@ -914,7 +954,7 @@ export function getCommandHelp(command, { agent = "generic" } = {}) {
 }
 
 function createTopLevelHelp({ agent = "generic" } = {}) {
-  return `luxe - Luxe Editor AXI\n\nUsage:\n  luxe\n  luxe <html-file> [--no-open] [--no-gate] [--reopen]\n  luxe poll <html-file> [--agent-reply "..."]\n  luxe end <html-file>\n  luxe export <html-file> [--out <path>]\n  luxe save-diagram <html-file> [--diagram <n>]\n  luxe stop\n  luxe playbook [playbook_id]\n  luxe design\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback, ends the session, or the browser proves a severe layout failure, staying silent while it waits - never kill it. Repair and re-check every returned layout failure before involving the human; cosmetic and uncertain observations are never returned. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
+  return `luxe - Luxe Editor AXI\n\nUsage:\n  luxe\n  luxe <html-file> [--no-open] [--no-gate] [--reopen]\n  luxe poll <html-file> [--agent-reply "..."]\n  luxe end <html-file>\n  luxe export <html-file> [--out <path>]\n  luxe save-diagram <html-file> [--diagram <n>]\n  luxe copy-code-assets <html-file>\n  luxe stop\n  luxe playbook [playbook_id]\n  luxe design\n\n${DESIGN_SYSTEM_HINT}\n\nNote: poll long-polls indefinitely by default until the user sends feedback, ends the session, or the browser proves a severe layout failure, staying silent while it waits - never kill it. Repair and re-check every returned layout failure before involving the human; cosmetic and uncertain observations are never returned. Do not pass --timeout-ms during normal agent use; it is for tests and debugging only. ${pollExecutionGuidance({ agent })} ${POLL_SEND_AND_END_RULE}\n\n`;
 }
 
 function createCommandHelp({ agent = "generic" } = {}) {
@@ -926,6 +966,7 @@ function createCommandHelp({ agent = "generic" } = {}) {
     stop: `Usage: luxe stop [--port <port>]\n\nShut down the background Luxe Editor server. The server also stops itself when no browser or poll has been connected for a while (LUXE_IDLE_TIMEOUT_MS, default 30m) and immediately when the last session ends with nothing connected.\n`,
     "save-diagram": `Usage: luxe save-diagram <html-file> [--diagram <n>]\n\nKeep a whiteboard permanently. Whiteboard scenes are ephemeral by default - they live for the session and are then deleted - so this is how "save that diagram" is honoured from the conversation. Writes <artifact-basename>.wb<n>.excalidraw and <artifact-basename>.wb<n>.png next to the artifact and marks the scene retained, so no cleanup pass touches it again. <n> is the diagram's position among the artifact's .mermaid containers, counting from 0; omit --diagram when the artifact has only one whiteboard. The PNG is the one the browser last exported; if none exists yet, only the scene is written and the result says so.\n`,
     playbook: `Usage: luxe playbook [playbook_id]\n\nList focused artifact guidance playbooks, or show one playbook by ID. Known IDs: diagram, table, comparison, plan, code, input.\n\n${PLAYBOOK_ROUTER_HELP}\n\nExamples:\n  luxe playbook\n  luxe playbook diagram\n  luxe playbook input\n`,
+    "copy-code-assets": `Usage: luxe copy-code-assets <html-file>\n\nCopy the hash-checked browser bundle required by the code playbook beside an existing artifact. The local classic script is safe for \`luxe export\` to inline.\n`,
     design: `Usage: luxe design\n\nShow a copy-pasteable CDN snippet for Tailwind CSS browser runtime v4 + DaisyUI v5, the Luxe theme block that maps DaisyUI's semantic variables onto the Luxe tokens, Mermaid diagram tooling, the Luxe Shiki code theme, the chart palette and its labelling rule, a content-to-playbook router, an optional layout safety CSS snippet, plus technical reference for DaisyUI components. ${PLAYBOOK_ROUTER_HELP} Luxe artifacts stay portable HTML. This CDN snippet is the design fallback, not the default: inspect the subject project before falling back, and paste the layout safety CSS only when useful for dense nested grid/flex layouts, badges, wide fonts, or local media. ${DESIGN_PRIORITY_RULE}\n`,
     server: `Usage: luxe server [--port 4387] [--verbose]\n\nRun the local Luxe Editor server. Pass --verbose (or set LUXE_DEBUG=1) to log session and watcher events to stderr. Detached server output is appended to ~/.luxe/server.log, or LUXE_STATE_DIR/server.log when set, for startup and crash diagnostics.\n\nLUXE_HOST sets the bind address (default 127.0.0.1; a wildcard 0.0.0.0 or :: binds every interface). Binding beyond loopback exposes an unauthenticated server that can read and serve arbitrary local files to anything that can reach it, so only do so on a trusted network. LUXE_LINK_HOST sets the hostname written into generated session links (default: the bind address, or loopback when bound to a wildcard). See README's Allowed hosts section for Host allowlisting and LUXE_ALLOWED_HOSTS. LUXE_NO_OPEN=1 (or --no-open) suppresses the local browser launch.\n`,
   };

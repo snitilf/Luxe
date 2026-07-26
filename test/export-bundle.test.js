@@ -347,6 +347,18 @@ test("inlines a local script src as an inline script and escapes closing tags", 
   assert.doesNotMatch(out, /src=/);
 });
 
+test("inlines the copied classic code-review asset into a portable export", async () => {
+  const html = '<!doctype html><html><body><script src="luxe-pierre-diffs-1.2.10.iife.js"></script></body></html>';
+  const { html: out, warnings } = await buildSelfContainedHtml(html, {
+    baseDir: "/art",
+    readLocalFile: localReader({ "/art/luxe-pierre-diffs-1.2.10.iife.js": "var LuxePierreDiffs={File(){}};" }),
+  });
+
+  assert.match(out, /<script>var LuxePierreDiffs=\{File\(\)\{\}\};<\/script>/);
+  assert.doesNotMatch(out, /luxe-pierre-diffs-1\.2\.10\.iife\.js/);
+  assert.deepEqual(warnings, []);
+});
+
 test("leaves deferred local scripts as references with a warning", async () => {
   const html = '<!doctype html><html><head><script defer src="app.js"></script></head><body></body></html>';
   const { html: out, warnings } = await buildSelfContainedHtml(html, {

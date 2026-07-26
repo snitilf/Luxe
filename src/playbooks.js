@@ -1,3 +1,5 @@
+import { PIERRE_DIFFS_ASSET_FILE, PIERRE_DIFFS_GLOBAL, PIERRE_DIFFS_SHA384 } from "./pierre-diffs-vendor.js";
+
 export const PLAYBOOK_ROUTER_INSTRUCTION =
   "MUST open each matching playbook before writing HTML. Match against the use_when trigger; one artifact often combines several playbooks.";
 
@@ -132,12 +134,13 @@ export const PLAYBOOKS = [
       "For multi-file changes, group files by user-facing area or task instead of dumping a raw patch in repository order.",
     ],
     design_rules: [
-      `Rendering MUST use @pierre/diffs, not hand-rolled <pre> blocks or another diff library. This verified no-build standalone HTML snippet renders one file and one split diff from esm.sh:
+      `Rendering MUST use @pierre/diffs, not hand-rolled <pre> blocks or another diff library. Before writing the artifact, run \`luxe copy-code-assets <html-file>\`. It copies the hash-checked ${PIERRE_DIFFS_ASSET_FILE} (${PIERRE_DIFFS_SHA384}) beside the artifact. Keep that local asset beside the HTML until \`luxe export\` inlines it. This verified browser-safe snippet renders one file and one split diff without executing a CDN response:
 \`\`\`html
 <div id="file"></div>
 <div id="diff"></div>
-<script type="module">
-  import { File, FileDiff } from "https://esm.sh/@pierre/diffs@1.2.10?bundle";
+<script src="./${PIERRE_DIFFS_ASSET_FILE}"></script>
+<script>
+  const { File, FileDiff } = window.${PIERRE_DIFFS_GLOBAL};
 
   // Inline the JSON \`luxe design\` prints as code_theme.shiki_theme_json, or load it
   // from a sibling file - the artifact must stay portable, so do not fetch it remotely.

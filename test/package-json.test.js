@@ -98,6 +98,7 @@ test("browser-bundled dependencies are pinned exactly", async () => {
     "axi-sdk-js": packageJson.dependencies["axi-sdk-js"],
     "@excalidraw/excalidraw": packageJson.devDependencies["@excalidraw/excalidraw"],
     "@excalidraw/mermaid-to-excalidraw": packageJson.devDependencies["@excalidraw/mermaid-to-excalidraw"],
+    "@pierre/diffs": packageJson.devDependencies["@pierre/diffs"],
     mermaid: packageJson.devDependencies.mermaid,
     react: packageJson.devDependencies.react,
     "react-dom": packageJson.devDependencies["react-dom"],

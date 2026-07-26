@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -14,6 +15,7 @@ process.env.LUXE_LINK_HOST = "127.0.0.1";
 
 import {
   collapseHomeDirectory,
+  copyCodeAssetsCommand,
   createDesignOutput,
   createExportOutput,
   createHomeOutput,
@@ -572,18 +574,46 @@ test("playbook detail output returns focused Luxe-native guidance", () => {
   assert.ok(output.playbook.luxe_notes.some((item) => item.includes("Luxe")));
 });
 
-test("code playbook detail output requires verified @pierre/diffs rendering", () => {
+test("code playbook detail output requires a vendored and integrity-checked @pierre/diffs runtime", () => {
   const output = createPlaybookOutput(["code"]);
+  const guidance = output.playbook.design_rules.join("\n");
 
   assert.equal(output.playbook.id, "code");
   assert.match(output.playbook.use_when, /source code/);
   assert.ok(output.playbook.choose.some((item) => item.includes("FileDiff")));
   assert.ok(output.playbook.choose.some((item) => item.includes("split") && item.includes("unified")));
-  assert.ok(output.playbook.design_rules.some((item) => item.includes("@pierre/diffs")));
-  assert.ok(output.playbook.design_rules.some((item) => item.includes("https://esm.sh/@pierre/diffs@1.2.10?bundle")));
-  assert.ok(output.playbook.design_rules.some((item) => item.includes("new FileDiff")));
-  assert.ok(output.playbook.design_rules.some((item) => item.includes("Shiki theme")));
+  assert.match(guidance, /@pierre\/diffs/);
+  assert.match(guidance, /luxe copy-code-assets <html-file>/);
+  assert.match(guidance, /\.\/luxe-pierre-diffs-1\.2\.10\.iife\.js/);
+  assert.match(guidance, /window\.LuxePierreDiffs/);
+  assert.doesNotMatch(guidance, /https:\/\/esm\.sh\//);
+  assert.doesNotMatch(guidance, /<script[^>]+integrity=/, "local file scripts with SRI are blocked by Chrome");
+  assert.match(guidance, /new FileDiff/);
+  assert.match(guidance, /Shiki theme/);
   assert.ok(output.playbook.pitfalls.some((item) => item.includes("<pre>")));
+});
+
+test("copy-code-assets copies only the exact vendored browser bundle", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "luxe-code-assets-"));
+  const artifact = path.join(root, "review.html");
+  await writeFile(artifact, "<!doctype html><title>Review</title>");
+  try {
+    const copied = await copyCodeAssetsCommand([artifact]);
+    const asset = copied.code_asset.file;
+    const source = await readFile(new URL("../dist/design/luxe-pierre-diffs-1.2.10.iife.js", import.meta.url));
+
+    assert.equal(path.basename(asset), "luxe-pierre-diffs-1.2.10.iife.js");
+    assert.equal(
+      copied.code_asset.integrity,
+      "sha384-a+ZFSdkJRm+4ntEDkfHEKS7F7ieHOjDBNII6pSTGZJloXyIndr18DRd7FyBoIKuT",
+    );
+    assert.deepEqual(await readFile(asset), source);
+
+    await writeFile(asset, "window.LuxePierreDiffs = {};\n");
+    await assert.rejects(() => copyCodeAssetsCommand([artifact]), /Refusing to overwrite/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("plan playbook detail output has polished guidance copy", () => {

@@ -192,6 +192,8 @@ test("the packed tarball contains the fonts and their licences", () => {
     "dist/fonts/jetbrains-mono-latin-500-normal.woff2",
     "dist/fonts/OFL-Inter.txt",
     "dist/fonts/OFL-JetBrainsMono.txt",
+    "dist/design/luxe-pierre-diffs-1.2.10.iife.js",
+    "dist/design/LICENSE-pierre-diffs-Apache-2.0.md",
     "dist/chrome.css",
   ]) {
     assert.ok(files.includes(name), `${name} is missing from npm pack`);
@@ -205,4 +207,6 @@ test("third-party notices describe the fonts that actually ship", async () => {
   assert.match(notices, /jetbrains-mono-latin-500-normal\.woff2/);
   assert.match(notices, /OFL-Inter\.txt/);
   assert.match(notices, /OFL-JetBrainsMono\.txt/);
+  assert.match(notices, /@pierre\/diffs/);
+  assert.match(notices, /LICENSE-pierre-diffs-Apache-2\.0\.md/);
 });

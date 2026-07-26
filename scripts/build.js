@@ -1,8 +1,15 @@
+import { createHash } from "node:crypto";
 import { chmod, copyFile, cp, mkdir, readFile, writeFile } from "node:fs/promises";
 
 import * as esbuild from "esbuild";
 
 import { inlineLuxeTokens } from "../src/chrome-css.js";
+import {
+  PIERRE_DIFFS_ASSET_FILE,
+  PIERRE_DIFFS_GLOBAL,
+  PIERRE_DIFFS_MAX_BYTES,
+  PIERRE_DIFFS_SHA384,
+} from "../src/pierre-diffs-vendor.js";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -52,6 +59,34 @@ await mkdir("dist/design", { recursive: true });
 await copyFile("node_modules/daisyui/daisyui.css", "dist/design/daisyui.css");
 await copyFile("node_modules/daisyui/themes.css", "dist/design/daisyui-themes.css");
 await copyFile("node_modules/@tailwindcss/browser/dist/index.global.js", "dist/design/tailwindcss-browser.js");
+
+// The code-review playbook must never direct an artifact to execute a CDN bundle.
+// Build one exact, classic browser asset from the pinned package instead. Classic script
+// syntax is intentional: export-bundle can inline it into a single-file export, unlike a
+// module graph. The fixed digest makes a changed dependency, esbuild output, or committed
+// asset fail the build before it can reach an artifact.
+const pierreDiffsAsset = `dist/design/${PIERRE_DIFFS_ASSET_FILE}`;
+await esbuild.build({
+  entryPoints: ["@pierre/diffs"],
+  outfile: pierreDiffsAsset,
+  bundle: true,
+  minify: true,
+  format: "iife",
+  globalName: PIERRE_DIFFS_GLOBAL,
+  platform: "browser",
+  target: "es2022",
+});
+const pierreDiffsBytes = await readFile(pierreDiffsAsset);
+if (pierreDiffsBytes.length > PIERRE_DIFFS_MAX_BYTES) {
+  throw new Error(`${PIERRE_DIFFS_ASSET_FILE} exceeds the ${PIERRE_DIFFS_MAX_BYTES}-byte export asset cap`);
+}
+const pierreDiffsDigest = `sha384-${createHash("sha384").update(pierreDiffsBytes).digest("base64")}`;
+if (pierreDiffsDigest !== PIERRE_DIFFS_SHA384) {
+  throw new Error(
+    `${PIERRE_DIFFS_ASSET_FILE} digest mismatch: expected ${PIERRE_DIFFS_SHA384}, got ${pierreDiffsDigest}`,
+  );
+}
+await copyFile("node_modules/@pierre/diffs/LICENSE.md", "dist/design/LICENSE-pierre-diffs-Apache-2.0.md");
 
 // Whiteboard frame: a self-contained browser bundle (Excalidraw + the Mermaid
 // converter + its exactly-pinned mermaid + React) served from

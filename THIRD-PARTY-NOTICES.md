@@ -74,10 +74,14 @@ The full SIL Open Font License 1.1 text for each family ships alongside the font
 
 ## Bundled into `dist/design/`
 
-| Asset                                             | License |
-| ------------------------------------------------- | ------- |
-| `daisyui.css`, `daisyui-themes.css` (daisyUI)     | MIT     |
-| `tailwindcss-browser.js` (`@tailwindcss/browser`) | MIT     |
+| Asset                                                       | License    |
+| ----------------------------------------------------------- | ---------- |
+| `daisyui.css`, `daisyui-themes.css` (daisyUI)               | MIT        |
+| `tailwindcss-browser.js` (`@tailwindcss/browser`)           | MIT        |
+| `luxe-pierre-diffs-1.2.10.iife.js` (`@pierre/diffs` 1.2.10) | Apache-2.0 |
+
+The Apache-2.0 license text for the vendored `@pierre/diffs` bundle ships as
+`dist/design/LICENSE-pierre-diffs-Apache-2.0.md`.
 
 ## Pre-publication audit note
 
