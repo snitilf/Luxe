@@ -66,8 +66,11 @@ Other diagram types are images that reviewers can draw on and annotate.
 
 Luxe changes only the browser view, so saved, standalone, and exported artifacts still render plain Mermaid.
 
-Scenes are ephemeral by default and are deleted with the session.
-Use [`luxe save-diagram`](cli.md) to keep one permanently.
+Scenes are ephemeral.
+Every scene is deleted when the session ends, when the idle server shuts down, or by the sweep at the next server start, so a whiteboard can be collected even if you never end the session.
+
+Keeping one is explicit: press **Save to machine** in the whiteboard, or have the agent run [`luxe save-diagram`](cli.md).
+That writes `<artifact-basename>.wb<n>.excalidraw` next to the artifact, plus the PNG the browser last exported if there is one, and exempts the scene from cleanup.
 
 ## Agent presence
 

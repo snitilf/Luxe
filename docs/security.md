@@ -19,8 +19,6 @@ Those four things are re-tightened to those modes at every CLI start, so anythin
 Whiteboard scene files keep the default mode and are protected by their `0700` parents.
 Windows keeps its own filesystem defaults.
 
-The list of tightened paths in the code must stay in step with that sentence.
-
 ## What a Send transmits
 
 Every Send delivers a `dom_snapshot` of the artifact as currently rendered.

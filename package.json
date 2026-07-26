@@ -8,6 +8,7 @@
   },
   "files": [
     "dist",
+    "docs",
     "skills/luxe",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
