@@ -1,0 +1,42 @@
+# CLI reference
+
+## Commands
+
+| Command                             | Description                                                                                                                                                                                                                                                                                      |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `luxe`                              | Show current sessions and usage guidance.                                                                                                                                                                                                                                                        |
+| `luxe update`                       | Check for or apply the latest npm release through the AXI SDK self-updater.                                                                                                                                                                                                                      |
+| `luxe <html-file>`                  | Open or resume a Luxe Editor session, with the open-time layout gate enabled by default. Refuses to reopen a session the user explicitly ended from the browser unless `--reopen` is passed.                                                                                                     |
+| `luxe poll <html-file>`             | Long-poll until the user sends feedback, ends the session, or the browser proves a severe layout failure. Leave no-timeout polls running, or re-run them if interrupted. Codex guidance keeps polls attached to the active turn. On `status: ended`, stop polling and do not reopen uninvited.   |
+| `luxe end <html-file>`              | End a session as the agent. Unlike a user-initiated end from the browser, this still allows a plain reopen later.                                                                                                                                                                                |
+| `luxe export <html-file>`           | Write a portable copy of the artifact: one HTML file with its local assets inlined, so it opens with no server and no sibling files. Remote CDN and font references are left as links.                                                                                                           |
+| `luxe save-diagram <html-file>`     | Keep a whiteboard permanently. Whiteboard scenes are ephemeral by default and are deleted with the session, so this is how "save that diagram" is honoured. Writes `<artifact-basename>.wb<n>.excalidraw` and `<artifact-basename>.wb<n>.png` next to the artifact and marks the scene retained. |
+| `luxe copy-code-assets <html-file>` | Copy the hash-checked browser bundle required by the code playbook beside an existing artifact. The local classic script is safe for `luxe export` to inline.                                                                                                                                    |
+| `luxe stop`                         | Shut down the background server.                                                                                                                                                                                                                                                                 |
+| `luxe playbook [id]`                | List focused artifact guidance or show one playbook. Agents must open each matching playbook before writing HTML.                                                                                                                                                                                |
+| `luxe design`                       | Show agent-facing design guidance, including optional CDN and Mermaid snippets.                                                                                                                                                                                                                  |
+| `luxe server`                       | Run the local Luxe Editor server.                                                                                                                                                                                                                                                                |
+
+## Flags
+
+| Command             | Flag                  | Description                                                                                                                                                                                                       |
+| ------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `luxe <html-file>`  | `--no-open`           | Ensure the server and session exist without opening another browser window.                                                                                                                                       |
+| `luxe <html-file>`  | `--no-gate`           | Skip the open-time layout curtain for this browser open.                                                                                                                                                          |
+| `luxe <html-file>`  | `--reopen`            | Reopen a session the user explicitly ended from the browser. Without it, a plain open refuses and explains why instead of reopening uninvited.                                                                    |
+| `luxe update`       | `--check`             | Report current versus latest npm version without installing an update.                                                                                                                                            |
+| `luxe export`       | `--out <path>`        | Write the export to a specific path instead of `<name>.export.html` next to the source.                                                                                                                           |
+| `luxe poll`         | `--agent-reply "..."` | Show the agent's reply in the existing browser chat and re-enable human sends before polling again.                                                                                                               |
+| `luxe poll`         | `--timeout-ms <ms>`   | Test and debug escape hatch only. Agents should normally omit it and leave the long poll running.                                                                                                                 |
+| `luxe save-diagram` | `--diagram <n>`       | Which whiteboard to keep, by the diagram's position among the artifact's `.mermaid` containers, counting from 0. Omit it when the artifact has only one whiteboard.                                               |
+| `luxe stop`         | `--port <port>`       | Shut down a server running on a non-default port.                                                                                                                                                                 |
+| `luxe server`       | `--verbose`           | Log session and watcher events to stderr. Can also be enabled with `LUXE_DEBUG=1`. Detached server output is appended to `~/.luxe/server.log` (or `LUXE_STATE_DIR/server.log`) for startup and crash diagnostics. |
+
+## Playbooks
+
+Known playbook IDs: `diagram`, `table`, `comparison`, `plan`, `code`, `input`.
+
+One artifact often combines several playbooks, such as a plan that includes a comparison and a diagram.
+Agents must match against each `use_when` trigger and open every matching playbook before writing HTML.
+
+For flows, architecture, state, or sequence diagrams, open the diagram playbook for the recommended tooling and SVG guidance.
