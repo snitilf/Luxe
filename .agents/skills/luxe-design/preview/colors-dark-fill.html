@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- @dsCard group="Colors" name="Colors · The dark fill" subtitle="Cocoa, and why it is not the body ink" viewport="700x280" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Colors - The dark fill</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">The dark fill</div>
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px">
+        <div class="swatch" style="background: var(--dark-fill); color: var(--dark-fill-text); border-color: var(--dark-fill)">
+          <span class="mono" style="color: var(--dark-fill-text)">--dark-fill</span>
+          <span style="font-size: var(--text-label)">primary button</span>
+        </div>
+        <div
+          class="swatch"
+          style="background: var(--dark-fill-hover); color: var(--dark-fill-text); border-color: var(--dark-fill-hover)"
+        >
+          <span class="mono" style="color: var(--dark-fill-text)">--dark-fill-hover</span>
+          <span style="font-size: var(--text-label)">hover</span>
+        </div>
+        <div class="swatch" style="background: var(--ink-1); color: var(--dark-fill-text); border-color: var(--ink-1)">
+          <span class="mono" style="color: var(--dark-fill-text)">--ink-1</span>
+          <span style="font-size: var(--text-label)">type, not fills</span>
+        </div>
+        <div
+          class="swatch"
+          style="background: var(--disabled-fill); color: var(--disabled-ink); border-color: var(--disabled-fill)"
+        >
+          <span class="mono" style="color: var(--disabled-ink)">--disabled-fill</span>
+          <span style="font-size: var(--text-label)">disabled</span>
+        </div>
+      </div>
+      <p class="note">
+        The cocoa fill carries the primary button, the user chat bubble, the annotate toggle track when it is on, and
+        tooltip backgrounds. It is deliberately not the body ink sitting beside it: type and filled surfaces are
+        different jobs, and collapsing them into one value is what made the primary button read as near-black. The pair
+        that goes on it is always <code class="mono">--dark-fill-text</code>.
+      </p>
+    </div>
+  </body>
+</html>

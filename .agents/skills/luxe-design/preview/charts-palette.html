@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- @dsCard group="Charts" name="Charts · The palette" subtitle="Eight slots in a fixed order, and the labelling rule" viewport="700x300" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Charts - The palette</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Categorical slots</div>
+      <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px">
+        <div class="swatch" style="background: var(--chart-1); border-color: var(--chart-1); min-height: 56px"></div>
+        <div class="swatch" style="background: var(--chart-2); border-color: var(--chart-2); min-height: 56px"></div>
+        <div class="swatch" style="background: var(--chart-3); border-color: var(--chart-3); min-height: 56px"></div>
+        <div class="swatch" style="background: var(--chart-4); border-color: var(--chart-4); min-height: 56px"></div>
+        <div class="swatch" style="background: var(--chart-5); border-color: var(--chart-5); min-height: 56px"></div>
+        <div class="swatch" style="background: var(--chart-6); border-color: var(--chart-6); min-height: 56px"></div>
+        <div class="swatch" style="background: var(--chart-7); border-color: var(--chart-7); min-height: 56px"></div>
+        <div class="swatch" style="background: var(--chart-8); border-color: var(--chart-8); min-height: 56px"></div>
+      </div>
+      <div class="mono">--chart-1 through --chart-8</div>
+      <div
+        style="
+          border: 1px solid var(--warning-border);
+          background: var(--warning-bg);
+          color: var(--warning-fg);
+          border-radius: var(--radius-inner);
+          padding: 12px;
+          font-size: var(--text-label);
+          max-width: 64ch;
+        "
+      >
+        <strong style="font-weight: var(--weight-medium)">Load-bearing rule.</strong> Three slots sit below 3:1 against
+        the canvas, so every chart carries direct labels, printed values, or a table view beside it. A legend alone is
+        not sufficient. Build that into the chart component; do not leave it to whoever authors the page.
+      </div>
+      <p class="note">
+        The order is fixed. It is the colour-blind safety mechanism, not decoration, so slots are assigned from one
+        upwards and never cycled or reshuffled. Adjacent pairs are safe for lines, stacked bars and grouped bars, so all
+        eight are available there. All-pairs separation holds for four, so scatter, bubble, choropleth and small
+        multiples cap at four series. Marks: <code class="mono">--chart-stroke</code> strokes with round caps and joins,
+        <code class="mono">--chart-dot</code> end dots ringed <code class="mono">--chart-dot-ring</code> in the canvas,
+        gridlines in <code class="mono">--hair</code>, axis text in <code class="mono">--ink-2</code> at label size, and a
+        <code class="mono">--chart-stack-gap</code> surface gap between stacked segments.
+      </p>
+    </div>
+  </body>
+</html>

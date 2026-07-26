@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- @dsCard group="Colors" name="Colors · Ink" subtitle="Three inks, and the one that may never carry text" viewport="700x260" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Colors - Ink</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Ink</div>
+      <div class="grid" style="gap: 10px">
+        <div style="color: var(--ink-1); font-size: var(--text-body)">
+          Body, headings and values. <span class="mono" style="color: var(--ink-1)">--ink-1</span>
+        </div>
+        <div style="color: var(--ink-2); font-size: var(--text-body)">
+          Labels, metadata and axis text. <span class="mono">--ink-2</span>
+        </div>
+        <div style="color: var(--ink-3); font-size: var(--text-body)">
+          Decoration only. <span class="mono" style="color: var(--ink-3)">--ink-3</span>
+        </div>
+      </div>
+      <div
+        style="
+          border: 1px solid var(--warning-border);
+          background: var(--warning-bg);
+          color: var(--warning-fg);
+          border-radius: var(--radius-inner);
+          padding: 12px;
+          font-size: var(--text-label);
+          max-width: 60ch;
+        "
+      >
+        <strong style="font-weight: var(--weight-medium)">Load-bearing rule.</strong> The third ink sits below the 4.5:1
+        text floor. It may tint a divider, a disabled label or a tick mark. It must never carry a value, a caption, a
+        unit note or anything a reader needs. If you are reaching for it on real text, the answer is the second ink.
+      </div>
+      <p class="note">
+        The first two inks clear the text floor on every surface plane in the system, so no combination of plane and ink
+        needs checking case by case.
+      </p>
+    </div>
+  </body>
+</html>

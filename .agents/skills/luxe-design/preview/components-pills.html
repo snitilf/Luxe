@@ -1,0 +1,77 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Prompt pills" subtitle="Queued is dashed and unsent; solid means in flight" viewport="700x240" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Components - Prompt pills</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Queued</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; max-width: 60ch">
+        <span
+          style="
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border: 1px dashed var(--strong);
+            background: var(--canvas);
+            color: var(--ink-2);
+            border-radius: var(--radius-pill);
+            padding: 5px 8px 5px 12px;
+            font-size: var(--text-label);
+          "
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+          <span style="max-width: 26ch; overflow: hidden; white-space: nowrap; text-overflow: ellipsis">
+            Tighten the heading, fewer words
+          </span>
+          <button
+            aria-label="Remove"
+            style="
+              width: 18px;
+              height: 18px;
+              display: grid;
+              place-items: center;
+              border: 0;
+              border-radius: var(--radius-pill);
+              padding: 0;
+              background: var(--hair);
+              color: var(--ink-2);
+              cursor: pointer;
+            "
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12" /><path d="m18 6-12 12" /></svg>
+          </button>
+        </span>
+      </div>
+
+      <div class="label">In flight</div>
+      <span
+        style="
+          display: inline-flex;
+          align-self: flex-start;
+          align-items: center;
+          gap: 6px;
+          border: 1px solid var(--hair);
+          background: var(--surface-2);
+          color: var(--ink-2);
+          border-radius: var(--radius-pill);
+          padding: 5px 12px;
+          font-size: var(--text-label);
+        "
+      >
+        Move the footer below the diagram
+      </span>
+
+      <p class="note">
+        A queued prompt is unsent, so it is drawn as an outline: dashed emphasis border on the canvas, with a clock
+        glyph. It goes solid on the top plane only while a send is in flight, which is the one moment a prompt is sent
+        but not yet cleared - a successfully sent prompt is removed, not restyled. The close control is a round icon
+        button with a stroke cross, never a text glyph: font metrics put a text cross off centre even under flex
+        centring.
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- @dsCard group="Colors" name="Colors · Status" subtitle="Four roles, each a foreground, a tint and a border" viewport="700x300" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Colors - Status</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Status</div>
+      <div class="grid" style="gap: 8px; max-width: 60ch">
+        <div
+          style="
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            background: var(--success-bg);
+            border: 1px solid var(--success-border);
+            color: var(--success-fg);
+            border-radius: var(--radius-inner);
+            padding: 10px 12px;
+            font-size: var(--text-control);
+          "
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12 5 5L20 6" /></svg>
+          <span>Session saved. <span class="mono" style="color: var(--success-fg)">--success-*</span></span>
+        </div>
+        <div
+          style="
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            background: var(--warning-bg);
+            border: 1px solid var(--warning-border);
+            color: var(--warning-fg);
+            border-radius: var(--radius-inner);
+            padding: 10px 12px;
+            font-size: var(--text-control);
+          "
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.5 20h19Z" /><path d="M12 10v4" /><path d="M12 17h.01" /></svg>
+          <span>Diagram source changed. <span class="mono" style="color: var(--warning-fg)">--warning-*</span></span>
+        </div>
+        <div
+          style="
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            background: var(--error-bg);
+            border: 1px solid var(--error-border);
+            color: var(--error-fg);
+            border-radius: var(--radius-inner);
+            padding: 10px 12px;
+            font-size: var(--text-control);
+          "
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m9 9 6 6" /><path d="m15 9-6 6" /></svg>
+          <span>Content is cut off. <span class="mono" style="color: var(--error-fg)">--error-*</span></span>
+        </div>
+        <div
+          style="
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            background: var(--info-bg);
+            border: 1px solid var(--info-border);
+            color: var(--info-fg);
+            border-radius: var(--radius-inner);
+            padding: 10px 12px;
+            font-size: var(--text-control);
+          "
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 8h.01" /></svg>
+          <span>The agent is listening. <span class="mono" style="color: var(--info-fg)">--info-*</span></span>
+        </div>
+      </div>
+      <p class="note">
+        Status always ships with an icon and a text label, never colour alone. Each role is a triple: foreground on its
+        own tint, inside its own border. Error shares a family with the warm chart slots, so the separation is carried by
+        the lightness register, the tinted container and the icon-plus-label rule - and by the rule that a chart series
+        which itself means good or bad wears status tokens rather than a categorical slot.
+      </p>
+    </div>
+  </body>
+</html>

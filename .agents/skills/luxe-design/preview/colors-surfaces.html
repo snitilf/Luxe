@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- @dsCard group="Colors" name="Colors · Surfaces" subtitle="Three warm planes and two hairlines" viewport="700x280" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Colors - Surfaces</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Surfaces</div>
+      <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px">
+        <div class="swatch" style="background: var(--canvas)">
+          <span class="mono">--canvas</span>
+          <span style="font-size: var(--text-label)">page, artifact</span>
+        </div>
+        <div class="swatch" style="background: var(--surface-1)">
+          <span class="mono">--surface-1</span>
+          <span style="font-size: var(--text-label)">toolbar, panels</span>
+        </div>
+        <div class="swatch" style="background: var(--surface-2)">
+          <span class="mono">--surface-2</span>
+          <span style="font-size: var(--text-label)">cards, inputs</span>
+        </div>
+        <div class="swatch" style="background: var(--hair); border-color: var(--hair)">
+          <span class="mono">--hair</span>
+          <span style="font-size: var(--text-label)">1px rules</span>
+        </div>
+        <div class="swatch" style="background: var(--strong); border-color: var(--strong)">
+          <span class="mono">--strong</span>
+          <span style="font-size: var(--text-label)">emphasis rules</span>
+        </div>
+      </div>
+      <p class="note">
+        Hierarchy comes from three planes plus hairlines, not from shadows. Warm ivory holds the page, the toolbar sits a
+        shade lighter, and cards go to the top plane. A card resting inside a panel gets a border, never a drop shadow.
+        Do not invent a fourth plane: if two things need separating and the planes are used up, separate them with a
+        hairline or with space.
+      </p>
+    </div>
+  </body>
+</html>

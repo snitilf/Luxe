@@ -1,0 +1,98 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Annotation card" subtitle="Floats over the artifact, anchored to what was clicked" viewport="700x320" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Components - Annotation card</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Annotation card</div>
+      <div
+        style="
+          background: var(--surface-2);
+          border: 1px solid var(--hair);
+          border-radius: var(--radius-card);
+          box-shadow: var(--shadow-modal);
+          padding: 14px;
+          max-width: 44ch;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        "
+      >
+        <div class="row" style="gap: 8px">
+          <span
+            style="
+              display: grid;
+              place-items: center;
+              width: 20px;
+              height: 20px;
+              border-radius: var(--radius-pill);
+              background: var(--gold);
+              color: var(--ink-1);
+              font-size: var(--text-label);
+              font-weight: var(--weight-medium);
+            "
+            >2</span
+          >
+          <span style="font-size: var(--text-control); font-weight: var(--weight-medium)">Annotate heading</span>
+        </div>
+        <div class="mono" style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis">
+          section.summary &gt; h2
+        </div>
+        <div
+          style="
+            background: var(--surface-2);
+            border: 1px solid var(--hair);
+            border-radius: var(--radius-nav);
+            padding: 10px 12px;
+            color: var(--ink-3);
+            font-size: var(--text-control);
+          "
+        >
+          Tell the agent what to change about this element
+        </div>
+        <div class="row" style="justify-content: flex-end; gap: 8px">
+          <button
+            style="
+              font: inherit;
+              font-size: var(--text-control);
+              background: var(--surface-2);
+              color: var(--ink-1);
+              border: 1px solid var(--strong);
+              border-radius: var(--radius-pill);
+              padding: 7px 14px;
+              cursor: pointer;
+            "
+          >
+            Cancel
+          </button>
+          <button
+            style="
+              font: inherit;
+              font-size: var(--text-control);
+              font-weight: var(--weight-medium);
+              background: var(--dark-fill);
+              color: var(--dark-fill-text);
+              border: 0;
+              border-radius: var(--radius-pill);
+              padding: 7px 14px;
+              cursor: pointer;
+            "
+          >
+            Queue
+          </button>
+        </div>
+      </div>
+      <p class="note">
+        The card genuinely floats over the artifact, so it is the one component besides the modal that carries the
+        shadow. It is opaque, never translucent: it sits on top of the page being reviewed and has to be readable against
+        whatever is underneath. The numbered badge is the gold, and the number on it is the body ink rather than the
+        ivory, because ivory on gold does not clear the text floor. The selector is mono and truncates; the target
+        identity lives in the prompt payload, not in this line.
+      </p>
+    </div>
+  </body>
+</html>

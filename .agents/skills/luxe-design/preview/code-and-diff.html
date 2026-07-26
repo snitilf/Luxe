@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- @dsCard group="Charts" name="Code · Plane and diff" subtitle="The code plane, the diff tints, and the syntax inks" viewport="700x320" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Code - Plane and diff</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Code plane</div>
+      <pre
+        class="mono"
+        style="
+          margin: 0;
+          background: var(--code-bg);
+          border: 1px solid var(--hair);
+          border-radius: var(--radius-inner);
+          padding: 12px;
+          color: var(--syn-plain);
+          overflow-x: auto;
+        "
+      ><span style="color: var(--syn-comment)">// one accent, one meaning</span>
+<span style="color: var(--syn-keyword)">const</span> <span style="color: var(--syn-function)">outline</span> = <span style="color: var(--syn-type)">Annotation</span>.<span style="color: var(--syn-function)">stroke</span>(<span style="color: var(--syn-string)">"--gold"</span>, <span style="color: var(--syn-number)">2</span>)<span style="color: var(--syn-punct)">;</span></pre>
+
+      <div class="label">Diff</div>
+      <div
+        class="mono"
+        style="border: 1px solid var(--hair); border-radius: var(--radius-inner); overflow: hidden; background: var(--code-bg)"
+      >
+        <div style="background: var(--diff-hunk-bg); padding: 4px 12px; color: var(--ink-2)">@@ chrome.css @@</div>
+        <div style="background: var(--diff-rem-bg); border-left: 4px solid var(--diff-rem-gutter); padding: 4px 12px">
+          - color-scheme: dark;
+        </div>
+        <div style="background: var(--diff-add-bg); border-left: 4px solid var(--diff-add-gutter); padding: 4px 12px">
+          + color-scheme: light;
+        </div>
+      </div>
+
+      <p class="note">
+        Code sits on its own plane with a hairline border, set in the mono at label size. The syntax inks are shipped as
+        a bespoke theme rather than a borrowed one, and every one of them is a dark, so they all survive on both diff
+        tints. Punctuation is the single decoration-grade ink in the set. The hunk-header tint has no equivalent key in a
+        theme file and is applied by the surrounding component instead.
+      </p>
+    </div>
+  </body>
+</html>

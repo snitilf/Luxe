@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- @dsCard group="Type" name="Type · Scale" subtitle="Four sizes, two weights, and one uppercase form" viewport="700x340" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Type - Scale</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Scale</div>
+      <div style="display: grid; grid-template-columns: 1fr 190px; column-gap: 16px; row-gap: 10px; align-items: baseline">
+        <div style="font-size: var(--text-heading); font-weight: var(--weight-medium)">A section heading</div>
+        <div class="mono">--text-heading / 500</div>
+
+        <div style="font-size: var(--text-body)">Body copy, the reading size.</div>
+        <div class="mono">--text-body / 400</div>
+
+        <div style="font-size: var(--text-control); font-weight: var(--weight-medium)">Controls, buttons, bubbles</div>
+        <div class="mono">--text-control / 400 or 500</div>
+
+        <div style="font-size: var(--text-label)">Labels, metadata, axis text, chips</div>
+        <div class="mono">--text-label / 400 or 500</div>
+
+        <div class="label">Micro-label</div>
+        <div class="mono">--text-label / 500 / --tracking-micro</div>
+      </div>
+      <p class="note">
+        Four sizes. Nothing between them, nothing above the heading. Two weights: regular and medium. No bold, no light.
+        Emphasis is weight 500 or a size already in the scale, never a heavier face. Uppercase belongs to micro-labels
+        alone and takes the positive tracking token, because uppercase closes up. Headings and body are never uppercase.
+      </p>
+    </div>
+  </body>
+</html>

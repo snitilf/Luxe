@@ -1,0 +1,28 @@
+<!-- The Luxe wordmark: the mark, a hairline, and the product name.
+     The name is set in the system sans at medium, the only weight the wordmark
+     ever takes. There is no logotype: drawing the name as outlines would let it
+     drift from the interface it sits above.
+     Colours are literals because an SVG cannot read a CSS custom property; all
+     three are values that exist in the token file, as the dark fill, the canvas
+     and the first ink. Upstream's wordmark carried CSS classes with no
+     stylesheet behind them and rendered as flat black text; this one uses
+     presentation attributes so it renders correctly wherever it is dropped.
+     Note for editors: an XML comment may not contain a double hyphen, so token
+     names appear here without their leading dashes. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 72" width="240" height="72" role="img" aria-label="Luxe">
+  <g transform="translate(8 8) scale(0.56)">
+    <rect width="100" height="100" rx="22" fill="#463527" />
+    <path d="M38 26v44h26" fill="none" stroke="#f7f4ee" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+  <text
+    x="80"
+    y="47"
+    fill="#211e17"
+    font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    font-size="28"
+    font-weight="500"
+    letter-spacing="-0.15"
+  >
+    Luxe
+  </text>
+</svg>

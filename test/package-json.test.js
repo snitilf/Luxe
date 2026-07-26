@@ -13,6 +13,8 @@ test("check script runs all verification commands", async () => {
   assert.deepEqual(checkCommands, [
     "npm run build",
     "node scripts/build-skill.js --check",
+    "node scripts/build-design-skill.js --check",
+    "node scripts/check-design-adherence.js",
     "npm run lint",
     "npm run format:check",
     "npm run typecheck",
@@ -49,6 +51,18 @@ test("package exposes exactly one bin, pointing at the built bundle", async () =
   const packageJson = await readPackageJson();
 
   assert.deepEqual(packageJson.bin, { luxe: "dist/cli.mjs" });
+});
+
+// `.agents/skills/` is a discovery prefix for the skills CLI, so this skill is
+// offered to anyone running `npx skills add snitilf/Luxe` unless the frontmatter
+// says otherwise. `metadata.internal: true` is the only thing hiding it, and
+// dropping it fails nothing at runtime - which is exactly why it needs a test.
+test("the internal design skill stays hidden from installers", async () => {
+  const skillMd = await readFile(new URL("../.agents/skills/luxe-design/SKILL.md", import.meta.url), "utf8");
+  const frontmatter = skillMd.slice(4, skillMd.indexOf("\n---\n", 4));
+
+  assert.match(frontmatter, /^metadata:\n {2}internal: true$/m);
+  assert.match(frontmatter, /^name: luxe-design$/m);
 });
 
 test("public luxe skill is not marked internal", async () => {

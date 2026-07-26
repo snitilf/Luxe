@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- @dsCard group="Geometry" name="Geometry · Elevation" subtitle="Planes and hairlines carry hierarchy; one shadow exists" viewport="700x300" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Geometry - Elevation</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Resting</div>
+      <div style="background: var(--surface-1); border: 1px solid var(--hair); border-radius: var(--radius-card); padding: 14px">
+        <div style="background: var(--surface-2); border: 1px solid var(--hair); border-radius: var(--radius-inner); padding: 12px; font-size: var(--text-control)">
+          A card inside a panel. Border, no shadow.
+        </div>
+      </div>
+
+      <div class="label">Floating</div>
+      <div
+        style="
+          background: var(--surface-2);
+          border: 1px solid var(--hair);
+          border-radius: var(--radius-card);
+          padding: 14px;
+          box-shadow: var(--shadow-modal);
+          max-width: 42ch;
+          font-size: var(--text-control);
+        "
+      >
+        A modal. One soft shadow, and only because it sits over the scrim.
+        <div class="mono" style="margin-top: 6px">--shadow-modal over --scrim</div>
+      </div>
+
+      <p class="note">
+        Resting surfaces never carry a shadow. Depth comes from the three planes plus hairlines, which is what keeps a
+        dense page calm on a warm ground where shadows go muddy. Exactly one shadow token exists, and it belongs to the
+        surface that genuinely floats above a scrim. Do not add a shadow to a button, a card, a bubble, or a toolbar; if
+        something needs to read as raised, move it up a plane.
+      </p>
+    </div>
+  </body>
+</html>

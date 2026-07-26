@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- @dsCard group="Charts" name="Charts · Ramps" subtitle="Sequential and diverging, for magnitude not category" viewport="700x260" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Charts - Ramps</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Sequential</div>
+      <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0">
+        <div style="height: 44px; background: var(--seq-1)"></div>
+        <div style="height: 44px; background: var(--seq-2)"></div>
+        <div style="height: 44px; background: var(--seq-3)"></div>
+        <div style="height: 44px; background: var(--seq-4)"></div>
+        <div style="height: 44px; background: var(--seq-5)"></div>
+      </div>
+      <div class="mono">--seq-1 through --seq-5</div>
+
+      <div class="label">Diverging</div>
+      <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 0">
+        <div style="height: 44px; background: var(--div-1)"></div>
+        <div style="height: 44px; background: var(--div-2)"></div>
+        <div style="height: 44px; background: var(--div-3)"></div>
+        <div style="height: 44px; background: var(--div-4)"></div>
+        <div style="height: 44px; background: var(--div-5)"></div>
+        <div style="height: 44px; background: var(--div-6)"></div>
+        <div style="height: 44px; background: var(--div-7)"></div>
+      </div>
+      <div class="mono">--div-1 through --div-7</div>
+
+      <p class="note">
+        Ramps encode magnitude, categorical slots encode identity. Never mix them in one chart, and never build a ramp by
+        tinting a categorical slot. The sequential ramp is monotonic in lightness, so it survives greyscale printing. The
+        diverging midpoint is the system's warm grey, so no change reads as paper rather than as a colour. Neither ramp
+        touches the status tokens, and neither has been exercised in a shipped heatmap yet, so check a real render before
+        trusting the middle steps.
+      </p>
+    </div>
+  </body>
+</html>

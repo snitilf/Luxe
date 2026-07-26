@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- @dsCard group="Type" name="Type · Families" subtitle="Two bundled families: the sans and the mono" viewport="700x260" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Type - Families</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Families</div>
+      <div>
+        <div style="font-size: var(--text-heading); font-weight: var(--weight-medium)">
+          Interface and prose set in the sans
+        </div>
+        <div class="mono">--font-sans</div>
+      </div>
+      <div>
+        <div style="font-family: var(--font-mono); font-size: var(--text-body); letter-spacing: var(--tracking-mono)">
+          selectors, paths, values, CLI output
+        </div>
+        <div class="mono">--font-mono</div>
+      </div>
+      <p class="note">
+        Two families, both bundled as latin-subset woff2 and served from the tool itself. Not a CDN: the tool has to work
+        offline, and a published artifact may block external hosts. There is deliberately no serif and no third family.
+        The sans carries <code class="mono">--tracking-sans</code>; the mono carries
+        <code class="mono">--tracking-mono</code>, because negative tracking fights a monospace face's own metrics.
+      </p>
+    </div>
+  </body>
+</html>

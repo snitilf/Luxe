@@ -16,7 +16,9 @@
   "scripts": {
     "build": "node scripts/build.js",
     "build:skill": "node scripts/build-skill.js",
-    "check": "npm run build && node scripts/build-skill.js --check && npm run lint && npm run format:check && npm run typecheck && npm test && npm run naming",
+    "build:design-skill": "node scripts/build-design-skill.js",
+    "design-lint": "node scripts/check-design-adherence.js",
+    "check": "npm run build && node scripts/build-skill.js --check && node scripts/build-design-skill.js --check && node scripts/check-design-adherence.js && npm run lint && npm run format:check && npm run typecheck && npm test && npm run naming",
     "lint": "eslint bin src test scripts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
