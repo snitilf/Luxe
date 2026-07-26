@@ -106,6 +106,13 @@ test("the brand mark is the favicon artwork", async () => {
   }
 });
 
+test("the adherence lint applies brand exemptions to Windows-style paths", async () => {
+  const { lintSource } = await import("../scripts/check-design-adherence.js");
+  const mark = await read("assets/luxe-mark.svg");
+
+  assert.deepEqual(lintSource(".agents\\skills\\luxe-design\\assets\\luxe-mark.svg", mark), []);
+});
+
 test("every preview card is a specimen card that links the shared shell", async () => {
   const cards = (await readdir(new URL("preview/", SKILL))).filter((file) => file.endsWith(".html"));
 

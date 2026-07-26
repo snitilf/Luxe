@@ -329,7 +329,8 @@ const RADIUS_EXEMPTIONS = new Map([
  * @param {string} source
  * @returns {string[]}
  */
-function lintSource(file, source) {
+export function lintSource(file, source) {
+  file = file.replaceAll("\\", "/");
   /** @type {string[]} */
   const problems = [];
   const report = (/** @type {number} */ line, /** @type {string} */ id, /** @type {string} */ detail) =>
