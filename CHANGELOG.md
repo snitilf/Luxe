@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.2.0...editeur-luxe-v0.2.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* **security:** harden artifact trust boundaries ([#3](https://github.com/snitilf/Luxe/issues/3)) ([18e75cf](https://github.com/snitilf/Luxe/commit/18e75cf11d4a5fc9a7198ef47360ffb8cca7b506))
+
 ## [0.2.0](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.1.0...editeur-luxe-v0.2.0) (2026-07-26)
 
 
