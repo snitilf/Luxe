@@ -92,7 +92,7 @@ export async function ensureStateDir() {
 // The whiteboard sidecar tree is exactly two levels deep (<state>/whiteboards/<session key>)
 // and both levels are created 0700 by whiteboard-store.js, so re-tightening it is one
 // readdir. Directories only: the scene files inside them are written with the process
-// default and are protected by these 0700 parents, which is what the README states.
+// default and are protected by these 0700 parents, which is what docs/security.md states.
 async function tightenWhiteboardDirs() {
   const root = path.join(stateDir(), "whiteboards");
   await tightenExisting(root, STATE_DIR_MODE);

@@ -474,10 +474,10 @@ test("the state directory and state file are owner-only", { skip: !supportsPosix
 });
 
 // A directory or file left behind by an older version (or loosened by hand) is tightened on
-// the next CLI start rather than staying world-readable forever. Every path the README claims
-// is tightened is listed here, and the list must stay in step with that sentence - server.log
-// was created 0600 but never re-tightened, so an existing 0644 log survived every startup
-// while the README said otherwise.
+// the next CLI start rather than staying world-readable forever. Every path docs/security.md
+// claims is tightened is listed here, and the list must stay in step with that sentence -
+// server.log was created 0600 but never re-tightened, so an existing 0644 log survived every
+// startup while the docs said otherwise.
 test(
   "startup tightens a pre-existing loose state dir, state.json, server.log and whiteboards",
   { skip: !supportsPosixFileModes() },
