@@ -10,10 +10,14 @@ import chokidar from "chokidar";
 import express from "express";
 
 import {
+  buildDomSnapshot,
   classifySevereTextOverflow,
   classifyMaterialRectEscape,
   createArtifactSdk,
   deriveLuxeQueueKey,
+  DOM_SNAPSHOT_MAX_BYTES,
+  DOM_SNAPSHOT_MAX_NODES,
+  DOM_SNAPSHOT_TRUNCATION_MARKER,
   findStableLayoutFindings,
   isMaterialPageOverflow,
   isModeToggleHotkeyEvent,
@@ -1550,9 +1554,13 @@ const classifyMaterialRectEscape=${classifyMaterialRectEscape.toString()};
 const isMaterialPageOverflow=${isMaterialPageOverflow.toString()};
 const findStableLayoutFindings=${findStableLayoutFindings.toString()};
 const isNearTotalOcclusion=${isNearTotalOcclusion.toString()};
+const DOM_SNAPSHOT_MAX_NODES=${DOM_SNAPSHOT_MAX_NODES};
+const DOM_SNAPSHOT_MAX_BYTES=${DOM_SNAPSHOT_MAX_BYTES};
+const DOM_SNAPSHOT_TRUNCATION_MARKER=${JSON.stringify(DOM_SNAPSHOT_TRUNCATION_MARKER)};
+const buildDomSnapshot=${buildDomSnapshot.toString()};
 ${mermaidHelperDecls}
 const mermaidHelpers={ ${mermaidHelperKeys} };
-(${createArtifactSdk.toString()})(deriveQueueKey, isNativeInteractiveControl, mermaidHelpers, ${JSON.stringify(luxeTokensCss)});
+(${createArtifactSdk.toString()})(deriveQueueKey, isNativeInteractiveControl, mermaidHelpers, ${JSON.stringify(luxeTokensCss)}, buildDomSnapshot);
 })();`;
 }
 

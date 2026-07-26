@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  buildDomSnapshot,
   classifyMaterialRectEscape,
   classifySevereTextOverflow,
+  DOM_SNAPSHOT_TRUNCATION_MARKER,
   deriveLuxeQueueKey,
   findStableLayoutFindings,
   isMaterialPageOverflow,
@@ -56,6 +58,107 @@ function append(parent, child) {
   parent.children.push(child);
   return child;
 }
+
+function snapshotNode(tag, text, children = [], visibility = { includeSelf: true, traverseChildren: true }) {
+  return {
+    tag,
+    text,
+    visibility,
+    children,
+  };
+}
+
+function snapshotOptions(overrides = {}) {
+  let nextUid = 0;
+  return {
+    isElement: (element) => Boolean(element?.tag),
+    visibility: (element) => element.visibility,
+    isExcluded: () => false,
+    describe: (element) => ({ uid: String(++nextUid), tag: element.tag, text: element.text }),
+    ...overrides,
+  };
+}
+
+test("buildDomSnapshot excludes hidden subtrees and their text", () => {
+  const root = snapshotNode("body", "Visible heading", [
+    snapshotNode("section", "Visible answer"),
+    snapshotNode("section", "Hidden secret", [snapshotNode("span", "Nested secret")], {
+      includeSelf: false,
+      traverseChildren: false,
+    }),
+  ]);
+
+  const snapshot = buildDomSnapshot(root, snapshotOptions());
+
+  assert.match(snapshot, /Visible heading/);
+  assert.match(snapshot, /Visible answer/);
+  assert.doesNotMatch(snapshot, /Hidden secret|Nested secret/);
+});
+
+test("buildDomSnapshot caps visible nodes and appends a truncation marker", () => {
+  const root = snapshotNode(
+    "body",
+    "Root",
+    Array.from({ length: 10 }, (_, index) => snapshotNode("p", `Node ${index}`)),
+  );
+
+  const snapshot = buildDomSnapshot(root, snapshotOptions({ maxNodes: 3, maxBytes: 10_000 }));
+
+  assert.equal(snapshot.split("\n").filter((line) => line.includes("uid=")).length, 3);
+  assert.equal(snapshot.endsWith(DOM_SNAPSHOT_TRUNCATION_MARKER), true);
+});
+
+test("buildDomSnapshot caps UTF-8 bytes and appends a truncation marker", () => {
+  const root = snapshotNode("body", "é".repeat(80), [snapshotNode("p", "must not fit")]);
+  const maxBytes = new TextEncoder().encode(`${DOM_SNAPSHOT_TRUNCATION_MARKER}\n`).byteLength + 48;
+
+  const snapshot = buildDomSnapshot(root, snapshotOptions({ maxNodes: 100, maxBytes }));
+
+  assert.ok(new TextEncoder().encode(snapshot).byteLength <= maxBytes);
+  assert.equal(snapshot.endsWith(DOM_SNAPSHOT_TRUNCATION_MARKER), true);
+  assert.doesNotMatch(snapshot, /must not fit/);
+});
+
+test("buildDomSnapshot traverses non-rendering containers to visible descendants", () => {
+  const root = snapshotNode("body", "Root", [
+    snapshotNode("div", "Display contents", [snapshotNode("span", "Visible child")], {
+      includeSelf: false,
+      traverseChildren: true,
+    }),
+    snapshotNode("section", "Visibility hidden", [snapshotNode("strong", "Explicitly visible child")], {
+      includeSelf: false,
+      traverseChildren: true,
+    }),
+  ]);
+
+  const snapshot = buildDomSnapshot(root, snapshotOptions());
+
+  assert.doesNotMatch(snapshot, /Display contents|Visibility hidden/);
+  assert.match(snapshot, /Visible child/);
+  assert.match(snapshot, /Explicitly visible child/);
+});
+
+test("buildDomSnapshot counts hidden nodes toward the traversal limit", () => {
+  const hidden = { includeSelf: false, traverseChildren: false };
+  const root = snapshotNode("body", "Root", [
+    ...Array.from({ length: 5 }, (_, index) => snapshotNode("span", `Hidden ${index}`, [], hidden)),
+    snapshotNode("p", "Visible sentinel"),
+  ]);
+
+  const snapshot = buildDomSnapshot(root, snapshotOptions({ maxNodes: 6, maxBytes: 10_000 }));
+
+  assert.doesNotMatch(snapshot, /Visible sentinel/);
+  assert.equal(snapshot.endsWith(DOM_SNAPSHOT_TRUNCATION_MARKER), true);
+});
+
+test("buildDomSnapshot omits the marker when all inspected nodes fit exactly", () => {
+  const root = snapshotNode("body", "Root", [snapshotNode("p", "Child")]);
+
+  const snapshot = buildDomSnapshot(root, snapshotOptions({ maxNodes: 2, maxBytes: 10_000 }));
+
+  assert.match(snapshot, /Child/);
+  assert.equal(snapshot.includes(DOM_SNAPSHOT_TRUNCATION_MARKER), false);
+});
 
 function matchesSelectorList(el, selectorList) {
   return selectorList.split(",").some((selector) => matchesSelector(el, selector.trim()));

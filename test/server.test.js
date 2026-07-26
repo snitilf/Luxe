@@ -164,6 +164,20 @@ test("artifact SDK script is valid JavaScript", () => {
   assert.doesNotThrow(() => new Function(js));
 });
 
+test("artifact SDK snapshots read only direct text from visibility-filtered elements", () => {
+  const js = createSdkJs("abc");
+  const snapshotSource = js.slice(js.indexOf("  function snapshot()"), js.indexOf("  const layoutAuditSettleMs"));
+
+  assert.match(snapshotSource, /style\.display === "none"/);
+  assert.match(snapshotSource, /style\.contentVisibility === "hidden"/);
+  assert.match(snapshotSource, /Number\.parseFloat\(style\.opacity \|\| "1"\) <= 0/);
+  assert.match(snapshotSource, /style\.visibility === "hidden"/);
+  assert.match(snapshotSource, /el\.getClientRects\(\)/);
+  assert.match(snapshotSource, /el\.childNodes/);
+  assert.doesNotMatch(snapshotSource, /\bcontext\(/);
+  assert.doesNotMatch(snapshotSource, /\binnerText\b/);
+});
+
 test("artifact SDK ignores Luxe-owned annotation UI", () => {
   const js = createSdkJs("abc");
 

@@ -155,7 +155,8 @@ npm link
 - **Server cleanup** - The detached server stops after the last session ends when nothing is connected, or after `LUXE_IDLE_TIMEOUT_MS` (default 30 minutes) with no browser or poll connections.
   Set `LUXE_IDLE_TIMEOUT_MS=0` or `off` to disable idle self-shutdown.
 - **What a Send includes** - Every Send delivers a `dom_snapshot` alongside your prompts: a text outline of the artifact as it is currently rendered, so the agent has page context for the feedback.
-  It captures whatever the artifact renders as text, including anything sensitive shown in a table, code block, or config listing, and it is stored in the local state file until the agent's next poll collects it.
+  It captures visible rendered text, including anything sensitive shown in a table, code block, or config listing, up to 2,000 nodes and 128 KiB.
+  A capped snapshot ends with `[Luxe DOM snapshot truncated]`, and the snapshot is stored in the local state file until the agent's next poll collects it.
 - **Trust model** - Artifact JavaScript may queue feedback through the documented `window.luxe` API, but only chrome-owned **Send to Agent**, **Send & End**, or **End session** gestures may transmit feedback or end browser review.
   In-page questions and forms fill the queue, then the reviewer confirms the action from the Luxe chrome.
   Luxe's guards stop a foreign page from driving your session; they do not sandbox an artifact against its own author, so do not open artifacts from a source you would not let write code for you.

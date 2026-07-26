@@ -5,6 +5,113 @@ import * as mermaidHelpers from "./mermaid-node.js";
 export const LUXE_INTERNAL_QUEUE_KEY = "_luxeQueueKey";
 
 export const MODE_TOGGLE_HOTKEY_KEY = "i";
+export const DOM_SNAPSHOT_MAX_NODES = 2_000;
+export const DOM_SNAPSHOT_MAX_BYTES = 128 * 1024;
+export const DOM_SNAPSHOT_TRUNCATION_MARKER = "[Luxe DOM snapshot truncated]";
+
+/**
+ * @param {unknown} root
+ * @param {object} options
+ * @param {(element: unknown) => boolean} options.isElement
+ * @param {(element: unknown) => { includeSelf: boolean, traverseChildren: boolean }} options.visibility
+ * @param {(element: unknown) => boolean} options.isExcluded
+ * @param {(element: unknown) => { uid?: unknown, tag?: unknown, text?: unknown }} options.describe
+ * @param {(element: unknown) => Iterable<unknown>} [options.childrenOf]
+ * @param {number} [options.maxNodes]
+ * @param {number} [options.maxBytes]
+ * @param {(value: string) => number} [options.byteLength]
+ */
+export function buildDomSnapshot(
+  root,
+  {
+    isElement,
+    visibility,
+    isExcluded,
+    describe,
+    childrenOf = (element) =>
+      element && typeof element === "object" && "children" in element && element.children
+        ? /** @type {Iterable<unknown>} */ (element.children)
+        : [],
+    maxNodes = DOM_SNAPSHOT_MAX_NODES,
+    maxBytes = DOM_SNAPSHOT_MAX_BYTES,
+    byteLength = (value) => new TextEncoder().encode(value).byteLength,
+  },
+) {
+  const lines = [];
+  const markerBytes = byteLength(DOM_SNAPSHOT_TRUNCATION_MARKER);
+  const byteLimit = Math.max(markerBytes, Number(maxBytes) || 0);
+  const nodeLimit = Math.max(1, Number(maxNodes) || 0);
+  let bytes = 0;
+  let nodes = 0;
+  let truncated = false;
+
+  function append(line) {
+    const prefix = lines.length ? "\n" : "";
+    const additionBytes = byteLength(prefix + line);
+    if (bytes + additionBytes > byteLimit) {
+      truncated = true;
+      return false;
+    }
+    lines.push(line);
+    bytes += additionBytes;
+    return true;
+  }
+
+  /** @type {Array<{ element: unknown, depth: number } | { iterator: Iterator<unknown>, depth: number }>} */
+  const stack = [{ element: root, depth: 0 }];
+  while (stack.length > 0 && !truncated) {
+    const frame = stack.pop();
+    if (!frame) break;
+    if ("iterator" in frame) {
+      const next = frame.iterator.next();
+      if (!next.done) {
+        stack.push(frame);
+        stack.push({ element: next.value, depth: frame.depth });
+      }
+      continue;
+    }
+
+    const { element, depth } = frame;
+    if (!isElement(element)) continue;
+    if (nodes >= nodeLimit) {
+      truncated = true;
+      break;
+    }
+    nodes += 1;
+    if (isExcluded(element)) continue;
+
+    const decision = visibility(element);
+    if (decision.includeSelf) {
+      const description = describe(element) || {};
+      const text = String(description.text || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 80)
+        .replace(/"/g, "'");
+      const suffix = text ? ` "${text}"` : "";
+      if (
+        !append(`${"  ".repeat(depth)}uid=${String(description.uid || "")} ${String(description.tag || "")}${suffix}`)
+      ) {
+        break;
+      }
+    }
+
+    if (decision.traverseChildren) {
+      stack.push({ iterator: childrenOf(element)[Symbol.iterator](), depth: depth + 1 });
+    }
+  }
+
+  if (truncated) {
+    while (lines.length > 0) {
+      const snapshot = lines.join("\n");
+      if (byteLength(`${snapshot}\n${DOM_SNAPSHOT_TRUNCATION_MARKER}`) <= byteLimit) break;
+      lines.pop();
+    }
+    lines.push(DOM_SNAPSHOT_TRUNCATION_MARKER);
+  }
+
+  return lines.join("\n");
+}
 
 export function isModeToggleHotkeyEvent(event) {
   if (event.shiftKey || event.altKey) return false;
@@ -255,6 +362,7 @@ export function createArtifactSdk(
   // and this is how the annotation surface gets them into an artifact page whose
   // own stylesheet is none of our business.
   luxeTokensCss = "",
+  snapshotBuilder = buildDomSnapshot,
 ) {
   const { isMermaidSvg, mermaidNodeFrom, mermaidNodeElement } = mermaid;
   // The SDK has no mode state of its own to decide: the chrome owns annotate/explore and
@@ -772,19 +880,51 @@ export function createArtifactSdk(
   }
 
   function snapshot() {
-    const lines = [];
-
-    function walk(el, depth) {
-      if (!(el instanceof Element) || depth > 6 || isLuxeUi(el)) return;
-
-      const c = context(el);
-      const name = c.text ? ' "' + c.text.slice(0, 80).replace(/"/g, "'") + '"' : "";
-      lines.push("  ".repeat(depth) + "uid=" + c.uid + " " + c.tag + name);
-      for (const child of el.children) walk(child, depth + 1);
+    function snapshotVisibility(el) {
+      const style = getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      if (
+        style.display === "none" ||
+        style.contentVisibility === "hidden" ||
+        Number.parseFloat(style.opacity || "1") <= 0 ||
+        isStandardVisuallyHidden(el, style, rect)
+      ) {
+        return { includeSelf: false, traverseChildren: false };
+      }
+      if (
+        style.display === "contents" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        ![...el.getClientRects()].some((candidate) => candidate.width > 0 && candidate.height > 0)
+      ) {
+        return { includeSelf: false, traverseChildren: true };
+      }
+      return { includeSelf: true, traverseChildren: true };
     }
 
-    walk(document.body, 0);
-    return lines.join("\n");
+    function directText(el) {
+      return [...el.childNodes]
+        .filter((node) => node.nodeType === 3)
+        .map((node) => String(node.textContent || ""))
+        .join(" ")
+        .trim()
+        .replace(/\s+/g, " ");
+    }
+
+    return snapshotBuilder(document.body, {
+      isElement: (el) => el instanceof Element,
+      visibility: snapshotVisibility,
+      isExcluded: isLuxeUi,
+      describe: (element) => {
+        const el = /** @type {HTMLElement} */ (element);
+        return {
+          uid: uid(el),
+          tag: el.tagName.toLowerCase(),
+          text: directText(el),
+        };
+      },
+      childrenOf: (element) => /** @type {Element} */ (element).children,
+    });
   }
 
   const layoutAuditSettleMs = 180;
