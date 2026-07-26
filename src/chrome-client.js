@@ -583,6 +583,8 @@ async function submitQueued() {
     const result = await submitQueuedPromise;
     succeeded = true;
     return result;
+  } catch (error) {
+    showSendStatus(error instanceof Error ? error.message : "Feedback was not sent. Please try again.");
   } finally {
     submitQueuedPromise = null;
     render();
@@ -611,7 +613,13 @@ async function submitQueuedOnce() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error("failed to submit queued prompts");
+  if (!response.ok) {
+    throw new Error(
+      response.status === 413
+        ? "Feedback was not sent - the batch or page snapshot exceeds Luxe's limits."
+        : "Feedback was not sent - the request is invalid.",
+    );
+  }
   const result =
     typeof response.json === "function"
       ? await response.json()
@@ -631,7 +639,9 @@ async function submitQueuedOnce() {
   const rejectedByIndex = new Map(
     Array.isArray(result.rejected_prompts)
       ? result.rejected_prompts
-          .filter((rejection) => rejection?.code === "invalid_whiteboard_target")
+          .filter((rejection) =>
+            ["invalid_whiteboard_target", "invalid_prompt", "prompt_too_large"].includes(rejection?.code),
+          )
           .map((rejection) => [rejection.index, rejection.code])
       : [],
   );
@@ -643,7 +653,11 @@ async function submitQueuedOnce() {
       const rejectedPrompt = {
         ...prompt,
         _luxeQueueError:
-          "Not sent - this whiteboard target is not a Luxe session file. Remove this item before sending again.",
+          rejectedByIndex.get(promptIndex) === "invalid_whiteboard_target"
+            ? "Not sent - this whiteboard target is not a Luxe session file. Remove this item before sending again."
+            : rejectedByIndex.get(promptIndex) === "prompt_too_large"
+              ? "Not sent - this feedback item exceeds Luxe's limits. Remove or shorten it before sending again."
+              : "Not sent - this feedback item is invalid. Remove it before sending again.",
       };
       if (index !== -1) {
         queued[index] = rejectedPrompt;

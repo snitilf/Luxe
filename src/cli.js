@@ -283,7 +283,12 @@ async function pollCommand(args) {
   if (agentReply) {
     await postJson(`${baseUrl}/api/${sessionKey(absolute)}/agent-reply`, { text: agentReply });
   }
-  const timeoutMs = flagValue(args, "--timeout-ms");
+  const timeoutText = flagValue(args, "--timeout-ms");
+  const hasTimeout = timeoutText !== null;
+  const timeoutMs = hasTimeout ? Number(timeoutText) : null;
+  if (hasTimeout && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2147483647)) {
+    throw new AxiError("--timeout-ms must be a non-negative safe integer", "VALIDATION_ERROR");
+  }
   // The indefinite poll looks hung from the agent's side (stdout stays empty until the user
   // acts), so narrate the wait on stderr and leave re-run guidance behind if the agent's
   // harness kills the process anyway. stderr keeps the stdout JSON contract intact.
@@ -294,14 +299,14 @@ async function pollCommand(args) {
     process.stderr.write(`\n${pollInterruptedText(absolute)}\n`);
     process.exit(signal === "SIGINT" ? 130 : 143);
   };
-  if (!timeoutMs) {
+  if (!hasTimeout) {
     // Register before the banner write below: a harness that kills the poll as soon as the
     // banner appears can deliver the signal before the next statement runs, and without a
     // handler the default disposition exits silently with no re-run guidance.
     process.on("SIGINT", onPollSignal);
     process.on("SIGTERM", onPollSignal);
   }
-  const waitReporter = timeoutMs
+  const waitReporter = hasTimeout
     ? null
     : startPollWaitReporter({
         file: absolute,
@@ -314,13 +319,13 @@ async function pollCommand(args) {
       request: {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ file: absolute, ...(timeoutMs ? { timeoutMs } : {}) }),
+        body: JSON.stringify({ file: absolute, ...(hasTimeout ? { timeoutMs } : {}) }),
       },
     });
     return createPollOutput({ file: absolute, response, agent: detectInvokingAgent(process.env) });
   } finally {
     waitReporter?.stop();
-    if (!timeoutMs) {
+    if (!hasTimeout) {
       process.off("SIGINT", onPollSignal);
       process.off("SIGTERM", onPollSignal);
     }

@@ -42,6 +42,13 @@ import {
 } from "./whiteboard-store.js";
 import { inlineLuxeTokens, LUXE_TOKENS_MARKER } from "./chrome-css.js";
 import { LUXE_FAVICON_SVG } from "./luxe-brand.js";
+import {
+  PayloadBoundaryError,
+  validateContextPath,
+  validateContextText,
+  validateWhiteboardPublishPayload,
+  validateWhiteboardSavePayload,
+} from "./payload-limits.js";
 import { buildSelfContainedHtml, exportFileName, splitExportWarnings } from "./export-bundle.js";
 import { injectLuxeSdk } from "./html-transform.js";
 import { bindHost, extraAllowedHosts, hostForUrl, IPV6_LOOPBACK_HOST, linkHost, LOOPBACK_HOST } from "./paths.js";
@@ -90,13 +97,16 @@ export function defaultWhiteboardAssetsDir() {
 // Whiteboard scene saves carry full Excalidraw scenes (and, at queue time, a
 // PNG preview data URL), which outgrow the default 2 MB JSON cap. Only the
 // whiteboard write routes get the larger limit.
-export function isWhiteboardWriteApiPath(pathname) {
+export function isWhiteboardWriteApiPath(pathname, method) {
   // The index pattern is the canonical decimal form `isValidDiagramIndex`
   // accepts, so the body limit and the route validation agree on what an index
   // is: a path the routes will reject can never claim the larger cap.
-  return /^\/api\/[0-9a-f]{16}\/whiteboard\/(0|[1-9]\d{0,2})(\/(feedback-files|save-to-machine))?$/.test(
-    String(pathname || ""),
-  );
+  const base = "/api/[0-9a-f]{16}/whiteboard/(0|[1-9]\\d{0,2})";
+  if (method === "PUT") return new RegExp(`^${base}$`).test(String(pathname || ""));
+  if (method === "POST") {
+    return new RegExp(`^${base}/(feedback-files|save-to-machine)$`).test(String(pathname || ""));
+  }
+  return false;
 }
 
 export function createWhiteboardChannelToken(secret, now = Date.now()) {
@@ -192,10 +202,19 @@ export async function serve({
     });
   }
 
+  // Parser split:
+  // - Default 2 MB: shutdown, session open/poll/end, prompts, layout warnings,
+  //   agent replies, whiteboard-channel authentication, and every other JSON route.
+  // - Whiteboard 20 MB: PUT /api/:key/whiteboard/:index plus POST variants
+  //   /feedback-files and /save-to-machine, and no other route.
+  // Semantic validators below impose much smaller field/count boundaries inside
+  // both parser envelopes.
   const defaultJsonParser = express.json({ limit: "2mb" });
   const whiteboardJsonParser = express.json({ limit: "20mb" });
   app.use((req, res, next) =>
-    isWhiteboardWriteApiPath(req.path) ? whiteboardJsonParser(req, res, next) : defaultJsonParser(req, res, next),
+    isWhiteboardWriteApiPath(req.path, req.method)
+      ? whiteboardJsonParser(req, res, next)
+      : defaultJsonParser(req, res, next),
   );
 
   app.get("/health", (req, res) => {
@@ -222,7 +241,7 @@ export async function serve({
   app.post("/api/sessions", async (req, res, next) => {
     try {
       if (rejectCrossOriginWrite(req, res, "cross-origin session open rejected")) return;
-      const file = await canonicalFile(req.body.file);
+      const file = await canonicalFile(validateContextPath(req.body?.file, "file"));
       const key = sessionKey(file);
       const reopen = Boolean(req.body.reopen);
       const existing = await store.findByKey(key);
@@ -253,11 +272,16 @@ export async function serve({
   app.post("/api/poll", async (req, res, next) => {
     try {
       if (rejectCrossOriginWrite(req, res, "cross-origin poll rejected")) return;
-      const file = await canonicalFile(String(req.body?.file || ""));
+      const file = await canonicalFile(validateContextPath(req.body?.file, "file"));
       const key = sessionKey(file);
       const timeoutValue = req.body?.timeoutMs;
-      const timeoutMs =
-        timeoutValue === undefined ? null : Math.max(0, Math.min(Number(timeoutValue || 0), 2147483647));
+      if (
+        timeoutValue !== undefined &&
+        (!Number.isSafeInteger(timeoutValue) || timeoutValue < 0 || timeoutValue > 2147483647)
+      ) {
+        throw new PayloadBoundaryError(400, "invalid_payload", "timeoutMs must be a non-negative safe integer");
+      }
+      const timeoutMs = timeoutValue === undefined ? null : timeoutValue;
       const immediate = await store.takeFeedback(key);
       if (immediate.status !== "waiting") {
         if (immediate.status === "feedback") markFeedbackDelivered(key, activePolls, deliveredFeedback, events);
@@ -395,7 +419,7 @@ export async function serve({
   app.post("/api/:key/agent-reply", async (req, res, next) => {
     try {
       if (rejectCrossOriginWrite(req, res, "cross-origin agent reply rejected")) return;
-      const text = String(req.body?.text || "");
+      const text = validateContextText(req.body?.text, "text");
       const session = await store.addAgentReply(req.params.key, text);
       if (!session) {
         res.status(404).json({ error: "session not found" });
@@ -446,7 +470,7 @@ export async function serve({
   app.post("/api/end", async (req, res, next) => {
     try {
       if (rejectCrossOriginWrite(req, res, "cross-origin session end rejected")) return;
-      const file = await canonicalFile(req.body.file);
+      const file = await canonicalFile(validateContextPath(req.body?.file, "file"));
       const key = sessionKey(file);
       await store.endSession(key, "agent");
       await cleanupWhiteboardsForEndedSession(key);
@@ -734,7 +758,11 @@ export async function serve({
         res.status(404).json({ error: "session not found" });
         return;
       }
-      if (!isValidWhiteboardChannelToken(req.body?.token, whiteboardChannelSecret)) {
+      const token = req.body?.token;
+      if (typeof token === "string" && token.length > 512) {
+        throw new PayloadBoundaryError(413, "payload_too_large", "whiteboard channel token exceeds 512 characters");
+      }
+      if (!isValidWhiteboardChannelToken(token, whiteboardChannelSecret)) {
         res.status(403).json({ error: "invalid whiteboard channel" });
         return;
       }
@@ -744,8 +772,8 @@ export async function serve({
     }
   });
 
-  // Writing to the local state directory is a state-changing action, so both
-  // whiteboard write routes are same-origin guarded - a hostile
+  // Writing to the local state directory is a state-changing action, so all
+  // three whiteboard write routes are same-origin guarded - a hostile
   // cross-origin page must not be able to fill the state dir through the
   // loopback server.
   app.put("/api/:key/whiteboard/:index", async (req, res, next) => {
@@ -759,12 +787,12 @@ export async function serve({
         res.status(404).json({ error: "whiteboard not found" });
         return;
       }
-      const body = req.body || {};
+      const body = validateWhiteboardSavePayload(req.body || {});
       await saveWhiteboard(whiteboardStateRoot, req.params.key, Number(req.params.index), {
-        sourceHash: String(body.source_hash || body.sourceHash || ""),
-        textMetricsVersion: Number(body.text_metrics_version || body.textMetricsVersion) || 0,
-        scene: body.scene ?? null,
-        baseline: body.baseline ?? null,
+        sourceHash: body.sourceHash,
+        textMetricsVersion: body.textMetricsVersion,
+        scene: body.scene,
+        baseline: body.baseline,
       });
       res.json({ status: "saved" });
     } catch (error) {
@@ -786,12 +814,12 @@ export async function serve({
         res.status(404).json({ error: "whiteboard not found" });
         return;
       }
-      const body = req.body || {};
+      const body = validateWhiteboardPublishPayload(req.body || {});
       const { scenePath, previewPath } = await writeWhiteboardFeedbackFiles(
         whiteboardStateRoot,
         req.params.key,
         Number(req.params.index),
-        { scene: body.scene ?? null, pngDataUrl: String(body.pngDataUrl || body.png_data_url || "") },
+        { scene: body.scene, pngDataUrl: body.pngDataUrl },
       );
       res.json({ scene_path: scenePath, preview_path: previewPath });
     } catch (error) {
@@ -834,7 +862,7 @@ export async function serve({
         res.status(409).json({ error: "session has ended" });
         return;
       }
-      const body = req.body || {};
+      const body = validateWhiteboardPublishPayload(req.body || {});
       // The destination is derived from the session's own artifact path, never
       // from the request: a caller chooses which diagram to keep, not where it
       // lands.
@@ -844,8 +872,8 @@ export async function serve({
         Number(req.params.index),
         {
           artifactFile: session.file,
-          scene: body.scene ?? null,
-          pngDataUrl: String(body.pngDataUrl || body.png_data_url || ""),
+          scene: body.scene,
+          pngDataUrl: body.pngDataUrl,
         },
       );
       res.json({ scene_path: scenePath, preview_path: previewPath });
@@ -858,7 +886,10 @@ export async function serve({
     // Body-parser errors carry a meaningful HTTP status (413 payload-too-large,
     // 400 malformed JSON); surface it instead of flattening everything to 500.
     const status = Number(error?.statusCode || error?.status) || 500;
-    res.status(status).json({ error: error instanceof Error ? error.message : String(error) });
+    res.status(status).json({
+      error: error instanceof Error ? error.message : String(error),
+      ...(typeof error?.code === "string" ? { code: error.code } : {}),
+    });
   });
 
   const httpServer = await new Promise((resolve, reject) => {

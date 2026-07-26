@@ -1312,6 +1312,60 @@ test("all-rejected send-and-end does not claim that feedback was sent", async ()
   assert.doesNotMatch(chrome.element("sendHint").textContent, /Valid feedback sent/);
 });
 
+test("a top-level payload rejection leaves the queue intact with a visible send error", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async () => ({ ok: false, status: 413 }),
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Keep this queued", text: "Heading", selector: "h1", tag: "annotation" },
+  });
+
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "x".repeat(300 * 1024) });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(chrome.queued()[0].prompt, "Keep this queued");
+  assert.equal(chrome.element("sendHint").hidden, false);
+  assert.match(chrome.element("sendHint").textContent, /not sent/i);
+});
+
+test("prompt-local size rejection leaves only the rejected pill with a visible error", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return {
+          status: "partial",
+          pending_prompts: 1,
+          accepted_prompt_indices: [0],
+          rejected_prompts: [{ index: 1, code: "prompt_too_large" }],
+          session_ended: false,
+        };
+      },
+    }),
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Accepted", text: "", selector: "", tag: "message" },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Oversized", text: "x".repeat(4 * 1024 + 1), selector: "", tag: "message" },
+  });
+
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Oversized"],
+  );
+  assert.match(chrome.element("annotationPills").innerHTML, /exceeds Luxe&#39;s limits/);
+});
+
 test("chrome send and end with an empty composer nudges instead of ending", async () => {
   const posts = [];
   const chrome = await createChromeHarness({

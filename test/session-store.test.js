@@ -44,6 +44,41 @@ test("queued prompts are returned with DOM snapshot context and then cleared", a
   }
 });
 
+test("legacy persisted feedback cannot exceed one prompt batch or the snapshot boundary", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
+  try {
+    const stateFile = path.join(dir, "state.json");
+    const artifact = path.join(dir, "artifact.html");
+    await writeFile(artifact, "<h1>Hello</h1>");
+    const store = new SessionStore(stateFile);
+    const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
+    const state = JSON.parse(await readFile(stateFile, "utf8"));
+    state.sessions[session.key].status = "ended";
+    state.sessions[session.key].ended_by = "user";
+    state.sessions[session.key].pending_prompts = 101;
+    state.sessions[session.key].dom_snapshot = "é".repeat(64 * 1024 + 1);
+    state.sessions[session.key].prompts = Array.from({ length: 101 }, (_, index) => ({
+      prompt: `Legacy ${index}`,
+      text: "",
+      selector: "",
+      tag: "message",
+    }));
+    await writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+
+    const first = feedbackResult(await store.takeFeedback(session.key));
+    assert.equal(first.prompts.length, 100);
+    assert.equal(first.dom_snapshot, "");
+    assert.equal(first.session_ended, undefined);
+    const second = feedbackResult(await store.takeFeedback(session.key));
+    assert.equal(second.prompts.length, 1);
+    assert.equal(second.dom_snapshot, "");
+    assert.equal(second.session_ended, true);
+    assert.deepEqual(await store.takeFeedback(session.key), { status: "ended", ended_by: "user" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("queued text selection prompts preserve range anchors", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
   try {
@@ -76,7 +111,7 @@ test("queued text selection prompts preserve range anchors", async () => {
   }
 });
 
-test("queued text ranges canonicalize non-finite and fractional anchors before delivery", async () => {
+test("queued text ranges reject non-finite, fractional, and negative anchors", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
   try {
     const stateFile = path.join(dir, "state.json");
@@ -84,7 +119,7 @@ test("queued text ranges canonicalize non-finite and fractional anchors before d
     await writeFile(artifact, "<p id='intro'>Hello world</p>");
     const store = new SessionStore(stateFile);
     const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
-    await store.queuePrompts(session.key, {
+    const queued = await store.queuePrompts(session.key, {
       prompts: [
         {
           prompt: "Review this",
@@ -102,9 +137,9 @@ test("queued text ranges canonicalize non-finite and fractional anchors before d
       ],
     });
 
-    const result = feedbackResult(await store.takeFeedback(session.key));
-    assert.deepEqual(result.prompts[0].target.start, { selector: "p#intro", path: [0], offset: 0 });
-    assert.deepEqual(result.prompts[0].target.end, { selector: "p#intro", path: [2], offset: 0 });
+    assert.deepEqual(queued.acceptedPromptIndices, []);
+    assert.deepEqual(queued.rejectedPrompts, [{ index: 0, code: "invalid_prompt" }]);
+    assert.equal((await store.takeFeedback(session.key)).status, "waiting");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -140,7 +175,7 @@ test("legacy queued prompts drop uid and unknown fields before agent delivery", 
   }
 });
 
-test("queued mermaid node prompts preserve node identity and drop unknown fields", async () => {
+test("queued mermaid node prompts preserve their closed node identity", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
   try {
     const stateFile = path.join(dir, "state.json");
@@ -155,8 +190,6 @@ test("queued mermaid node prompts preserve node identity and drop unknown fields
       nodeId: "flowchart-HomeAgentChat-3",
       label: "HomeAgentChat",
       selector: "svg#mermaid-7 > g > g.node",
-      // A hostile/legacy field that must be stripped by the normalizer:
-      injected: { nested: "should not survive" },
     };
 
     await store.queuePrompts(session.key, {
@@ -187,7 +220,7 @@ test("queued mermaid node prompts preserve node identity and drop unknown fields
   }
 });
 
-test("queued whiteboard prompts normalize the excalidraw-scene target to its fixed shape", async () => {
+test("queued whiteboard prompts preserve a valid excalidraw-scene target", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
   try {
     const stateFile = path.join(dir, "state.json");
@@ -208,14 +241,13 @@ test("queued whiteboard prompts normalize the excalidraw-scene target to its fix
           text: "Whiteboard edits",
           target: {
             type: "excalidraw-scene",
-            diagramIndex: "1",
+            diagramIndex: 1,
             diagramId: "mermaid-2",
             sourceHash: "abc123def4567890",
             scenePath,
             previewPath,
             imageFallback: false,
             stats: { added: 1, removed: 0, moved: 2, relabeled: 0, drawn: 1 },
-            hostile: { nested: "should not survive" },
           },
         },
       ],
@@ -317,7 +349,7 @@ test("layout warning storage rejects malformed and oversized reports", async () 
     }
     await assert.rejects(
       store.recordLayoutWarnings(session.key, { layout_warnings: Array.from({ length: 51 }, () => valid) }),
-      (error) => hasStatus(error, 400),
+      (error) => hasStatus(error, 413),
     );
     for (const payload of [{}, { layout_warnings: null }, { layout_warnings: false }]) {
       await assert.rejects(store.recordLayoutWarnings(session.key, payload), (error) => hasStatus(error, 400));

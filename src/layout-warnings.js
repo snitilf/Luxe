@@ -15,10 +15,10 @@ const SELECTOR_SEGMENT = "[a-z][a-z0-9-]*(#[A-Za-z_][A-Za-z0-9_-]{0,127})?(:nth-
 export const LAYOUT_SELECTOR_PATTERN = new RegExp(`^${SELECTOR_SEGMENT}( > ${SELECTOR_SEGMENT}){0,4}$`);
 
 export class LayoutWarningValidationError extends Error {
-  constructor(message) {
+  constructor(message, status = 400) {
     super(message);
     this.name = "LayoutWarningValidationError";
-    this.status = 400;
+    this.status = status;
   }
 }
 
@@ -27,7 +27,7 @@ export function normalizeLayoutWarningReport(value) {
     throw new LayoutWarningValidationError("layout_warnings must be an array");
   }
   if (value.length > MAX_LAYOUT_WARNINGS) {
-    throw new LayoutWarningValidationError(`layout_warnings must contain at most ${MAX_LAYOUT_WARNINGS} entries`);
+    throw new LayoutWarningValidationError(`layout_warnings must contain at most ${MAX_LAYOUT_WARNINGS} entries`, 413);
   }
 
   return value.map((warning, index) => {
@@ -35,11 +35,10 @@ export function normalizeLayoutWarningReport(value) {
       throw new LayoutWarningValidationError(`layout_warnings[${index}] must be an object`);
     }
     const selector = warning.selector;
-    if (
-      typeof selector !== "string" ||
-      selector.length > MAX_LAYOUT_SELECTOR_CHARACTERS ||
-      !LAYOUT_SELECTOR_PATTERN.test(selector)
-    ) {
+    if (typeof selector === "string" && selector.length > MAX_LAYOUT_SELECTOR_CHARACTERS) {
+      throw new LayoutWarningValidationError(`layout_warnings[${index}].selector is too long`, 413);
+    }
+    if (typeof selector !== "string" || !LAYOUT_SELECTOR_PATTERN.test(selector)) {
       throw new LayoutWarningValidationError(`layout_warnings[${index}].selector is invalid`);
     }
     if (typeof warning.kind !== "string" || !LAYOUT_WARNING_KINDS.has(warning.kind)) {

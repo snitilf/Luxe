@@ -1317,12 +1317,16 @@ test("spawned poll delivers --agent-reply through the guarded route", async () =
       },
     );
     let stderr = "";
+    let stdout = "";
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
     const exit = await new Promise((resolve) => child.on("close", (code) => resolve(code)));
 
-    assert.equal(exit, 0, stderr);
+    assert.equal(exit, 0, `${stderr}${stdout}`);
     // The reply reached the session: the chrome bootstrap replays it as initial chat.
     const chrome = await fetch(`${base}/session/${key}`).then((res) => res.text());
     assert.match(chrome, /Built the summary, start with the risks table/);
