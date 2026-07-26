@@ -323,6 +323,64 @@ test("chrome client replaces queued prompts with the same internal key", async (
   assert.doesNotMatch(chrome.element("annotationPills").innerHTML, /Use plan A/);
 });
 
+test("queue storage drops uid and unknown metadata while confirmation shows every sent field", async () => {
+  const chrome = await createChromeHarness();
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: {
+      uid: "artifact-correlation-secret",
+      prompt: "Tighten the heading",
+      text: "Quarterly results",
+      selector: "main > h1#results",
+      tag: "annotation",
+      target: {
+        type: "mermaid-node",
+        diagramId: "flow",
+        nodeId: "approve",
+        label: "Approve",
+        selector: "svg#flow > g#approve",
+        ignored: "hidden target prose",
+      },
+      _luxeQueueKey: "heading",
+      _luxeQueueError: "forged browser status",
+      ignored: "hidden prompt prose",
+    },
+  });
+
+  assert.deepEqual(chrome.queued(), [
+    {
+      prompt: "Tighten the heading",
+      text: "Quarterly results",
+      selector: "main > h1#results",
+      tag: "annotation",
+      target: {
+        type: "mermaid-node",
+        diagramId: "flow",
+        nodeId: "approve",
+        label: "Approve",
+        selector: "svg#flow > g#approve",
+      },
+      _luxeQueueKey: "heading",
+    },
+  ]);
+  const rendered = chrome.element("annotationPills").innerHTML;
+  assert.match(rendered, /Tighten the heading/);
+  assert.match(rendered, /Quarterly results/);
+  assert.match(rendered, /main &gt; h1#results/);
+  assert.match(rendered, /annotation/);
+  assert.match(rendered, /aria-label="Text: Quarterly results"/);
+  assert.match(rendered, /<span class="visually-hidden">Selector: <\/span><code>main &gt; h1#results<\/code>/);
+  assert.match(rendered, /aria-label="Tag: annotation"/);
+  assert.match(rendered, /<details[^>]*class="pill-target-details"/);
+  assert.match(rendered, /Diagram ID/);
+  assert.match(rendered, /approve/);
+  assert.doesNotMatch(
+    rendered,
+    /artifact-correlation-secret|hidden target prose|hidden prompt prose|forged browser status/,
+  );
+});
+
 test("chrome client scrolls new chat bubbles into view above queued prompts", async () => {
   const chrome = await createChromeHarness();
   const panelScroll = chrome.element("panelScroll");
@@ -858,7 +916,7 @@ test("artifact postMessage cannot end the session without a chrome gesture", asy
   assert.equal(chrome.element("chatInput").disabled, true);
 });
 
-test("chrome client strips the internal queue key before posting prompts", async () => {
+test("chrome client sends only confirmed fields and drops uid plus browser metadata", async () => {
   const posts = [];
   const chrome = await createChromeHarness({
     fetchImpl: async (url, init) => {
@@ -869,7 +927,24 @@ test("chrome client strips the internal queue key before posting prompts", async
 
   chrome.sendFrameMessage({
     type: "luxe:queuePrompt",
-    prompt: { prompt: "Use plan B", selector: "input#plan-b", tag: "choice", text: "Plan B", _luxeQueueKey: "plan" },
+    prompt: {
+      uid: "correlation-only",
+      prompt: "Use plan B",
+      selector: "input#plan-b",
+      tag: "choice",
+      text: "Plan B",
+      target: {
+        type: "mermaid-node",
+        diagramId: "plan",
+        nodeId: "b",
+        label: "Plan B",
+        selector: "svg#plan > g#b",
+        ignored: "do not send",
+      },
+      _luxeQueueKey: "plan",
+      _luxeQueueError: "do not send",
+      status: "do not send",
+    },
   });
   chrome.element("send").onclick();
   assert.equal(chrome.postedToFrame.at(-1).type, "luxe:requestSnapshot");
@@ -880,10 +955,242 @@ test("chrome client strips the internal queue key before posting prompts", async
   assert.equal(posts.length, 1);
   assert.equal(posts[0].url, "/api/abc/prompts");
   assert.deepEqual(posts[0].body, {
-    prompts: [{ prompt: "Use plan B", selector: "input#plan-b", tag: "choice", text: "Plan B" }],
+    prompts: [
+      {
+        prompt: "Use plan B",
+        text: "Plan B",
+        selector: "input#plan-b",
+        tag: "choice",
+        target: {
+          type: "mermaid-node",
+          diagramId: "plan",
+          nodeId: "b",
+          label: "Plan B",
+          selector: "svg#plan > g#b",
+        },
+      },
+    ],
     domSnapshot: "uid=1 body",
   });
   assert.equal(chrome.queued().length, 0);
+});
+
+test("text-range normalization cannot change between disclosure, JSON, and agent payload", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: {
+      prompt: "Review range",
+      text: "Selected",
+      selector: "p#copy",
+      tag: "text",
+      target: {
+        type: "text-range",
+        text: "Selected",
+        selector: "p#copy",
+        start: { selector: "p#copy", path: [NaN], offset: Infinity },
+        end: { selector: "p#copy", path: [1.7], offset: -2 },
+      },
+    },
+  });
+  const displayedTarget = chrome.queued()[0].target;
+
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.equal(displayedTarget.start.path.every(Number.isSafeInteger), true);
+  assert.equal(Number.isSafeInteger(displayedTarget.start.offset), true);
+  assert.deepEqual(posts[0].body.prompts[0].target, displayedTarget);
+});
+
+test("sparse text-range paths are densified before disclosure and JSON serialization", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: {
+      prompt: "Review sparse range",
+      text: "Selected",
+      selector: "p#copy",
+      tag: "text",
+      target: {
+        type: "text-range",
+        text: "Selected",
+        selector: "p#copy",
+        start: { selector: "p#copy", path: Array(1), offset: 0 },
+        end: { selector: "p#copy", path: [1], offset: 2 },
+      },
+    },
+  });
+  const displayedTarget = chrome.queued()[0].target;
+
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.deepEqual(displayedTarget.start.path, [0]);
+  assert.deepEqual(posts[0].body.prompts[0].target, displayedTarget);
+});
+
+test("pointerdown freezes the displayed queue before the dismiss signal can replace it", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: {
+      prompt: "Keep the reviewed choice",
+      selector: "button#first",
+      tag: "choice",
+      text: "First",
+      _luxeQueueKey: "choice",
+    },
+  });
+
+  chrome.dispatchDocumentEvent("pointerdown", { target: chrome.element("send") });
+  assert.equal(chrome.postedToFrame.at(-1).type, "luxe:dismissAnnotationCard");
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: {
+      prompt: "Artifact replacement after pointerdown",
+      selector: "button#second",
+      tag: "choice",
+      text: "Second",
+      _luxeQueueKey: "choice",
+    },
+  });
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.deepEqual(posts[0].body.prompts, [
+    {
+      prompt: "Keep the reviewed choice",
+      text: "First",
+      selector: "button#first",
+      tag: "choice",
+    },
+  ]);
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Artifact replacement after pointerdown"],
+  );
+});
+
+test("a frozen prompt rejected after replacement is restored with its visible error", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return {
+          status: "rejected",
+          pending_prompts: 0,
+          accepted_prompt_indices: [],
+          rejected_prompts: [{ index: 0, code: "invalid_whiteboard_target" }],
+          session_ended: false,
+        };
+      },
+    }),
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: {
+      prompt: "Reviewed whiteboard",
+      text: "Diagram 1",
+      tag: "whiteboard",
+      target: { type: "excalidraw-scene", diagramIndex: 0, scenePath: "/not/session-owned" },
+      _luxeQueueKey: "whiteboard:0",
+    },
+  });
+
+  chrome.dispatchDocumentEvent("pointerdown", { target: chrome.element("send") });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: {
+      prompt: "Later replacement",
+      text: "Diagram 1",
+      tag: "whiteboard",
+      target: { type: "excalidraw-scene", diagramIndex: 0, scenePath: "/replacement" },
+      _luxeQueueKey: "whiteboard:0",
+    },
+  });
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Later replacement", "Reviewed whiteboard"],
+  );
+  assert.match(
+    chrome.element("annotationPills").innerHTML,
+    /Not sent - this whiteboard target is not a Luxe session file\. Remove this item before sending again\./,
+  );
+});
+
+test("a pointerdown freeze expires when no click follows and keyboard activation freezes at click time", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Old choice", selector: "button#old", tag: "choice", text: "Old", _luxeQueueKey: "choice" },
+  });
+
+  chrome.dispatchDocumentEvent("pointerdown", { target: chrome.element("send") });
+  chrome.dispatchDocumentEvent("pointerup", { target: chrome.element("send") });
+  chrome.runTimers(0);
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "New choice", selector: "button#new", tag: "choice", text: "New", _luxeQueueKey: "choice" },
+  });
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.equal(posts[0].body.prompts[0].prompt, "New choice");
+});
+
+test("pointerdown freezes composer text and preserves text typed before the click for a later send", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return { ok: true };
+    },
+  });
+  chrome.element("chatInput").value = "First message";
+
+  chrome.dispatchDocumentEvent("pointerdown", { target: chrome.element("send") });
+  chrome.element("chatInput").value = "Second message";
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.deepEqual(posts[0].body.prompts, [
+    { prompt: "First message", text: "Freeform message", selector: "", tag: "message" },
+  ]);
+  assert.equal(chrome.element("chatInput").value, "Second message");
 });
 
 test("chrome send and end carries the end intent with queued prompts", async () => {

@@ -157,13 +157,25 @@ export class SessionStore {
       }
       // Prompts queued before the session ended (a browser send-and-end) must still reach the
       // agent, so deliver them before reporting the ended state; the next poll then sees ended.
-      const prompts = session.prompts || [];
+      const storedPrompts = session.prompts || [];
+      const prompts = normalizeStoredPrompts(storedPrompts, {
+        stateDir: path.dirname(this.file),
+        key,
+      });
       const layoutWarnings = normalizeStoredLayoutWarnings(
         session.layout_warnings,
         new Set(session.delivered_layout_warning_keys || []),
       );
       const alreadyEnded = session.status === "ended";
       if (prompts.length === 0 && layoutWarnings.length === 0) {
+        if (storedPrompts.length > 0) {
+          session.prompts = [];
+          session.pending_prompts = 0;
+          session.dom_snapshot = "";
+          if (!alreadyEnded) session.status = "open";
+          session.updated_at = new Date().toISOString();
+          await this.writeState(state);
+        }
         return alreadyEnded ? { status: "ended", ended_by: session.ended_by } : { status: "waiting" };
       }
       const result = {
@@ -276,16 +288,26 @@ export function sessionKey(file) {
 
 function normalizePrompt(prompt, sessionRef) {
   const normalized = {
-    uid: String(prompt.uid || ""),
     prompt: String(prompt.prompt || ""),
+    text: String(prompt.text || ""),
     selector: String(prompt.selector || ""),
     tag: String(prompt.tag || ""),
-    text: String(prompt.text || ""),
   };
   const targetResult = normalizeTarget(prompt.target, sessionRef);
   if (targetResult.code) return targetResult;
   if (targetResult.target) normalized.target = targetResult.target;
   return { prompt: normalized };
+}
+
+function normalizeStoredPrompts(prompts, sessionRef) {
+  if (!Array.isArray(prompts)) return [];
+  const normalized = [];
+  for (const prompt of prompts) {
+    if (!prompt || typeof prompt !== "object" || Array.isArray(prompt)) continue;
+    const result = normalizePrompt(prompt, sessionRef);
+    if (result.prompt) normalized.push(result.prompt);
+  }
+  return normalized;
 }
 
 function layoutWarningKey(warning) {
@@ -327,6 +349,12 @@ function normalizeStoredLayoutWarnings(layoutWarnings, deliveredKeys = new Set()
   return normalized;
 }
 
+function normalizeNonNegativeSafeInteger(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return 0;
+  return Math.min(Math.round(number), Number.MAX_SAFE_INTEGER);
+}
+
 function normalizeTarget(target, sessionRef) {
   if (!target || typeof target !== "object" || Array.isArray(target)) return { target: null };
   if (target.type === "mermaid-node") return { target: normalizeMermaidNodeTarget(target) };
@@ -356,8 +384,8 @@ function normalizeTarget(target, sessionRef) {
   if (target.type === "text-range") {
     const normalizeAnchor = (anchor) => ({
       selector: String(anchor?.selector || ""),
-      path: Array.isArray(anchor?.path) ? anchor.path.map((segment) => Number(segment)) : [],
-      offset: Number(anchor?.offset) || 0,
+      path: Array.isArray(anchor?.path) ? Array.from(anchor.path, normalizeNonNegativeSafeInteger) : [],
+      offset: normalizeNonNegativeSafeInteger(anchor?.offset),
     });
     return {
       target: {

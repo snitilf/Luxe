@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  annotationCardCanDismiss,
   buildDomSnapshot,
   buildStructuralSelector,
   classifyMaterialRectEscape,
@@ -198,6 +199,13 @@ test("isNativeInteractiveControl allows details as a text selection ancestor", (
   assert.equal(isNativeInteractiveControl(details), false);
   assert.equal(isNativeInteractiveControl(firstParagraph), false);
   assert.equal(isNativeInteractiveControl(secondParagraph), false);
+});
+
+test("annotation card dismissal closes an empty card and preserves typed text", () => {
+  assert.equal(annotationCardCanDismiss(true, ""), true);
+  assert.equal(annotationCardCanDismiss(true, "   "), true);
+  assert.equal(annotationCardCanDismiss(true, "Keep this draft"), false);
+  assert.equal(annotationCardCanDismiss(false, ""), false);
 });
 
 test("deriveLuxeQueueKey uses explicit queueKey first", () => {

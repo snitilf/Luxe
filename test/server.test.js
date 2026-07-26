@@ -728,7 +728,10 @@ test("sending with an empty composer nudges instead of blocking", async () => {
   const js = await chromeClientSource();
   const css = await chromeCssSource();
 
-  assert.match(html, /class="send-hint" id="sendHint" hidden>Write a message or annotate an element first\.<\/div>/);
+  assert.match(
+    html,
+    /class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first\.<\/div>/,
+  );
   assert.match(js, /function showSendHint\(\)/);
   assert.match(js, /sendHint\.hidden = false/);
   assert.match(js, /chatInput\.focus\(\)/);
@@ -743,7 +746,7 @@ test("composer offers two always-visible top-level send actions", async () => {
   assert.match(html, /class="button button-ghost" id="sendAndEnd"[^<]*>.*Send &amp; End</);
   assert.match(
     html,
-    /<div class="send-hint" id="sendHint" hidden>Write a message or annotate an element first\.<\/div><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button">.*<button class="button" id="send">Send to agent<\/button><\/div>/,
+    /<div class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first\.<\/div><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button">.*<button class="button" id="send">Send to agent<\/button><\/div>/,
   );
   // Send & End is a ghost button and carries the 14px caption the spec requires.
   assert.match(html, /<p class="send-caption">Send &amp; End delivers the feedback and closes the session\.<\/p>/);
@@ -835,10 +838,9 @@ test("chrome puts queued annotations above the chat composer as preview pills", 
   assert.match(js, /class="pill/);
   assert.match(js, /pill-preview/);
   assert.match(js, /removeQueuedPrompt/);
-  assert.match(js, /pill-tooltip/);
-  assert.match(css, /text-overflow:ellipsis/);
+  assert.match(js, /pill-context/);
+  assert.match(css, /\.pill-fields\{[^}]*flex-direction:column/);
   assert.doesNotMatch(js, /togglePill/);
-  assert.doesNotMatch(js, /pill-detail/);
   assert.doesNotMatch(html, /<h2>Queued Annotations<\/h2>/);
 });
 
@@ -863,19 +865,22 @@ test("chrome omits clear queue button because pills can be removed individually"
   assert.doesNotMatch(js, /id="clear"/);
 });
 
-test("annotation pill tooltip separates target and prompt details", async () => {
+test("annotation pills show human fields inline and disclose structured target fields before send", async () => {
   const js = await chromeClientSource();
   const css = await chromeCssSource();
 
-  assert.match(js, /tooltip-label/);
-  assert.match(js, /Target/);
-  assert.match(js, /Prompt/);
-  assert.match(js, /pill-tooltip-target/);
-  assert.match(js, /pill-tooltip-prompt/);
+  assert.match(js, /prompt\.prompt \? '<div class="pill-preview">/);
+  assert.match(js, /prompt\.text/);
+  assert.match(js, /prompt\.selector/);
+  assert.match(js, /prompt\.tag/);
+  assert.match(js, /aria-label="Text: /);
+  assert.match(js, /class="visually-hidden">Selector: <\/span><code>/);
+  assert.match(js, /aria-label="Tag: /);
+  assert.match(js, /<details class="pill-target-details"><summary>Target details<\/summary><dl>/);
   assert.match(css, /\.pill-wrap\{[^}]*width:100%/);
-  assert.match(css, /\.pill-tooltip\{[^}]*position:static/);
-  assert.match(css, /\.pill-tooltip\{[^}]*width:100%/);
-  assert.doesNotMatch(css, /\.pill-tooltip\{[^}]*position:absolute/);
+  assert.match(css, /\.pill-target-details\{[^}]*width:100%/);
+  assert.match(css, /\.pill-target-details summary\{[^}]*cursor:pointer/);
+  assert.doesNotMatch(js, /JSON\.stringify\(prompt\.target\)/);
 });
 
 test("chrome client script is valid JavaScript", async () => {

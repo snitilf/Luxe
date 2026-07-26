@@ -9,6 +9,10 @@ export const DOM_SNAPSHOT_MAX_NODES = 2_000;
 export const DOM_SNAPSHOT_MAX_BYTES = 128 * 1024;
 export const DOM_SNAPSHOT_TRUNCATION_MARKER = "[Luxe DOM snapshot truncated]";
 
+export function annotationCardCanDismiss(cardOpen, draftValue) {
+  return Boolean(cardOpen) && !String(draftValue || "").trim();
+}
+
 /**
  * @param {unknown} root
  * @param {object} options
@@ -405,6 +409,7 @@ export function createArtifactSdk(
   luxeTokensCss = "",
   snapshotBuilder = buildDomSnapshot,
   selectorBuilder = buildStructuralSelector,
+  annotationCardDismissPolicy = annotationCardCanDismiss,
 ) {
   const { isMermaidSvg, mermaidNodeFrom, mermaidNodeElement } = mermaid;
   // The SDK has no mode state of its own to decide: the chrome owns annotate/explore and
@@ -1706,7 +1711,7 @@ export function createArtifactSdk(
   function cardHasDraft() {
     if (!shadow) return false;
     const textarea = shadow.querySelector(".luxe-annotation-card textarea");
-    return Boolean(textarea && String(textarea.value || "").trim());
+    return !annotationCardDismissPolicy(true, textarea ? textarea.value : "");
   }
 
   function isPageBackdrop(el) {

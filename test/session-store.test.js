@@ -34,9 +34,8 @@ test("queued prompts are returned with DOM snapshot context and then cleared", a
 
     const first = feedbackResult(await store.takeFeedback(session.key));
     assert.equal(first.dom_snapshot, 'uid=1 h1 "Hello"');
-    assert.deepEqual(first.prompts, [
-      { uid: "1", prompt: "Make this warmer", selector: "h1", tag: "h1", text: "Hello" },
-    ]);
+    assert.deepEqual(first.prompts, [{ prompt: "Make this warmer", text: "Hello", selector: "h1", tag: "h1" }]);
+    assert.equal(Object.hasOwn(first.prompts[0], "uid"), false);
 
     const second = await store.takeFeedback(session.key);
     assert.equal(second.status, "waiting");
@@ -70,8 +69,72 @@ test("queued text selection prompts preserve range anchors", async () => {
 
     const result = feedbackResult(await store.takeFeedback(session.key));
     assert.deepEqual(result.prompts, [
-      { uid: "", prompt: "Make this phrase punchier", selector: "p#intro", tag: "text", text: target.text, target },
+      { prompt: "Make this phrase punchier", text: target.text, selector: "p#intro", tag: "text", target },
     ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("queued text ranges canonicalize non-finite and fractional anchors before delivery", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
+  try {
+    const stateFile = path.join(dir, "state.json");
+    const artifact = path.join(dir, "artifact.html");
+    await writeFile(artifact, "<p id='intro'>Hello world</p>");
+    const store = new SessionStore(stateFile);
+    const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
+    await store.queuePrompts(session.key, {
+      prompts: [
+        {
+          prompt: "Review this",
+          selector: "p#intro",
+          tag: "text",
+          text: "Hello",
+          target: {
+            type: "text-range",
+            text: "Hello",
+            selector: "p#intro",
+            start: { selector: "p#intro", path: [NaN], offset: Infinity },
+            end: { selector: "p#intro", path: [1.7], offset: -2 },
+          },
+        },
+      ],
+    });
+
+    const result = feedbackResult(await store.takeFeedback(session.key));
+    assert.deepEqual(result.prompts[0].target.start, { selector: "p#intro", path: [0], offset: 0 });
+    assert.deepEqual(result.prompts[0].target.end, { selector: "p#intro", path: [2], offset: 0 });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("legacy queued prompts drop uid and unknown fields before agent delivery", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
+  try {
+    const stateFile = path.join(dir, "state.json");
+    const artifact = path.join(dir, "artifact.html");
+    await writeFile(artifact, "<h1>Hello</h1>");
+    const store = new SessionStore(stateFile);
+    const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
+    const state = JSON.parse(await readFile(stateFile, "utf8"));
+    state.sessions[session.key].status = "feedback";
+    state.sessions[session.key].pending_prompts = 1;
+    state.sessions[session.key].prompts = [
+      {
+        uid: "legacy-correlation-id",
+        prompt: "Tighten this",
+        text: "Hello",
+        selector: "h1",
+        tag: "annotation",
+        ignored: "legacy hidden field",
+      },
+    ];
+    await writeFile(stateFile, JSON.stringify(state));
+
+    const result = feedbackResult(await store.takeFeedback(session.key));
+    assert.deepEqual(result.prompts, [{ prompt: "Tighten this", text: "Hello", selector: "h1", tag: "annotation" }]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
