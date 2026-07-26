@@ -7,8 +7,10 @@ import {
   extraAllowedHosts,
   hostForUrl,
   IPV6_LOOPBACK_HOST,
+  isLoopbackHost,
   LOOPBACK_HOST,
   linkHost,
+  remoteBindingAllowed,
 } from "../src/paths.js";
 
 test("bindHost defaults to loopback and honors LUXE_HOST", () => {
@@ -56,4 +58,42 @@ test("hostForUrl brackets IPv6 literals but leaves IPv4 and hostnames alone", ()
   assert.equal(hostForUrl("host.example"), "host.example");
   assert.equal(hostForUrl("::1"), "[::1]");
   assert.equal(hostForUrl("[::1]"), "[::1]");
+});
+
+test("remote binding requires the exact opt-in while every loopback form remains local", () => {
+  for (const host of [
+    "localhost",
+    "LOCALHOST",
+    "127.0.0.1",
+    "127.255.255.255",
+    "::1",
+    "0:0:0:0:0:0:0:1",
+    "::ffff:127.0.0.1",
+    "::ffff:127.42.7.9",
+    "::ffff:7f00:1",
+    "0:0:0:0:0:ffff:7f2a:709",
+  ]) {
+    assert.equal(isLoopbackHost(host), true, host);
+    assert.equal(remoteBindingAllowed(host, {}), true, host);
+  }
+
+  for (const host of [
+    "0.0.0.0",
+    "::",
+    "192.168.1.5",
+    "10.0.0.1",
+    "host.example",
+    "localhost.example",
+    "user@127.0.0.1",
+    "127.0.0.1:4387",
+    "127.0.0.1/path",
+    "0177.0.0.1",
+  ]) {
+    assert.equal(isLoopbackHost(host), false, host);
+    assert.equal(remoteBindingAllowed(host, {}), false, host);
+    assert.equal(remoteBindingAllowed(host, { LUXE_ALLOWED_HOSTS: "* proxy.example" }), false, host);
+    assert.equal(remoteBindingAllowed(host, { LUXE_ALLOW_REMOTE: "true" }), false, host);
+    assert.equal(remoteBindingAllowed(host, { LUXE_ALLOW_REMOTE: " 1 " }), false, host);
+    assert.equal(remoteBindingAllowed(host, { LUXE_ALLOW_REMOTE: "1" }), true, host);
+  }
 });

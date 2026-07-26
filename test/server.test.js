@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { homedir, tmpdir } from "node:os";
@@ -16,6 +16,7 @@ import {
   createChromeHtml,
   createSdkJs,
   displayPathParts,
+  emitRemoteBindingWarning,
   exportContentDisposition,
   extractArtifactHead,
   hasLiveReloadRootOptIn,
@@ -28,6 +29,7 @@ import {
   resolveFontAssetPath,
   resolveIdleTimeoutMs,
   resolveWatchTarget,
+  remoteBindingWarning,
   serve,
 } from "../src/server.js";
 import { canonicalFile, sessionKey } from "../src/session-store.js";
@@ -1388,6 +1390,33 @@ test("buildAllowedHostnames covers loopback, bind/link host, and explicit extras
   assert.equal(extras.has("*"), false);
 });
 
+test("mapped-loopback bind and Host spellings share one canonical allowlist entry", async () => {
+  const allowed = buildAllowedHostnames({
+    host: "::ffff:127.0.0.1",
+    linkHost: "::ffff:127.0.0.1",
+  });
+  assert.equal(isAllowedHostHeader("[::ffff:7f00:1]:4387", allowed), true);
+
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  let server;
+  try {
+    server = await serve({
+      port: 0,
+      stateFile: path.join(dir, "state.json"),
+      version: "9.9.9-test",
+      host: "::ffff:127.0.0.1",
+      linkHost: "::ffff:127.0.0.1",
+    });
+    const response = await rawRequest(server.port, "/health", {
+      host: `[::ffff:7f00:1]:${server.port}`,
+    });
+    assert.equal(response.status, 200);
+  } finally {
+    await server?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("allowsAllHosts detects the '*' opt-out sentinel", () => {
   assert.equal(allowsAllHosts(["*"]), true);
   assert.equal(allowsAllHosts([" * "]), true);
@@ -1397,7 +1426,9 @@ test("allowsAllHosts detects the '*' opt-out sentinel", () => {
 
 test("serve rejects fast when the bind host is unavailable", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const previousAllowRemote = process.env.LUXE_ALLOW_REMOTE;
   try {
+    process.env.LUXE_ALLOW_REMOTE = "1";
     await assert.rejects(
       serve({
         port: 0,
@@ -1411,6 +1442,132 @@ test("serve rejects fast when the bind host is unavailable", async () => {
       },
     );
   } finally {
+    if (previousAllowRemote === undefined) delete process.env.LUXE_ALLOW_REMOTE;
+    else process.env.LUXE_ALLOW_REMOTE = previousAllowRemote;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("serve refuses a remote bind before listening unless explicitly allowed", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const previousAllowRemote = process.env.LUXE_ALLOW_REMOTE;
+  try {
+    delete process.env.LUXE_ALLOW_REMOTE;
+    await assert.rejects(
+      serve({
+        port: 0,
+        stateFile: path.join(dir, "state.json"),
+        host: "192.0.2.1",
+        allowedHosts: ["*"],
+      }),
+      /LUXE_ALLOW_REMOTE=1/,
+    );
+  } finally {
+    if (previousAllowRemote === undefined) delete process.env.LUXE_ALLOW_REMOTE;
+    else process.env.LUXE_ALLOW_REMOTE = previousAllowRemote;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("authorized remote binding warning reaches stderr and server.log with every exposure", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  try {
+    let stderr = "";
+    const stateFile = path.join(dir, "nested-state", "state.json");
+    const warning = remoteBindingWarning("0.0.0.0");
+    await emitRemoteBindingWarning({
+      host: "0.0.0.0",
+      stateFile,
+      stderr: {
+        write: (text) => {
+          stderr += text;
+          return true;
+        },
+      },
+    });
+
+    const log = await readFile(path.join(path.dirname(stateFile), "server.log"), "utf8");
+    for (const phrase of [
+      "REMOTE BINDING WARNING",
+      "file exposure",
+      "agent instruction injection",
+      "forged agent replies",
+      "session ending",
+      "server shutdown",
+    ]) {
+      assert.match(warning, new RegExp(phrase, "i"));
+      assert.match(stderr, new RegExp(phrase, "i"));
+      assert.match(log, new RegExp(phrase, "i"));
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("remote warning is not duplicated when stderr already targets server.log", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const logPath = path.join(dir, "server.log");
+  const stderr = createWriteStream(logPath, { flags: "a", mode: 0o600 });
+  try {
+    await new Promise((resolve, reject) => {
+      stderr.once("open", resolve);
+      stderr.once("error", reject);
+    });
+    await emitRemoteBindingWarning({
+      host: "0.0.0.0",
+      stateFile: path.join(dir, "state.json"),
+      stderr,
+    });
+    await new Promise((resolve, reject) => {
+      stderr.end(resolve);
+      stderr.once("error", reject);
+    });
+    const log = await readFile(logPath, "utf8");
+    assert.equal(log.match(/LUXE REMOTE BINDING WARNING/g)?.length, 1);
+  } finally {
+    stderr.destroy();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("serve emits the remote warning before an authorized listener starts", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const previousAllowRemote = process.env.LUXE_ALLOW_REMOTE;
+  process.env.LUXE_ALLOW_REMOTE = "1";
+  let server;
+  try {
+    server = await serve({
+      port: 0,
+      stateFile: path.join(dir, "state.json"),
+      host: "0.0.0.0",
+    });
+    assert.match(await readFile(path.join(dir, "server.log"), "utf8"), /LUXE REMOTE BINDING WARNING/);
+  } finally {
+    if (previousAllowRemote === undefined) delete process.env.LUXE_ALLOW_REMOTE;
+    else process.env.LUXE_ALLOW_REMOTE = previousAllowRemote;
+    await server?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("authorized remote binding refuses before listen when server.log cannot be written", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const blockedDirectory = path.join(dir, "not-a-directory");
+  await writeFile(blockedDirectory, "block");
+  const previousAllowRemote = process.env.LUXE_ALLOW_REMOTE;
+  process.env.LUXE_ALLOW_REMOTE = "1";
+  try {
+    await assert.rejects(
+      serve({
+        port: 0,
+        stateFile: path.join(blockedDirectory, "state.json"),
+        host: "192.0.2.1",
+      }),
+      (error) => ["EEXIST", "ENOTDIR"].includes(/** @type {NodeJS.ErrnoException} */ (error).code || ""),
+    );
+  } finally {
+    if (previousAllowRemote === undefined) delete process.env.LUXE_ALLOW_REMOTE;
+    else process.env.LUXE_ALLOW_REMOTE = previousAllowRemote;
     await rm(dir, { recursive: true, force: true });
   }
 });

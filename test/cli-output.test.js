@@ -837,6 +837,13 @@ test("poll help requires an observable wake path", () => {
   assert.doesNotMatch(help, /above 10 minutes/);
 });
 
+test("server help requires exact remote opt-in and distinguishes it from allowed hosts", () => {
+  const help = getCommandHelp("server");
+  assert.match(help, /LUXE_ALLOW_REMOTE=1/);
+  assert.match(help, /required.*non-loopback|non-loopback.*required/i);
+  assert.match(help, /LUXE_ALLOWED_HOSTS.*does not satisfy|does not satisfy.*LUXE_ALLOWED_HOSTS/i);
+});
+
 test("poll help is Codex-aware when requested", () => {
   const help = getCommandHelp("poll", { agent: "codex" });
 
@@ -1377,6 +1384,37 @@ test("server spawn options can persist detached server output to a log fd", () =
 
   assert.equal(options.detached, true);
   assert.deepEqual(options.stdio, ["ignore", 17, 17]);
+});
+
+test("server CLI refuses a non-loopback LUXE_HOST without the exact opt-in", async () => {
+  const stateDir = await mkdtemp(`${os.tmpdir()}/luxe-remote-refusal-test-`);
+  try {
+    /** @type {NodeJS.ProcessEnv} */
+    const env = { ...process.env, LUXE_HOST: "0.0.0.0", LUXE_STATE_DIR: stateDir };
+    delete env.LUXE_ALLOW_REMOTE;
+    const child = spawn(
+      process.execPath,
+      [fileURLToPath(new URL("../bin/luxe.js", import.meta.url)), "server", "--port", "0"],
+      {
+        cwd: fileURLToPath(new URL("..", import.meta.url)),
+        env,
+      },
+    );
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    const exit = await new Promise((resolve) => child.on("close", (code) => resolve(code)));
+
+    assert.equal(exit, 1);
+    assert.match(output, /LUXE_ALLOW_REMOTE=1/);
+    assert.match(output, /code: SERVER_ERROR/);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });
 
 test("server entry resolves to a node-executable script that actually invokes run()", () => {

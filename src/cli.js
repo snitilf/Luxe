@@ -16,10 +16,21 @@ import {
   splitExportWarnings,
 } from "./export-bundle.js";
 import { LAYOUT_WARNING_DESCRIPTIONS, normalizeLayoutWarningReport } from "./layout-warnings.js";
-import { clientHost, defaultPort, ensureStateDir, hostForUrl, serverLogFile, stateDir, stateFile } from "./paths.js";
+import {
+  bindHost,
+  clientHost,
+  defaultPort,
+  ensureStateDir,
+  hostForUrl,
+  isLoopbackHost,
+  remoteBindingAllowed,
+  serverLogFile,
+  stateDir,
+  stateFile,
+} from "./paths.js";
 import { findPlaybook, listPlaybooks, playbookIds, PLAYBOOK_ROUTER_HELP } from "./playbooks.js";
 import { PIERRE_DIFFS_ASSET_FILE, PIERRE_DIFFS_SHA384 } from "./pierre-diffs-vendor.js";
-import { resolveExportAssetPath, serve } from "./server.js";
+import { remoteBindingRefusalMessage, remoteBindingWarning, resolveExportAssetPath, serve } from "./server.js";
 import { canonicalFile, sessionKey, SessionStore } from "./session-store.js";
 import {
   listSessionWhiteboards,
@@ -653,6 +664,7 @@ async function designCommand() {
 async function serverCommand(args) {
   const port = Number(flagValue(args, "--port") || defaultPort());
   const debug = args.includes("--verbose") || process.env.LUXE_DEBUG === "1";
+  assertConfiguredRemoteBinding();
   const server = await serve({ port, stateFile: stateFile(), version: VERSION, debug });
   await server.done;
   return "";
@@ -829,6 +841,8 @@ function processOnPortMatchesLuxe(port) {
 
 async function startServer(port) {
   await ensureStateDir();
+  const { host, remoteBinding } = assertConfiguredRemoteBinding();
+  if (remoteBinding) process.stderr.write(`${remoteBindingWarning(host)}\n`);
   const entry = resolveServerEntry();
   let logFd = null;
   try {
@@ -843,6 +857,15 @@ async function startServer(port) {
   } finally {
     if (logFd !== null) closeSync(logFd);
   }
+}
+
+function assertConfiguredRemoteBinding() {
+  const host = bindHost();
+  const remoteBinding = !isLoopbackHost(host);
+  if (!remoteBindingAllowed(host)) {
+    throw new AxiError(remoteBindingRefusalMessage(host), "SERVER_ERROR");
+  }
+  return { host, remoteBinding };
 }
 
 // The detached server child must point at a node-executable entry that actually invokes
@@ -990,7 +1013,7 @@ function createCommandHelp({ agent = "generic" } = {}) {
     playbook: `Usage: luxe playbook [playbook_id]\n\nList focused artifact guidance playbooks, or show one playbook by ID. Known IDs: diagram, table, comparison, plan, code, input.\n\n${PLAYBOOK_ROUTER_HELP}\n\nExamples:\n  luxe playbook\n  luxe playbook diagram\n  luxe playbook input\n`,
     "copy-code-assets": `Usage: luxe copy-code-assets <html-file>\n\nCopy the hash-checked browser bundle required by the code playbook beside an existing artifact. The local classic script is safe for \`luxe export\` to inline.\n`,
     design: `Usage: luxe design\n\nShow a copy-pasteable CDN snippet for Tailwind CSS browser runtime v4 + DaisyUI v5, the Luxe theme block that maps DaisyUI's semantic variables onto the Luxe tokens, Mermaid diagram tooling, the Luxe Shiki code theme, the chart palette and its labelling rule, a content-to-playbook router, an optional layout safety CSS snippet, plus technical reference for DaisyUI components. ${PLAYBOOK_ROUTER_HELP} Luxe artifacts stay portable HTML. This CDN snippet is the design fallback, not the default: inspect the subject project before falling back, and paste the layout safety CSS only when useful for dense nested grid/flex layouts, badges, wide fonts, or local media. ${DESIGN_PRIORITY_RULE}\n`,
-    server: `Usage: luxe server [--port 4387] [--verbose]\n\nRun the local Luxe Editor server. Pass --verbose (or set LUXE_DEBUG=1) to log session and watcher events to stderr. Detached server output is appended to ~/.luxe/server.log, or LUXE_STATE_DIR/server.log when set, for startup and crash diagnostics.\n\nLUXE_HOST sets the bind address (default 127.0.0.1; a wildcard 0.0.0.0 or :: binds every interface). Binding beyond loopback exposes an unauthenticated server that can read and serve arbitrary local files to anything that can reach it, so only do so on a trusted network. LUXE_LINK_HOST sets the hostname written into generated session links (default: the bind address, or loopback when bound to a wildcard). See README's Allowed hosts section for Host allowlisting and LUXE_ALLOWED_HOSTS. LUXE_NO_OPEN=1 (or --no-open) suppresses the local browser launch.\n`,
+    server: `Usage: luxe server [--port 4387] [--verbose]\n\nRun the local Luxe Editor server. Pass --verbose (or set LUXE_DEBUG=1) to log session and watcher events to stderr. Detached server output is appended to ~/.luxe/server.log, or LUXE_STATE_DIR/server.log when set, for startup and crash diagnostics.\n\nLUXE_HOST sets the bind address (default 127.0.0.1). Exact LUXE_ALLOW_REMOTE=1 is required whenever LUXE_HOST is non-loopback, including wildcard 0.0.0.0 or ::, LAN/WAN addresses, and hostnames. Remote binding exposes an unauthenticated server with file access and agent/session controls, so every authorized remote start warns on stderr and in server.log. LUXE_ALLOWED_HOSTS remains a DNS-rebinding allowlist and does not satisfy the remote-binding opt-in. LUXE_LINK_HOST sets the hostname written into generated session links (default: the bind address, or loopback when bound to a wildcard). LUXE_NO_OPEN=1 (or --no-open) suppresses the local browser launch.\n`,
   };
 }
 

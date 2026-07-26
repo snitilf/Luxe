@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
-import { readFile, realpath } from "node:fs/promises";
+import { existsSync, fstatSync, statSync } from "node:fs";
+import { isIP } from "node:net";
+import { appendFile, mkdir, readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,7 +52,15 @@ import {
 } from "./payload-limits.js";
 import { buildSelfContainedHtml, exportFileName, splitExportWarnings } from "./export-bundle.js";
 import { injectLuxeSdk } from "./html-transform.js";
-import { bindHost, extraAllowedHosts, hostForUrl, IPV6_LOOPBACK_HOST, linkHost, LOOPBACK_HOST } from "./paths.js";
+import {
+  bindHost,
+  extraAllowedHosts,
+  hostForUrl,
+  IPV6_LOOPBACK_HOST,
+  isLoopbackHost,
+  linkHost,
+  LOOPBACK_HOST,
+} from "./paths.js";
 import { canonicalFile, SessionStore, sessionKey } from "./session-store.js";
 
 const chromeClientUrl = new URL("./chrome-client.js", import.meta.url);
@@ -74,6 +83,47 @@ const designAssetUrls = {
     type: "application/javascript",
   },
 };
+
+export function remoteBindingWarning(host) {
+  return (
+    `!!! LUXE REMOTE BINDING WARNING !!! Luxe is binding its unauthenticated server to non-loopback host "${host}". ` +
+    "This creates file exposure and lets anyone who can reach the server attempt agent instruction injection, " +
+    "send forged agent replies, perform session ending, and trigger server shutdown. Use only on a trusted network."
+  );
+}
+
+export function remoteBindingRefusalMessage(host) {
+  return `Remote binding refused for LUXE_HOST=${host}. Set LUXE_ALLOW_REMOTE=1 to acknowledge the unauthenticated exposure.`;
+}
+
+/**
+ * @param {{ host: string, stateFile: string, stderr?: { write(text: string): unknown } }} options
+ */
+export async function emitRemoteBindingWarning({ host, stateFile, stderr = process.stderr }) {
+  const line = `${remoteBindingWarning(host)}\n`;
+  const stateDirectory = path.dirname(stateFile);
+  await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+  const logPath = path.join(stateDirectory, "server.log");
+  stderr.write(line);
+  // Detached starts redirect the child process's stderr to server.log. In that
+  // case the required stderr emission is already the persisted warning, so a
+  // second append would duplicate it. Compare the open file descriptors rather
+  // than trusting an environment flag a caller could forge.
+  if (!streamTargetsFile(stderr, logPath)) {
+    await appendFile(logPath, line, { encoding: "utf8", mode: 0o600 });
+  }
+}
+
+function streamTargetsFile(stream, file) {
+  if (!Number.isInteger(stream?.fd)) return false;
+  try {
+    const open = fstatSync(stream.fd);
+    const target = statSync(file);
+    return open.dev === target.dev && open.ino === target.ino;
+  } catch {
+    return false;
+  }
+}
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 const WHITEBOARD_CHANNEL_TOKEN_TTL_MS = 5 * 60_000;
@@ -155,6 +205,14 @@ export async function serve({
   whiteboardAssetsDir = defaultWhiteboardAssetsDir(),
   fontsDir = defaultFontsDir(),
 }) {
+  const remoteBinding = !isLoopbackHost(host);
+  if (remoteBinding && process.env.LUXE_ALLOW_REMOTE !== "1") {
+    throw new Error(remoteBindingRefusalMessage(host));
+  }
+  if (remoteBinding) {
+    await emitRemoteBindingWarning({ host, stateFile });
+  }
+
   const app = express();
   const store = new SessionStore(stateFile);
   const events = new EventEmitter();
@@ -1110,6 +1168,18 @@ function encodeRfc5987Value(value) {
 // loopback-reach trick, so it must stay rejected.
 const WILDCARD_BIND_HOSTS = new Set(["0.0.0.0", "::"]);
 
+function canonicalHostForComparison(value) {
+  const hostname = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (isIP(hostname) !== 6) return hostname;
+  try {
+    return new URL(`http://[${hostname}]/`).hostname.slice(1, -1);
+  } catch {
+    return hostname;
+  }
+}
+
 // The set of Host header hostnames this server answers to: loopback names plus
 // the resolved bind and link host and any explicit LUXE_ALLOWED_HOSTS
 // extras, minus wildcard binds and the "*" sentinel. Lowercased for
@@ -1117,11 +1187,7 @@ const WILDCARD_BIND_HOSTS = new Set(["0.0.0.0", "::"]);
 export function buildAllowedHostnames({ host, linkHost: linkHostName, allowedHosts = [] }) {
   return new Set(
     [LOOPBACK_HOST, IPV6_LOOPBACK_HOST, "localhost", host, linkHostName, ...allowedHosts]
-      .map((value) =>
-        String(value || "")
-          .trim()
-          .toLowerCase(),
-      )
+      .map(canonicalHostForComparison)
       .filter((value) => value && value !== "*" && !WILDCARD_BIND_HOSTS.has(value)),
   );
 }
@@ -1143,14 +1209,14 @@ export function hostnameFromHostHeader(value) {
     // garbage (e.g. "[::1]evil.com") instead of reading it as the bracketed host.
     const rest = raw.slice(end + 1);
     if (rest.length > 0 && !rest.startsWith(":")) return null;
-    return raw.slice(1, end).toLowerCase();
+    return canonicalHostForComparison(raw.slice(1, end));
   }
   const colon = raw.indexOf(":");
   const hostname = colon === -1 ? raw : raw.slice(0, colon);
   // A bare, unbracketed IPv6 literal is not a valid authority; reject it rather
   // than mistaking a hextet for a port.
   if (hostname.includes(":")) return null;
-  return hostname.toLowerCase();
+  return canonicalHostForComparison(hostname);
 }
 
 // DNS-rebinding defense: a loopback-bound server answers only to its own known
