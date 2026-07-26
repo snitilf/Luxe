@@ -513,12 +513,42 @@ export function createArtifactSdk(
     const view = { ...initial };
     let frozen = false;
     let panning = null;
+    const listeners = new Set();
 
+    // The clamp, named once. A smaller viewBox is a closer view, so MIN_W is maximum
+    // zoom in: 40x in, 8x out, which the toolbar reports as 4000% and 12.5% of fit.
+    const MIN_W = initial.w / 40;
+    const MAX_W = initial.w * 8;
+
+    function notify() {
+      for (const listener of listeners) listener();
+    }
     function apply() {
       svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+      notify();
     }
     function reset() {
       Object.assign(view, initial);
+      apply();
+    }
+    // Scale relative to fit, so 1 is "the whole diagram" and the toolbar can print a
+    // percentage a reader recognises.
+    function getScale() {
+      return initial.w / view.w;
+    }
+    function atMinZoom() {
+      return view.w >= MAX_W - 1e-9;
+    }
+    function atMaxZoom() {
+      return view.w <= MIN_W + 1e-9;
+    }
+    function zoomTo(fx, fy, factor) {
+      const next = Math.min(Math.max(view.w * factor, MIN_W), MAX_W);
+      const scale = next / view.w;
+      view.w = next;
+      view.h *= scale;
+      view.x = fx - (fx - view.x) * scale;
+      view.y = fy - (fy - view.y) * scale;
       apply();
     }
     function zoomAt(clientX, clientY, factor) {
@@ -526,15 +556,14 @@ export function createArtifactSdk(
       if (!rect.width || !rect.height) return;
       const px = (clientX - rect.left) / rect.width;
       const py = (clientY - rect.top) / rect.height;
-      const fx = view.x + view.w * px;
-      const fy = view.y + view.h * py;
-      const next = Math.min(Math.max(view.w * factor, initial.w / 40), initial.w * 8);
-      const scale = next / view.w;
-      view.w = next;
-      view.h *= scale;
-      view.x = fx - (fx - view.x) * scale;
-      view.y = fy - (fy - view.y) * scale;
-      apply();
+      zoomTo(view.x + view.w * px, view.y + view.h * py, factor);
+    }
+    // Button zoom works about the centre of the current view rather than a pointer
+    // position, so repeated clicks stay put instead of drifting toward a corner. It is
+    // deliberately not gated on `frozen`: freezing exists so a click on a diagram
+    // resolves to a node instead of a pan, and an explicit button press is not ambiguous.
+    function zoomBy(factor) {
+      zoomTo(view.x + view.w / 2, view.y + view.h / 2, factor);
     }
 
     function onWheel(event) {
@@ -580,7 +609,12 @@ export function createArtifactSdk(
     // and the only one no message ever corrects if a future caller forgets to.
     setFrozen(annotationMode);
 
-    return { reset, setFrozen };
+    function subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }
+
+    return { reset, setFrozen, zoomBy, getScale, atMinZoom, atMaxZoom, subscribe };
   }
 
   function safeBBox(svg) {
@@ -602,22 +636,40 @@ export function createArtifactSdk(
     return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
   }
 
-  // Whiteboard edit affordance. Luxe is fullscreen-first: the rendered diagram
-  // stays exactly what the artifact author wrote - themed Mermaid, visible,
-  // selectable, printable, and identical when the file is opened standalone or
-  // exported - and gets one quiet control that asks the chrome to open it in
-  // the full-viewport Excalidraw editor. Nothing is hidden, no nested editor is
-  // embedded, and the affordance itself is `data-luxe-ui`, so the annotation
-  // layer and the snapshot walker both skip it.
+  // Diagram toolbar. Luxe is fullscreen-first: the rendered diagram stays exactly what
+  // the artifact author wrote - themed Mermaid, visible, selectable, printable, and
+  // identical when the file is opened standalone or exported - and gets one quiet strip
+  // of controls beneath it.
+  //
+  // Beneath, not on top of. The edit affordance used to be absolutely positioned at
+  // top-right INSIDE the diagram container, so it covered whatever the diagram drew
+  // there - which on a wide flowchart is a node. The strip is laid out after the
+  // diagram in normal flow and cannot overlap it at any width.
+  //
+  // The zoom controls exist because the viewport has always supported wheel-zoom and
+  // drag-pan with nothing on screen saying so, which left "open the whole whiteboard"
+  // as the only discoverable way to look closer.
+  //
+  // Everything here is `data-luxe-ui`, so the annotation layer and the snapshot walker
+  // both skip it; the export reads the artifact from disk and never sees it at all.
   //
   // The index of the container among `.mermaid` elements in document order is
   // the diagram's identity; the server recovers the matching Mermaid source
   // from the artifact file on disk under that same index.
-  const whiteboardAffordances = new Map(); // container -> { button, index }
+  const whiteboardAffordances = new Map(); // container -> { button, index, bar, viewport, ... }
   let openWhiteboardIndex = null;
 
   function mermaidContainerIndex(container) {
     return [...document.querySelectorAll(".mermaid")].indexOf(container);
+  }
+
+  // A disabled control that does not say why is a dead end. Each reason is also the
+  // accessible description, so it reaches a screen reader and not only a hover.
+  function affordanceReason(entry) {
+    if (sessionEnded) return "This session has ended.";
+    if (openWhiteboardIndex === entry.index) return "This diagram is open in the whiteboard.";
+    if (annotationMode) return "Turn off Annotate to edit this diagram as a whiteboard.";
+    return "Open this diagram as an editable whiteboard";
   }
 
   function setAffordanceState(entry) {
@@ -625,6 +677,8 @@ export function createArtifactSdk(
     entry.button.disabled = busy || annotationMode || sessionEnded;
     entry.button.textContent = busy ? "Open in whiteboard" : "Edit as whiteboard";
     entry.button.setAttribute("aria-disabled", String(entry.button.disabled));
+    entry.button.title = affordanceReason(entry);
+    entry.updateZoom?.();
   }
 
   function refreshAffordances() {
@@ -633,7 +687,53 @@ export function createArtifactSdk(
     }
   }
 
-  function addWhiteboardAffordance(svg) {
+  // Injection 3 of 3 outside the shadow DOM. Like the other two, every colour and metric
+  // is read out of the design-token text rather than written as a literal, and every
+  // fallback is a keyword rather than a hex so a missing token degrades to the artifact's
+  // own palette instead of a foreign one.
+  function toolbarButtonCss({ square = false } = {}) {
+    return (
+      // 32px square clears the 24px WCAG 2.5.8 target floor with room to spare, and keeps
+      // the icon buttons the same height as the text one beside them.
+      "min-width:32px;height:32px;padding:" +
+      (square ? "0" : "0 12px") +
+      ";cursor:pointer;display:inline-flex;align-items:center;justify-content:center;" +
+      "border-radius:" +
+      luxeToken("radius-pill", "999px") +
+      ";border:" +
+      luxeToken("stroke-hair", "1px") +
+      " solid " +
+      luxeToken("strong", "currentColor") +
+      ";background:" +
+      luxeToken("surface-2", "transparent") +
+      ";color:" +
+      luxeToken("ink-2", "currentColor") +
+      ";font-family:" +
+      luxeToken("font-sans", "inherit") +
+      ";font-size:" +
+      luxeToken("text-label", "inherit") +
+      ";font-weight:" +
+      luxeToken("weight-medium", "500") +
+      ";letter-spacing:" +
+      luxeToken("tracking-sans", "normal") +
+      ";line-height:1"
+    );
+  }
+
+  function makeToolbarButton(label, text, options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("data-luxe-ui", "diagram-toolbar");
+    // The visible glyph is decorative; the accessible name is the label. A screen reader
+    // should hear "Zoom in", not "plus".
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.textContent = text;
+    button.style.cssText = toolbarButtonCss(options);
+    return button;
+  }
+
+  function addWhiteboardAffordance(svg, viewport) {
     const container = svg.closest(".mermaid");
     if (!container) return;
     const existing = whiteboardAffordances.get(container);
@@ -652,66 +752,91 @@ export function createArtifactSdk(
       window.setTimeout(scheduleMermaidEnhance, 150);
       return;
     }
+    const bar = document.createElement("div");
+    bar.setAttribute("data-luxe-ui", "diagram-toolbar");
+    bar.setAttribute("role", "toolbar");
+    bar.setAttribute("aria-label", "Diagram controls");
+    // Normal flow under the diagram, wrapping when the artifact is narrow. Nothing here
+    // is positioned, so there is no width at which it can land on top of the diagram.
+    bar.style.cssText =
+      "display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;" +
+      "font-family:" +
+      luxeToken("font-sans", "inherit");
+
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("data-luxe-ui", "whiteboard-edit");
-    button.title = "Open this diagram as an editable whiteboard";
-    // Injection 3 of 3 outside the shadow DOM. Like the other two, every colour
-    // and metric is read out of the design-token text rather than written as a
-    // literal, and every fallback is a keyword rather than a hex so a missing
-    // token degrades to the artifact's own palette instead of a foreign one.
-    button.style.cssText =
-      "position:absolute;top:8px;right:8px;z-index:2;padding:4px 10px;cursor:pointer;" +
-      "opacity:.55;transition:opacity var(--luxe-wb-dur,120ms);" +
-      "border-radius:" +
-      luxeToken("radius-pill", "999px") +
-      ";" +
-      "border:" +
-      luxeToken("stroke-hair", "1px") +
-      " solid " +
-      luxeToken("strong", "currentColor") +
-      ";" +
-      "background:" +
-      luxeToken("surface-2", "transparent") +
-      ";" +
-      "color:" +
-      luxeToken("ink-2", "currentColor") +
-      ";" +
-      "font-family:" +
-      luxeToken("font-sans", "inherit") +
-      ";" +
-      "font-size:" +
-      luxeToken("text-label", "inherit") +
-      ";" +
-      "font-weight:" +
-      luxeToken("weight-medium", "500") +
-      ";" +
-      "letter-spacing:" +
-      luxeToken("tracking-sans", "normal") +
-      ";line-height:1.3";
-    button.addEventListener("mouseenter", () => {
-      button.style.opacity = "1";
-    });
-    button.addEventListener("mouseleave", () => {
-      button.style.opacity = ".55";
-    });
-    button.addEventListener("focus", () => {
-      button.style.opacity = "1";
-    });
-    button.addEventListener("blur", () => {
-      button.style.opacity = ".55";
-    });
-    const entry = { button, index };
+    button.style.cssText = toolbarButtonCss() + ";margin-left:auto";
+
+    const entry = { button, index, bar, viewport };
     button.onclick = (event) => {
       event.preventDefault();
       event.stopPropagation();
       if (button.disabled) return;
       parent.postMessage({ type: "luxe:openWhiteboard", diagramIndex: entry.index }, "*");
     };
-    // The affordance is absolutely positioned inside the diagram's own
-    // container, so it travels with the diagram and never needs re-measuring.
-    if (getComputedStyle(container).position === "static") container.style.position = "relative";
-    container.appendChild(button);
+
+    // A diagram with no viewBox and no measurable bbox gets no viewport, and therefore no
+    // zoom controls - but it still gets the whiteboard button, which does not depend on one.
+    if (viewport) {
+      const zoomOut = makeToolbarButton("Zoom out", "−", { square: true });
+      const zoomIn = makeToolbarButton("Zoom in", "+", { square: true });
+      const reset = makeToolbarButton("Reset zoom to fit", "100%");
+      reset.style.cssText += ";min-width:56px;font-variant-numeric:tabular-nums";
+
+      // Announce the level politely rather than on every wheel tick, so continuous
+      // zooming does not flood a screen reader.
+      const status = document.createElement("span");
+      status.setAttribute("data-luxe-ui", "diagram-toolbar");
+      status.setAttribute("aria-live", "polite");
+      status.setAttribute("role", "status");
+      status.style.cssText =
+        "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
+
+      let announceTimer;
+      entry.updateZoom = () => {
+        const percent = Math.round(viewport.getScale() * 100);
+        reset.textContent = `${percent}%`;
+        // The ends of the clamp disable rather than silently doing nothing.
+        zoomIn.disabled = viewport.atMaxZoom();
+        zoomOut.disabled = viewport.atMinZoom();
+        for (const control of [zoomIn, zoomOut]) {
+          control.setAttribute("aria-disabled", String(control.disabled));
+          control.style.opacity = control.disabled ? "0.45" : "1";
+        }
+        reset.disabled = percent === 100;
+        reset.setAttribute("aria-disabled", String(reset.disabled));
+        window.clearTimeout(announceTimer);
+        announceTimer = window.setTimeout(() => {
+          status.textContent = `Diagram zoom ${percent} percent`;
+        }, 400);
+      };
+
+      zoomOut.onclick = () => viewport.zoomBy(1.25);
+      zoomIn.onclick = () => viewport.zoomBy(1 / 1.25);
+      reset.onclick = () => viewport.reset();
+      viewport.subscribe(() => entry.updateZoom());
+
+      // Scoped to the toolbar and the diagram, never document-global: the artifact owns
+      // its own keyboard, and hijacking "+" across the page would break its controls.
+      const onKeydown = (event) => {
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        if (event.key === "+" || event.key === "=") viewport.zoomBy(1 / 1.25);
+        else if (event.key === "-" || event.key === "_") viewport.zoomBy(1.25);
+        else if (event.key === "0") viewport.reset();
+        else return;
+        event.preventDefault();
+      };
+      bar.addEventListener("keydown", onKeydown);
+      container.addEventListener("keydown", onKeydown);
+
+      bar.append(zoomOut, reset, zoomIn, status);
+      entry.updateZoom();
+    }
+
+    bar.appendChild(button);
+    // After the diagram in document order, so tab order runs diagram then controls.
+    container.appendChild(bar);
     whiteboardAffordances.set(container, entry);
     setAffordanceState(entry);
   }
@@ -727,13 +852,17 @@ export function createArtifactSdk(
 
   function enhanceMermaid() {
     for (const svg of findMermaidSvgs()) {
-      addWhiteboardAffordance(svg);
-      if (mermaidViewports.has(svg)) continue;
-      const viewport = createViewport(svg);
-      if (viewport) {
-        viewport.setFrozen(annotationMode);
-        mermaidViewports.set(svg, viewport);
+      // The viewport is built first: the toolbar's zoom controls drive it, so it has to
+      // exist before the toolbar that reads from it. Previously the affordance was built
+      // first, which was harmless only because it had nothing to read.
+      if (!mermaidViewports.has(svg)) {
+        const created = createViewport(svg);
+        if (created) {
+          created.setFrozen(annotationMode);
+          mermaidViewports.set(svg, created);
+        }
       }
+      addWhiteboardAffordance(svg, mermaidViewports.get(svg) || null);
     }
   }
 

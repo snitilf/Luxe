@@ -749,6 +749,23 @@ function main() {
       }
     }
   });
+  // Escape closes the overlay even when the canvas holds focus. The chrome listens for
+  // Escape on its own document, but this frame is a separate document in a sandboxed
+  // iframe, so a keystroke aimed at the Excalidraw canvas never reached it and the only
+  // way out was the close button. Reuses the existing `luxe-whiteboard:close` message
+  // rather than inventing a second way to say the same thing.
+  //
+  // Two guards, both about not stealing an Escape that already means something here: a
+  // text field is being edited (Escape cancels the edit), or the link confirmation is
+  // open (it handles its own Escape above, and the event bubbles to this listener after).
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    const active = document.activeElement;
+    const tag = active?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || /** @type {HTMLElement | null} */ (active)?.isContentEditable) return;
+    post({ type: "luxe-whiteboard:close" });
+  });
+
   post({ type: "luxe-whiteboard:ready" });
 }
 

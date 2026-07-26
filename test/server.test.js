@@ -3265,3 +3265,25 @@ test("ending a live session closes its open stream", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// The edit affordance used to be `position:absolute; top:8px; right:8px` INSIDE the
+// diagram container, so it sat on top of whatever the diagram drew there. Geometry is
+// verified for real in the browser E2E; this guards the shape of the served SDK so the
+// overlap cannot be reintroduced by a refactor that never runs a browser.
+test("the diagram toolbar is laid out below the diagram, not over it", async () => {
+  const sdk = await sdkJsSource();
+
+  assert.match(sdk, /data-luxe-ui", "diagram-toolbar"/);
+  assert.match(sdk, /role", "toolbar"/);
+  assert.doesNotMatch(sdk, /position:absolute;top:8px;right:8px/);
+
+  // Every control carries an accessible name and a stated reason when disabled.
+  for (const label of ["Zoom out", "Zoom in", "Reset zoom to fit", "Diagram controls"]) {
+    assert.ok(sdk.includes(label), `the toolbar is missing the accessible name ${label}`);
+  }
+  assert.match(sdk, /Turn off Annotate to edit this diagram as a whiteboard/);
+  assert.match(sdk, /This session has ended/);
+
+  // Hit targets clear the 24px WCAG 2.5.8 floor.
+  assert.match(sdk, /min-width:32px;height:32px/);
+});
