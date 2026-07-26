@@ -632,6 +632,28 @@ export async function serve({
           res.write(`event: agent-presence\ndata: ${JSON.stringify({ state })}\n\n`);
         }
       };
+      // A session that is already over gets its history and nothing else. Without this a
+      // reloaded ended tab holds a stream open against a dead session for as long as the
+      // browser is willing to, listening for events that can never arrive. The chrome
+      // declines to connect at all when its bootstrap says ended; this is the other half,
+      // so the guarantee does not depend on the client honouring it.
+      if (session?.status === "ended") {
+        res.write(`event: chat-sync\ndata: ${JSON.stringify({ chat: session.chat || [] })}\n\n`);
+        res.write("event: ended\ndata: {}\n\n");
+        sseClients.delete(res);
+        res.end();
+        refreshIdleTimer();
+        return;
+      }
+      // Ending a live session closes its streams. `ended` is already emitted by both the
+      // user-initiated and agent-initiated end routes; before this, nothing listened for it
+      // here and the connection simply stayed open.
+      const sendEnded = (key) => {
+        if (key === req.params.key) {
+          res.write("event: ended\ndata: {}\n\n");
+          res.end();
+        }
+      };
       res.write(`event: chat-sync\ndata: ${JSON.stringify({ chat: session?.chat || [] })}\n\n`);
       res.write(
         `event: agent-presence\ndata: ${JSON.stringify({ state: computePresence(req.params.key, activePolls, deliveredFeedback) })}\n\n`,
@@ -639,11 +661,13 @@ export async function serve({
       events.on("reload", sendReload);
       events.on("agent-reply", sendAgentReply);
       events.on("agent-presence", sendPresence);
+      events.on("ended", sendEnded);
       req.on("close", () => {
         sseClients.delete(res);
         events.off("reload", sendReload);
         events.off("agent-reply", sendAgentReply);
         events.off("agent-presence", sendPresence);
+        events.off("ended", sendEnded);
         refreshIdleTimer();
       });
     } catch (error) {
@@ -1591,6 +1615,11 @@ export function createChromeHtml(
     layoutGateEnabled,
     modeToggleHotkeyKey: MODE_TOGGLE_HOTKEY_KEY,
     annotationDefault: ANNOTATION_DEFAULT,
+    // The store already persists `status: "ended"` to state.json, but that never reached the
+    // browser, so reloading a finished session's tab brought back a fully live chrome: inputs
+    // enabled, stream connected, nothing on screen admitting the session was over. The flag
+    // carries the one fact the client cannot derive on its own.
+    ended: session.status === "ended",
   });
   const { head: pathHead, tail: pathTail } = displayPathParts(session.file);
   const bodyClass = layoutGateEnabled ? "luxe layout-gate-active" : "luxe";

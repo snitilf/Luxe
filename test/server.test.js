@@ -3188,3 +3188,80 @@ test("Escape closes an empty annotation card and leaves a draft alone", () => {
   assert.match(js, /event\.key === "Escape" && cardIsOpen\(\)/);
   assert.match(js, /if \(dismissCard\(\)\) event\.preventDefault\(\);/);
 });
+
+// P11: reloading an ended session's tab used to bring back a fully live chrome. The store
+// already persisted `status: "ended"`; it simply never reached the browser.
+test("the session bootstrap carries the ended flag", () => {
+  const live = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+  assert.match(live, /"ended":false/);
+
+  const done = createChromeHtml({ key: "abc", file: "/tmp/artifact.html", status: "ended" });
+  assert.match(done, /"ended":true/);
+});
+
+// Reloading an ended tab is only reachable while some other session keeps the server up:
+// ending the last one runs shutdownIfNoLiveSessions() and the process goes away. So this
+// opens two sessions and ends one, which is the shape the bug actually occurs in.
+test("an already-ended session is served its history and then closed, not a live stream", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  const other = path.join(dir, "other.html");
+  await writeFile(artifact, "<!doctype html><html><body></body></html>");
+  await writeFile(other, "<!doctype html><html><body></body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const openSession = async (file) => {
+      const res = await fetch(`${base}/api/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ file }),
+      });
+      return (await res.json()).key;
+    };
+    const key = await openSession(artifact);
+    await openSession(other); // keeps the server alive past the end below
+    await fetch(`${base}/api/${key}/end`, { method: "POST" });
+
+    // No AbortController: if the route does not end the response itself, this hangs, which is
+    // exactly the failure being guarded against.
+    const res = await fetch(`${base}/events/${key}`);
+    const body = await res.text();
+
+    assert.match(body, /event: ended/);
+    assert.doesNotMatch(body, /event: agent-presence/);
+
+    const reloaded = await fetch(`${base}/session/${key}`);
+    assert.match(await reloaded.text(), /"ended":true/);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ending a live session closes its open stream", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body></body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const open = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    });
+    const { key } = await open.json();
+
+    const res = await fetch(`${base}/events/${key}`);
+    const streamed = res.text();
+    await fetch(`${base}/api/${key}/end`, { method: "POST" });
+
+    // Resolves only because the server ended the response; before this it stayed open.
+    const body = await streamed;
+    assert.match(body, /event: ended/);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const sourceUrl = new URL("../src/chrome-client.js", import.meta.url);
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, annotationDefault?: boolean }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, annotationDefault?: boolean, ended?: boolean }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = { key: "abc", file: "/tmp/artifact.html", modeToggleHotkeyKey: "i" };
 
@@ -244,6 +244,9 @@ async function createChromeHarness({
     eventSource() {
       assert.equal(eventSources.length, 1);
       return eventSources[0];
+    },
+    eventSourceCount() {
+      return eventSources.length;
     },
     sendFrameMessage(data) {
       const handlers = windowListeners.get("message") || [];
@@ -2039,4 +2042,31 @@ test("a presence event arriving after the end cannot restore the spinner", async
   presence({ data: JSON.stringify({ state: "working" }) });
 
   assert.equal(chrome.element("chatLog").lastAppendedChild, before, "no new bubble was appended");
+});
+
+// The other half of P11: a reloaded ended tab must not stand the live machinery up at all.
+// An "ended" stream event alone would not cover this - there is no stream to carry it.
+test("a session that loads already ended never opens an event stream", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { ...defaultSessionData, ended: true },
+  });
+
+  assert.equal(chrome.eventSourceCount(), 0, "no stream is opened for an ended session");
+  assert.equal(chrome.element("chatInput").disabled, true);
+  assert.equal(chrome.element("endedChip").hidden, false);
+  assert.ok(chrome.element("body").classList.contains("session-ended"));
+});
+
+test("ending tells the artifact the session is over, not that annotation is off", async () => {
+  const chrome = await createChromeHarness();
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  const sent = chrome.postedToFrame.filter((m) => m.type === "luxe:setSessionEnded");
+  assert.equal(sent.length, 1, "the frame is told the session ended");
+  // luxe:setAnnotationMode{enabled:false} would re-enable "Edit as whiteboard", because the
+  // SDK disables it while annotation mode is ON.
+  const annotationOff = chrome.postedToFrame.filter((m) => m.type === "luxe:setAnnotationMode" && m.enabled === false);
+  assert.equal(annotationOff.length, 0, "the end is not signalled by turning annotation off");
 });

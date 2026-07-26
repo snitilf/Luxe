@@ -54,6 +54,10 @@ const queued = loadQueuedPrompts();
 // switch and the state can never disagree at load. Missing or malformed bootstrap falls back
 // to explore mode, matching ANNOTATION_DEFAULT in server.js.
 let annotation = sessionData.annotationDefault === true;
+// Whether this session was already over when the page loaded. Kept separate from `ended`
+// because the two mean different things at boot: `initialEnded` decides whether to stand the
+// live machinery up at all, while `ended` tracks the running state from there on.
+const initialEnded = sessionData.ended === true;
 let ended = false;
 let agentPresence = "waiting";
 let pendingSnapshot = "";
@@ -902,7 +906,11 @@ function markSessionEnded() {
   clearSessionTimers();
   layoutGateManuallyBypassed = true;
   revealLayoutGate();
-  postToFrame({ type: "luxe:setAnnotationMode", enabled: false });
+  // Not `luxe:setAnnotationMode`. The SDK computes the whiteboard affordance's disabled state
+  // as `busy || annotationMode`, so telling the artifact that annotation is off would ENABLE
+  // "Edit as whiteboard" on a session that is over. Ending is its own terminal state, and the
+  // SDK cannot leave it.
+  postToFrame({ type: "luxe:setSessionEnded" });
   // The ended state is a change of interaction model, not a curtain: the chrome
   // recedes to 45%, drops the annotation hue (body.session-ended maps --gold to
   // --strong) and stops accepting input, while the artifact stays readable.
@@ -1589,18 +1597,26 @@ frame.addEventListener("load", () => {
 
 initializeLayoutGate();
 
-const events = new EventSource("/events/" + key);
-eventStream = events;
-events.addEventListener("reload", () => {
-  resetFrame().then((reloaded) => {
-    if (reloaded) refreshWhiteboardSource();
+// Do not open a stream for a session that is already over. An `ended` listener alone would
+// only catch a session ending *while* this page is open; a reloaded ended tab would still
+// connect and then sit on a dead stream. The server refuses these too, so neither side is
+// load-bearing on its own.
+if (!initialEnded) {
+  const events = new EventSource("/events/" + key);
+  eventStream = events;
+  events.addEventListener("reload", () => {
+    resetFrame().then((reloaded) => {
+      if (reloaded) refreshWhiteboardSource();
+    });
   });
-});
-events.addEventListener("chrome-reload", () => reloadAfterServerRestart());
-events.addEventListener("agent-reply", (event) => addChat("agent", JSON.parse(event.data).text));
-events.addEventListener("chat-sync", (event) => syncChat(JSON.parse(event.data).chat || []));
-events.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
+  events.addEventListener("chrome-reload", () => reloadAfterServerRestart());
+  events.addEventListener("agent-reply", (event) => addChat("agent", JSON.parse(event.data).text));
+  events.addEventListener("chat-sync", (event) => syncChat(JSON.parse(event.data).chat || []));
+  events.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
+  events.addEventListener("ended", () => markSessionEnded());
+}
 
 render();
 initialChat.forEach((item) => addChat(item.role, item.text));
-setAgentPresence("waiting");
+if (initialEnded) markSessionEnded();
+else setAgentPresence("waiting");

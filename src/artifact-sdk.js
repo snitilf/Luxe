@@ -419,6 +419,12 @@ export function createArtifactSdk(
   // `false` is not a wrong-mode bug - it is a flash of annotate cursors and frozen diagrams
   // on every load and reload.
   let annotationMode = false;
+  // Terminal. Set once by `luxe:setSessionEnded` and never cleared: an ended session cannot
+  // become live again without a page load, which rebuilds this module anyway. Kept apart from
+  // annotationMode because the chrome used to signal the end by turning annotation off, and
+  // "annotation is off" is precisely the condition under which the whiteboard affordance is
+  // ENABLED - so the end re-armed the control it meant to retire.
+  let sessionEnded = false;
   let hovered = null;
   let selected = null;
   let ignoreNextClick = false;
@@ -616,7 +622,7 @@ export function createArtifactSdk(
 
   function setAffordanceState(entry) {
     const busy = openWhiteboardIndex === entry.index;
-    entry.button.disabled = busy || annotationMode;
+    entry.button.disabled = busy || annotationMode || sessionEnded;
     entry.button.textContent = busy ? "Open in whiteboard" : "Edit as whiteboard";
     entry.button.setAttribute("aria-disabled", String(entry.button.disabled));
   }
@@ -857,7 +863,18 @@ export function createArtifactSdk(
     }
   }
 
+  // The session is over. Tear the annotation layer down the way turning annotation off would,
+  // then retire every Luxe-owned control in the artifact for good. The artifact itself stays
+  // readable and interactive - ending a review does not take the document away.
+  function setSessionEnded() {
+    if (sessionEnded) return;
+    sessionEnded = true;
+    setAnnotationMode(false);
+    refreshAffordances();
+  }
+
   function setAnnotationMode(enabled) {
+    if (sessionEnded) enabled = false;
     annotationMode = !!enabled;
     let style = document.getElementById("luxe-cursor-style");
     if (annotationMode && !style) {
@@ -1815,7 +1832,8 @@ export function createArtifactSdk(
 
   window.addEventListener("message", (event) => {
     const msg = event.data || {};
-    if (msg.type === "luxe:setAnnotationMode") setAnnotationMode(msg.enabled);
+    if (msg.type === "luxe:setSessionEnded") setSessionEnded();
+    else if (msg.type === "luxe:setAnnotationMode") setAnnotationMode(msg.enabled);
     // The chrome and this document cannot see each other's clicks (the iframe is
     // sandboxed without same-origin), so the chrome forwards clicks that land on
     // itself and we treat them the same as clicking the page backdrop.
