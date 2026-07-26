@@ -37,7 +37,8 @@ Explicit ellipsis and line clamp, standard visually hidden accessibility text, i
 
 Reported warnings are returned from `luxe poll` in `layout_warnings` with `selector`, `kind`, `axis`, `overflowPx`, `severity`, and server-computed `persistent`.
 
-`persistent` is `true` when the same finding was already delivered in a prior poll, so the agent can tell a fresh warning from one its last repair did not clear.
+`persistent` is `true` when a matching finding was already delivered in a prior poll, so the agent can tell a fresh warning from one its last repair did not clear.
+Matching is by selector, kind, axis, and a coarse overflow magnitude bucket, so a repair that shrinks an overflow enough to change bucket clears `persistent` even though the warning is still reported.
 
 The agent must verify every reported locator in the browser before repair, then recheck before asking the human to review.
 
