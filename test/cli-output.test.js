@@ -259,11 +259,11 @@ test("design output prints copy-pasteable CDN URLs so agents can opt in to Daisy
   assert.match(output.design.cdn_snippet, /cdn\.jsdelivr\.net\/npm\/daisyui@/);
   assert.match(output.design.cdn_snippet, /cdn\.jsdelivr\.net\/npm\/daisyui@.*\/themes\.css/);
   assert.match(output.design.cdn_snippet, /cdn\.jsdelivr\.net\/npm\/@tailwindcss\/browser@/);
-  assert.match(output.design.layout_safety_snippet, /min-width: 0/);
-  assert.match(output.design.layout_safety_snippet, /overflow-wrap: anywhere/);
-  assert.match(output.design.layout_safety_snippet, /max-width: 100%/);
-  assert.match(output.design.layout_safety_note, /Optional copy-paste CSS/);
-  assert.match(output.design.layout_safety_note, /never auto-injects/);
+  // The three repairs that used to be an optional snippet are now injected by the
+  // baseline, so the note points there instead of offering a second copy to paste.
+  assert.equal(output.design.layout_safety_snippet, undefined);
+  assert.match(output.design.layout_safety_note, /artifact baseline/);
+  assert.match(output.design.layout_safety_note, /min-width on grid and flex children/);
   assert.match(
     output.design.cdn_urls.daisyui,
     /^https:\/\/cdn\.jsdelivr\.net\/npm\/daisyui@\d+\.\d+\.\d+\/daisyui\.css$/,

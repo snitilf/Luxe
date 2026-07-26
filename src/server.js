@@ -42,6 +42,13 @@ import {
   writeWhiteboardFeedbackFiles,
 } from "./whiteboard-store.js";
 import { inlineLuxeTokens, LUXE_TOKENS_MARKER } from "./chrome-css.js";
+import {
+  artifactDeclinesBaseline,
+  BASELINE_OPT_OUT_ATTRIBUTE,
+  BASELINE_STYLE_ID,
+  baselineStyleTag,
+  readArtifactBaselineCss,
+} from "./artifact-baseline.js";
 import { LUXE_FAVICON_SVG } from "./luxe-brand.js";
 import {
   PayloadBoundaryError,
@@ -505,7 +512,7 @@ export async function serve({
         res.status(404).json({ error: "session not found" });
         return;
       }
-      const source = await readFile(session.file, "utf8");
+      const source = await injectArtifactBaseline(await readFile(session.file, "utf8"));
       const root = path.dirname(session.file);
       const { html, warnings } = await buildSelfContainedHtml(source, {
         baseDir: root,
@@ -745,7 +752,9 @@ export async function serve({
 
   app.get("/sdk.js", async (req, res, next) => {
     try {
-      res.type("application/javascript").send(createSdkJs(String(req.query.key || ""), await readLuxeTokensCss()));
+      res
+        .type("application/javascript")
+        .send(createSdkJs(String(req.query.key || ""), await readLuxeTokensCss(), await readArtifactBaselineCss()));
     } catch (error) {
       next(error);
     }
@@ -1550,6 +1559,24 @@ function normalizeFlagValue(value) {
   return value === undefined || value === null ? "" : String(value).trim().toLowerCase();
 }
 
+// The export's copy of the artifact baseline.
+//
+// This is NOT redundant with the SDK injection. The export route reads the artifact off
+// disk and hands that string to buildSelfContainedHtml - it never touches the live DOM -
+// and export-bundle strips the /sdk.js tag from the output, so a style the SDK injected
+// at runtime cannot reach an export. Without this, what a reviewer approved on screen
+// and what they exported would differ in exactly the ways the baseline repairs.
+//
+// Skipped when the artifact opted out, or already carries the snippet `luxe design`
+// prints, so an export holds one copy at most.
+async function injectArtifactBaseline(html) {
+  if (artifactDeclinesBaseline(html)) return html;
+  const style = baselineStyleTag(await readArtifactBaselineCss());
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (open) => `${open}\n${style}`);
+  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (open) => `${open}\n${style}`);
+  return `${style}\n${html}`;
+}
+
 // The mark carries hex fills, and `#` opens a fragment inside a data: URL, so
 // the SVG is percent-encoded rather than embedded raw.
 const LUXE_DEFAULT_FAVICON = `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(LUXE_FAVICON_SVG)}">`;
@@ -1679,7 +1706,7 @@ export async function readLuxeTokensCss() {
   return match ? match[0] : "";
 }
 
-export function createSdkJs(key, luxeTokensCss = "") {
+export function createSdkJs(key, luxeTokensCss = "", artifactBaselineCss = "") {
   // Serialize every helper exported by mermaid-node.js as a same-scope const so
   // cross-helper calls (e.g. mermaidNodeFrom → mermaidNodeElement) resolve in the
   // browser. Deriving this from the module's exports - rather than a hand-kept
@@ -1707,7 +1734,7 @@ const buildStructuralSelector=${buildStructuralSelector.toString()};
 const annotationCardCanDismiss=${annotationCardCanDismiss.toString()};
 ${mermaidHelperDecls}
 const mermaidHelpers={ ${mermaidHelperKeys} };
-(${createArtifactSdk.toString()})(deriveQueueKey, isNativeInteractiveControl, mermaidHelpers, ${JSON.stringify(luxeTokensCss)}, buildDomSnapshot, buildStructuralSelector, annotationCardCanDismiss);
+(${createArtifactSdk.toString()})(deriveQueueKey, isNativeInteractiveControl, mermaidHelpers, ${JSON.stringify(luxeTokensCss)}, buildDomSnapshot, buildStructuralSelector, annotationCardCanDismiss, ${JSON.stringify(artifactBaselineCss)}, ${JSON.stringify(BASELINE_STYLE_ID)}, ${JSON.stringify(BASELINE_OPT_OUT_ATTRIBUTE)});
 })();`;
 }
 

@@ -139,21 +139,6 @@ export const LUXE_DAISYUI_THEME_CSS = `<style>
   }
 </style>`;
 
-export const LAYOUT_SAFETY_CSS_SNIPPET = `<style>
-  *, *::before, *::after { box-sizing: border-box; }
-  :where(.grid, .flex, .layout-grid, .layout-flex) > *,
-  :where([style*="display: grid"], [style*="display:grid"], [style*="display: flex"], [style*="display:flex"]) > * {
-    min-width: 0;
-  }
-  :where(p, h1, h2, h3, h4, h5, h6, li, dd, blockquote, figcaption, td, th, .badge, .label) {
-    overflow-wrap: anywhere;
-  }
-  :where(img, svg, video, canvas, iframe) {
-    max-width: 100%;
-    height: auto;
-  }
-</style>`;
-
 // Single source for how agents choose an artifact's design direction. It flows into the
 // no-args home output, top-level --help, the generated skill (all via DESIGN_SYSTEM_HINT),
 // the `luxe design` summary, and the design command help. Edit the rule here only;
@@ -186,7 +171,12 @@ export const LUXE_CHART_GUIDANCE = Object.freeze({
   diverging: ["#234993", "#4d70b2", "#8199c4", "#e9e5da", "#bf8a78", "#a7593f", "#852b06"],
 });
 
-export function createDesignOutput() {
+/**
+ * @param {{ artifactBaselineSnippet?: string }} [options] the baseline stylesheet as a
+ * `<style>` block. Passed in rather than read here so this module stays synchronous and
+ * free of file access, and so there is still exactly one copy of the rules.
+ */
+export function createDesignOutput({ artifactBaselineSnippet = "" } = {}) {
   return {
     playbook_router: {
       instruction: PLAYBOOK_ROUTER_INSTRUCTION,
@@ -203,9 +193,8 @@ export function createDesignOutput() {
       latest_docs: "https://daisyui.com/components/",
       docs_note:
         "Use this command for common syntax. Read the latest DaisyUI docs for full details when using advanced or unfamiliar components.",
-      layout_safety_snippet: LAYOUT_SAFETY_CSS_SNIPPET,
       layout_safety_note:
-        "Optional copy-paste CSS for artifacts with dense nested grid/flex layouts, badges, wide monospace or pixel fonts, or local media. Paste it into the artifact yourself when useful. Luxe never auto-injects it, so direct-open portability stays intact.",
+        "The layout-safety CSS that used to be offered here is now the artifact baseline below: min-width on grid and flex children, overflow-wrap on prose and cells, and max-width on media. Luxe injects those into every artifact it shows, so there is nothing to remember. Paste `artifact_baseline.snippet` as well if you want the artifact to keep them when opened directly with no Luxe running.",
       other_design_systems:
         "If the user asks for a different design system (Bootstrap, custom CSS, plain HTML, etc.), use that instead - Luxe does not require DaisyUI.",
     },
@@ -226,6 +215,10 @@ export function createDesignOutput() {
       'Never `@apply` DaisyUI classes (such as `text-base-content/40`, `bg-base-200`, or `btn`) inside `<style type="text/tailwindcss">` - the Tailwind browser runtime does not know them, and one unknown utility aborts the entire compile, leaving the page with no Tailwind styles at all. Put DaisyUI classes directly on elements, or write plain CSS with theme variables such as `var(--color-base-200)`.',
     ],
     luxe_theme_snippet: LUXE_DAISYUI_THEME_CSS,
+    artifact_baseline: {
+      note: 'Repairs, not styling. Luxe injects these rules into every artifact it shows, so pasting this is optional - but an artifact that carries them keeps them when opened directly or exported, with no Luxe running. They only change rendering where something would otherwise be clipped, overflow, or be unreadable on the surface behind it, they are wrapped in a zero-specificity `@layer luxe-baseline`, and your own CSS beats them. Paste it first in the `<head>`. Opt out entirely with `<html data-luxe-baseline="off">`.',
+      snippet: artifactBaselineSnippet,
+    },
     charts: LUXE_CHART_GUIDANCE,
     code_theme: {
       note: "Luxe ships a bespoke Shiki theme. Register it and use it by name wherever the artifact highlights code; the Shiki defaults clash with the Luxe code plane.",

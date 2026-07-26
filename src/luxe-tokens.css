@@ -205,6 +205,20 @@
   --scrollbar-thumb: #9c8b7a;
   --scrollbar-thumb-hover: #463527;
   --scrollbar-size: 10px;
+
+  /* ---- On the dark fill --------------------------------------------------
+   * Inline code, keyboard keys and marks inside a cocoa panel. The code plane
+   * in 2.9 is built for paper, so a <code> on a cocoa card rendered as
+   * near-cocoa ink on cocoa - the reference artifact's author had to override
+   * all six of them by hand to make them readable, which is the definition of
+   * a missing default.
+   *
+   * Both are ivory washes rather than a hue. Highlighting on a dark fill means
+   * "a lighter patch of the same surface"; reaching for a colour here would
+   * either spend the annotation gold, which is reserved, or introduce a ninth
+   * hue the system does not have. */
+  --on-dark-code-bg: rgba(247, 244, 238, 0.14);
+  --on-dark-mark-bg: rgba(247, 244, 238, 0.24);
   --scrim: rgba(33, 30, 23, 0.4);
   --shadow-modal: 0 18px 48px rgba(33, 30, 23, 0.14);
   --ended-opacity: 0.45;

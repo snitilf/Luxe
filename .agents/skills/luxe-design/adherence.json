@@ -630,40 +630,52 @@
       "group": "Chrome-only surfaces"
     },
     {
+      "name": "--on-dark-code-bg",
+      "value": "rgba(247, 244, 238, 0.14)",
+      "kind": "color",
+      "group": "On the dark fill"
+    },
+    {
+      "name": "--on-dark-mark-bg",
+      "value": "rgba(247, 244, 238, 0.24)",
+      "kind": "color",
+      "group": "On the dark fill"
+    },
+    {
       "name": "--scrim",
       "value": "rgba(33, 30, 23, 0.4)",
       "kind": "color",
-      "group": "Chrome-only surfaces"
+      "group": "On the dark fill"
     },
     {
       "name": "--shadow-modal",
       "value": "0 18px 48px rgba(33, 30, 23, 0.14)",
       "kind": "shadow",
-      "group": "Chrome-only surfaces"
+      "group": "On the dark fill"
     },
     {
       "name": "--ended-opacity",
       "value": "0.45",
       "kind": "number",
-      "group": "Chrome-only surfaces"
+      "group": "On the dark fill"
     },
     {
       "name": "--ease",
       "value": "cubic-bezier(0.2, 0.6, 0.2, 1)",
       "kind": "easing",
-      "group": "Chrome-only surfaces"
+      "group": "On the dark fill"
     },
     {
       "name": "--dur-fast",
       "value": "120ms",
       "kind": "duration",
-      "group": "Chrome-only surfaces"
+      "group": "On the dark fill"
     },
     {
       "name": "--dur",
       "value": "180ms",
       "kind": "duration",
-      "group": "Chrome-only surfaces"
+      "group": "On the dark fill"
     }
   ]
 }

@@ -410,6 +410,12 @@ export function createArtifactSdk(
   snapshotBuilder = buildDomSnapshot,
   selectorBuilder = buildStructuralSelector,
   annotationCardDismissPolicy = annotationCardCanDismiss,
+  // The artifact baseline, also passed in as CSS text by createSdkJs. See
+  // src/artifact-baseline.css for what it is allowed to contain and why it is only
+  // ever repairs.
+  artifactBaselineCss = "",
+  baselineStyleId = "luxe-baseline",
+  baselineOptOutAttribute = "data-luxe-baseline",
 ) {
   const { isMermaidSvg, mermaidNodeFrom, mermaidNodeElement } = mermaid;
   // The SDK has no mode state of its own to decide: the chrome owns annotate/explore and
@@ -2074,6 +2080,30 @@ export function createArtifactSdk(
     true,
   );
 
+  // Injection 4 of 4 outside the shadow DOM, and the only one that is not about
+  // annotation. Placed as the FIRST child of <head>, which is what makes the artifact
+  // win: CSS layer priority follows the order layers are first DECLARED, and that
+  // follows document position rather than the moment the node was inserted. The SDK
+  // script sits before </body> and therefore runs after every artifact stylesheet has
+  // been parsed, so appending this - the obvious thing to do, and what the other three
+  // injections do - would make `luxe-baseline` the LAST declared layer and give it
+  // priority over the artifact's own layers. Inserting first makes it the lowest.
+  function injectArtifactBaseline() {
+    if (!artifactBaselineCss) return;
+    const root = document.documentElement;
+    if (root?.getAttribute?.(baselineOptOutAttribute) === "off") return;
+    // Already present because the author pasted the snippet `luxe design` prints. One
+    // copy is the point; a second would be harmless but is still a second.
+    if (document.getElementById(baselineStyleId)) return;
+    const head = document.head;
+    if (!head) return;
+    const style = document.createElement("style");
+    style.id = baselineStyleId;
+    style.textContent = artifactBaselineCss;
+    head.insertBefore(style, head.firstChild);
+  }
+
+  injectArtifactBaseline();
   setAnnotationMode(annotationMode);
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", startLayoutAudit, { once: true });

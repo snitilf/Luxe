@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { AxiError, RESERVED_COMMANDS, runAxiCli } from "axi-sdk-js";
 
+import { baselineStyleTag, readArtifactBaselineCss } from "./artifact-baseline.js";
 import { createDesignOutput, DESIGN_PRIORITY_RULE, DESIGN_SYSTEM_HINT } from "./design-reference.js";
 import {
   buildSelfContainedHtml,
@@ -658,7 +659,10 @@ async function playbookCommand(args) {
 }
 
 async function designCommand() {
-  return createDesignOutput();
+  // The baseline is read from disk here rather than inside createDesignOutput so that
+  // module stays synchronous and file-free - and so the rules still have exactly one
+  // source, shared with the SDK and the export.
+  return createDesignOutput({ artifactBaselineSnippet: baselineStyleTag(await readArtifactBaselineCss()) });
 }
 
 async function serverCommand(args) {

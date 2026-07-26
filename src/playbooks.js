@@ -54,7 +54,10 @@ export const PLAYBOOKS = [
     ],
     design_rules: [
       "Use semantic table markup when the data is tabular.",
-      "Protect long paths, code symbols, URLs, and prose from overflowing on narrow screens.",
+      "Protect long paths, code symbols, URLs, and prose from overflowing on narrow screens. Luxe's baseline already breaks unbreakable runs in cells, so this is about column count and content length, not about wrapping.",
+      "A table should fit its container. Wrapping cells carries you to a point; past it the honest fix is structural - fewer columns, a second table, or a card per record - not a wider page. Aim to fit at 768px.",
+      "If a table genuinely cannot fit, wrap it in a scroll container that is visibly a scroll container (`overflow-x-auto` plus a border or shadow edge), so the reader can see there is more. A silent overflow reads as a broken layout; an unmarked one reads as missing data.",
+      "Set table font size deliberately - 14px suits dense tables and keeps more columns legible without zooming. Luxe does not impose one.",
       "Use restrained color for status and severity so the table remains readable when printed or skimmed.",
     ],
     pitfalls: [
@@ -176,7 +179,8 @@ export const PLAYBOOKS = [
 </script>
 \`\`\``,
       'Register the bespoke Luxe Shiki theme printed by `luxe design` (`code_theme.shiki_theme_json`) with `registerCustomTheme("luxe", () => Promise.resolve(theme))`, then pass the NAME as `theme: "luxe"`, exactly as the snippet above shows. The bundle resolves themes through a name registry and never accepts a theme object, so `theme: themeJson` renders every block unhighlighted. The Luxe theme is built against the Luxe code plane, and every one of its syntax tokens is deep enough to survive on the added and removed diff tints.',
-      'Use FileDiff diffStyle: "split" for side-by-side review and diffStyle: "unified" for stacked reading; keep overflow: "wrap" unless horizontal alignment is essential.',
+      'Use FileDiff diffStyle: "split" for side-by-side review and diffStyle: "unified" for stacked reading; keep overflow: "wrap" unless horizontal alignment is essential. Below about 1024px a split diff stops being readable - choose unified, or let the artifact switch at that width.',
+      "Set code font size deliberately - 14px reads well and fits more columns before wrapping. Luxe's baseline wraps long lines in ordinary `<pre>` but leaves @pierre/diffs alone, because forcing a wrap onto a split diff destroys the line-for-line correspondence that is the point of a diff.",
       "Use @pierre/diffs line annotations, selections, and headers when calling out specific lines so notes stay attached to code.",
     ],
     pitfalls: [
@@ -203,6 +207,8 @@ export const PLAYBOOKS = [
     ],
     structure: [
       "Make each decision surface visible: what is being chosen, what the options mean, and what happens next.",
+      "Give the block a deliberate rhythm: the gap between a question and its own options must be SMALLER than the gap between one question and the next, and the submit control belongs with its question rather than floating equidistant between two. Even spacing everywhere is what makes a form read as a wall - the grouping is the information.",
+      "Keep a nested callout, note, or example close to the prose it belongs to. A callout with as much space above it as the section break before it looks like a new section.",
       "Keep reversible selection state local in the artifact until the user explicitly submits that question.",
       "Pair each question with a Submit or Queue answer control that queues exactly one prompt for the final answer.",
       "Show selected state separately from queued state so the user trusts what will be sent back.",
@@ -220,6 +226,7 @@ export const PLAYBOOKS = [
     ],
     pitfalls: [
       "Do not queue one prompt per radio change, checkbox toggle, dropdown change, or choice-button click when the user can still change their mind.",
+      "Do not toggle a DaisyUI `toast` with Tailwind's `hidden` class. `.toast` sets its own display, the two fight, and the toast silently never appears - it cost a live review session. Toggle inline `style.display` instead, and click the control once before shipping.",
       "Do not create controls whose queued prompt is unclear or too vague to execute.",
       "Do not hide the difference between selected locally and queued for the agent.",
       "Do not require interaction for content the user only needs to read.",
