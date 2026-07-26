@@ -6,6 +6,12 @@ async function readPackageJson() {
   return JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 }
 
+const RELEASE_ACTION_PINS = [
+  ["googleapis/release-please-action", "5c625bfb5d1ff62eadeeb3772007f7f66fdcf071", "v4.4.1"],
+  ["actions/checkout", "d23441a48e516b6c34aea4fa41551a30e30af803", "v6.1.0"],
+  ["actions/setup-node", "249970729cb0ef3589644e2896645e5dc5ba9c38", "v6.5.0"],
+];
+
 test("check script runs all verification commands", async () => {
   const packageJson = await readPackageJson();
   const checkCommands = packageJson.scripts.check.split(" && ");
@@ -124,8 +130,27 @@ test("release workflow publishes from the release tag checkout", async () => {
 
   assert.match(
     workflow,
-    /uses: actions\/checkout@v6\n\s+if: \$\{\{ steps\.release\.outputs\.release_created \}\}\n\s+with:\n\s+ref: \$\{\{ steps\.release\.outputs\.tag_name \}\}/,
+    new RegExp(
+      `uses: actions/checkout@${RELEASE_ACTION_PINS[1][1]} # ${RELEASE_ACTION_PINS[1][2]}\\n` +
+        "\\s+if: \\$\\{\\{ steps\\.release\\.outputs\\.release_created \\}\\}\\n" +
+        "\\s+with:\\n" +
+        "\\s+ref: \\$\\{\\{ steps\\.release\\.outputs\\.tag_name \\}\\}",
+    ),
   );
+});
+
+test("release workflow pins every action and the npm CLI immutably", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/release-please.yml", import.meta.url), "utf8");
+  const usesLines = [...workflow.matchAll(/^\s*-\s+uses:\s+(\S+?)(?:\s+#\s*(\S+))?\s*$/gm)];
+  const actionPins = usesLines.map((match) => {
+    const at = match[1].lastIndexOf("@");
+    return [match[1].slice(0, at), match[1].slice(at + 1), match[2] || ""];
+  });
+
+  assert.deepEqual(actionPins, RELEASE_ACTION_PINS);
+  assert.ok(actionPins.every(([, ref]) => /^[0-9a-f]{40}$/.test(ref)));
+  assert.match(workflow, /^\s*-\s+run: npm install -g npm@11\.18\.0\s*$/m);
+  assert.equal([...workflow.matchAll(/\bnpm install -g npm@/g)].length, 1);
 });
 
 // Upstream carried an analytics env block into the publish step. It is gone, and the

@@ -14,17 +14,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         if: ${{ steps.release.outputs.release_created }}
         with:
           ref: ${{ steps.release.outputs.tag_name }}
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         if: ${{ steps.release.outputs.release_created }}
         with:
           node-version: 22
@@ -39,8 +39,8 @@ jobs:
 
       # Trusted Publishing (OIDC) requires npm >= 11.5; publish auth comes from
       # the id-token permission above, not from a token secret. Pinned to the
-      # npm@11 major to keep the publish path stable.
-      - run: npm install -g npm@11
+      # exact npm CLI version to keep the publish path reproducible.
+      - run: npm install -g npm@11.18.0
         if: ${{ steps.release.outputs.release_created }}
 
       - run: npm publish --access public
