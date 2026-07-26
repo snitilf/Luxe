@@ -45,6 +45,8 @@ const whiteboardOverlay = /** @type {HTMLDivElement} */ (document.getElementById
 const whiteboardFrame = /** @type {HTMLIFrameElement} */ (document.getElementById("whiteboardFrame"));
 const whiteboardCloseButton = /** @type {HTMLButtonElement} */ (document.getElementById("whiteboardClose"));
 const whiteboardError = /** @type {HTMLDivElement} */ (document.getElementById("whiteboardError"));
+const farewell = /** @type {HTMLDivElement} */ (document.getElementById("farewell"));
+const farewellClose = /** @type {HTMLButtonElement} */ (document.getElementById("farewellClose"));
 const artifactSrc = frame.dataset.artifactSrc || frame.getAttribute?.("data-artifact-src") || frame.src || "";
 
 const queued = loadQueuedPrompts();
@@ -648,7 +650,7 @@ async function submitQueued() {
         submitQueued();
       } else if (endAfterSubmit) {
         endAfterSubmit = false;
-        endSession();
+        endSession({ farewell: true });
       }
     }
   }
@@ -729,7 +731,7 @@ async function submitQueuedOnce() {
   }
   if (shouldEndSession && result.session_ended === true) {
     endAfterSubmit = false;
-    markSessionEnded();
+    markSessionEnded({ farewell: true });
     return;
   }
   if (acceptedIndices.size > 0 && agentPresence === "listening") setAgentPresence("working");
@@ -890,11 +892,11 @@ async function submitLayoutWarnings(layoutWarnings) {
   if (!response.ok) throw new Error("failed to submit layout warnings");
 }
 
-async function endSession() {
+async function endSession({ farewell: showGoodbye = false } = {}) {
   if (ended) return;
   const response = await fetch("/api/" + key + "/end", { method: "POST" });
   if (!response.ok) throw new Error("failed to end session");
-  markSessionEnded();
+  markSessionEnded({ farewell: showGoodbye });
 }
 
 // Remove the "Working..." bubble directly. Routing this through setAgentPresence("waiting")
@@ -924,7 +926,33 @@ function clearSessionTimers() {
   clearPointerdownSendFreeze();
 }
 
-function markSessionEnded() {
+// The goodbye, and the honest half of "close the page".
+//
+// window.close() only works on a tab that script opened. Luxe hands the URL to the `open`
+// package, so in every ordinary session the tab is user-opened and the call is refused
+// silently. That makes the card the deliverable and the close attempt the bonus - not the
+// other way round - so the card says what to do when the browser declines.
+//
+// Shown when the reviewer ends the session from this tab - Send & End, or End session in
+// the overflow menu - and not when it ended some other way: the agent running `luxe end`,
+// or a reload of a session that was already over. A farewell answers a goodbye; popping
+// one over a page nobody just said goodbye on is a jump scare.
+function showFarewell() {
+  if (!farewell) return;
+  farewell.hidden = false;
+  farewellClose?.focus?.();
+  attemptTabClose();
+}
+
+function attemptTabClose() {
+  try {
+    window.close();
+  } catch {
+    // Refused, which is the normal case. The card already says so.
+  }
+}
+
+function markSessionEnded({ farewell: showGoodbye = false } = {}) {
   if (ended) return;
   ended = true;
   closeMenus();
@@ -954,6 +982,7 @@ function markSessionEnded() {
   // --strong) and stops accepting input, while the artifact stays readable.
   document.body?.classList?.add("session-ended");
   endedChip.hidden = false;
+  if (showGoodbye) showFarewell();
 }
 
 function copyFilePath() {
@@ -1596,13 +1625,18 @@ reloadArtifactButton.onclick = reloadArtifact;
 exportArtifactButton.onclick = exportArtifact;
 endButton.onclick = () => {
   closeMenus();
-  endSession();
+  endSession({ farewell: true });
 };
 document.addEventListener("mousedown", (event) => {
   const target = /** @type {Node} */ (event.target);
   if (!moreMenu.hidden && !moreWrap.contains(target)) setMenuOpen(moreButton, moreMenu, false);
 });
 whiteboardCloseButton.onclick = closeWhiteboard;
+// A second, explicit try. The first fires automatically when the card appears; browsers
+// refuse that one for a user-opened tab, but some accept a close driven directly by a
+// click. When it is refused again nothing happens and the card stays put, which is why
+// the copy says "you can close this tab" rather than promising anything.
+if (farewellClose) farewellClose.onclick = attemptTabClose;
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     if (!whiteboardOverlay.hidden) {

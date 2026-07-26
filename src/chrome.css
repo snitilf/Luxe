@@ -902,6 +902,60 @@ body.layout-gate-active iframe#artifact {
   }
 }
 
+/* ---- Farewell -----------------------------------------------------------
+ * Send & End used to leave a "Session ended" chip in the toolbar and nothing
+ * else, which reads as a state change rather than a goodbye. This is the
+ * goodbye. It sits OVER the receded ended state rather than replacing it: the
+ * ended treatment above is a deliberate decision that finishing a review is
+ * not a curtain, and the artifact stays readable behind this card.
+ *
+ * The card is also the honest half of the close. Luxe opens sessions with the
+ * `open` package, so the tab is user-opened and window.close() is refused by
+ * every browser; when that refusal happens this is what the reviewer is left
+ * with, so it has to stand on its own rather than being a flash before an
+ * exit that never comes. */
+.farewell {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--scrim);
+}
+.farewell[hidden] {
+  display: none;
+}
+.farewell-card {
+  width: min(420px, calc(100vw - 48px));
+  border: var(--stroke-hair) solid var(--hair);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-modal);
+  padding: 32px;
+  text-align: center;
+}
+.farewell-title {
+  font-size: var(--text-heading);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--ink-1);
+  margin-bottom: 12px;
+}
+.farewell-copy {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-control);
+  line-height: var(--leading-body);
+}
+.farewell-action {
+  margin-top: 24px;
+}
+/* The ended chrome recedes to 45%; the farewell must not recede with it. */
+body.session-ended .farewell {
+  opacity: 1;
+}
+
 /* ---- Whiteboard overlay -------------------------------------------------
  * A full-viewport layer above the chrome hosting the sandboxed Excalidraw
  * frame. The frame owns all whiteboard UI; this layer only provides the

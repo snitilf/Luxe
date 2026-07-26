@@ -791,10 +791,10 @@ test("send and end submits queued prompts before ending the session", async () =
   assert.match(js, /if \(shouldEndSession\) body\.endSession = true/);
   assert.match(
     js,
-    /if \(shouldEndSession && result\.session_ended === true\) \{\n {4}endAfterSubmit = false;\n {4}markSessionEnded\(\)/,
+    /if \(shouldEndSession && result\.session_ended === true\) \{\n {4}endAfterSubmit = false;\n {4}markSessionEnded\(\{ farewell: true \}\)/,
   );
   assert.match(js, /if \(!succeeded\) \{\n {6}endAfterSubmit = false/);
-  assert.doesNotMatch(js, /await endSession\(\)/);
+  assert.doesNotMatch(js, /await endSession\(/);
 });
 
 test("chrome only marks session ended after the end request succeeds", async () => {
@@ -802,7 +802,10 @@ test("chrome only marks session ended after the end request succeeds", async () 
 
   assert.match(js, /const response = await fetch\("\/api\/" \+ key \+ "\/end", \{ method: "POST" \}\)/);
   assert.match(js, /if \(!response\.ok\) throw new Error\("failed to end session"\)/);
-  assert.match(js, /if \(!response\.ok\) throw new Error\("failed to end session"\);\n {2}markSessionEnded\(\)/);
+  assert.match(
+    js,
+    /if \(!response\.ok\) throw new Error\("failed to end session"\);\n {2}markSessionEnded\(\{ farewell: showGoodbye \}\)/,
+  );
 });
 
 test("chrome shows a waiting banner when no agent has attached", async () => {
@@ -1054,7 +1057,10 @@ test("chrome submits prompts queued during an in-flight submit", async () => {
   assert.match(js, /submitQueuedAgain = true/);
   assert.match(js, /const shouldSubmitAgain = submitQueuedAgain/);
   assert.match(js, /else if \(!ended && shouldSubmitAgain\) \{\n {6}if \(queued\.length\) \{\n {8}submitQueued\(\)/);
-  assert.match(js, /else if \(endAfterSubmit\) \{\n {8}endAfterSubmit = false;\n {8}endSession\(\)/);
+  assert.match(
+    js,
+    /else if \(endAfterSubmit\) \{\n {8}endAfterSubmit = false;\n {8}endSession\(\{ farewell: true \}\)/,
+  );
 });
 
 test("/health reports the server version so clients can detect upgrades", async () => {

@@ -136,7 +136,7 @@ async function createChromeHarness({
   // These four ship with the `hidden` attribute in createChromeHtml. The fake defaulted
   // every element to visible, which let a bug hide: code gated on `sendHint.hidden` never
   // ran under test because the hint looked visible from boot.
-  for (const id of ["sendHint", "presenceBanner", "endedChip", "layoutIssueBanner"]) {
+  for (const id of ["sendHint", "presenceBanner", "endedChip", "layoutIssueBanner", "farewell"]) {
     element(id).hidden = true;
   }
   element("luxe-session").textContent = JSON.stringify(sessionData);
@@ -2126,4 +2126,59 @@ test("the working reason never overwrites a send error", async () => {
   // The agent going back to work must not replace the failure the reviewer needs to read.
   presence({ data: JSON.stringify({ state: "working" }) });
   assert.match(hint.textContent, /not sent/i, "the send error survived the presence change");
+});
+
+// The farewell answers a gesture. Popping one over a page the reviewer did not just say
+// goodbye on - an agent-side `luxe end`, the overflow menu, a reload of a finished
+// session - would be a jump scare, so the routes are kept apart deliberately.
+test("Send and End says goodbye", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { status: "queued", accepted_prompt_indices: [0], rejected_prompts: [], session_ended: true };
+      },
+    }),
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Ship it", selector: "h1", tag: "annotation" },
+  });
+
+  assert.equal(chrome.element("farewell").hidden, true);
+
+  chrome.element("sendAndEnd").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.equal(chrome.element("farewell").hidden, false, "the farewell appears on Send & End");
+  assert.equal(chrome.element("chatInput").disabled, true);
+});
+
+test("ending from the overflow menu also says goodbye", async () => {
+  const chrome = await createChromeHarness();
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  assert.equal(chrome.element("chatInput").disabled, true);
+  assert.equal(chrome.element("farewell").hidden, false, "End session is a goodbye too");
+});
+
+test("a session ended by the agent does not say goodbye", async () => {
+  const chrome = await createChromeHarness();
+  // `luxe end` from the agent side arrives over the stream. Nobody in this tab asked for
+  // it, so the page goes quiet without a farewell addressed to a gesture that never happened.
+  chrome.eventSource().listeners.get("ended")({ data: "{}" });
+  await flushPromises();
+
+  assert.equal(chrome.element("chatInput").disabled, true, "the session still ended");
+  assert.equal(chrome.element("farewell").hidden, true, "no farewell when the agent ended it");
+});
+
+test("reloading a finished session does not say goodbye", async () => {
+  const chrome = await createChromeHarness({ sessionData: { ...defaultSessionData, ended: true } });
+
+  assert.equal(chrome.element("chatInput").disabled, true);
+  assert.equal(chrome.element("farewell").hidden, true, "a reload is not a goodbye");
 });
