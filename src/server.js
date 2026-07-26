@@ -244,12 +244,14 @@ export async function serve({
     }
   });
 
-  app.get("/api/poll", async (req, res, next) => {
+  app.post("/api/poll", async (req, res, next) => {
     try {
-      const file = await canonicalFile(String(req.query.file || ""));
+      if (rejectCrossOriginWrite(req, res, "cross-origin poll rejected")) return;
+      const file = await canonicalFile(String(req.body?.file || ""));
       const key = sessionKey(file);
+      const timeoutValue = req.body?.timeoutMs;
       const timeoutMs =
-        req.query.timeoutMs === undefined ? null : Math.max(0, Math.min(Number(req.query.timeoutMs || 0), 2147483647));
+        timeoutValue === undefined ? null : Math.max(0, Math.min(Number(timeoutValue || 0), 2147483647));
       const immediate = await store.takeFeedback(key);
       if (immediate.status !== "waiting") {
         if (immediate.status === "feedback") markFeedbackDelivered(key, activePolls, deliveredFeedback, events);
@@ -312,7 +314,7 @@ export async function serve({
       };
       events.on("feedback", onFeedback);
       events.on("ended", onFeedback);
-      req.on("close", cleanup);
+      res.on("close", cleanup);
     } catch (error) {
       next(error);
     }

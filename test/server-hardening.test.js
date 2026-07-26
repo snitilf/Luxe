@@ -121,9 +121,9 @@ test("the artifact CSP constrains framing only", async () => {
   }
 });
 
-// Every state-changing route that uses isSameOriginOrHeaderlessRequest. The first five are the
-// routes D2 named; the last two are the file-addressed twins that made the keyed guards
-// cosmetic while they were unguarded. The session key is sha256(artifact path).slice(0,16)
+// Every state-changing route that uses isSameOriginOrHeaderlessRequest. This includes the
+// file-addressed twins that made the keyed guards cosmetic while they were unguarded.
+// The session key is sha256(artifact path).slice(0,16)
 // with no secret in it, so a page that knows the path can address the session either way: a
 // hostile Origin on /api/end ended the review and tripped shutdownIfNoLiveSessions, and
 // /api/sessions with {reopen:true} revived a session the human had deliberately ended.
@@ -135,6 +135,7 @@ const GUARDED_WRITES = [
   { name: "keyed end", path: (ctx) => `/api/${ctx.key}/end`, body: () => ({}) },
   { name: "file-addressed end", path: () => "/api/end", body: (ctx) => ({ file: ctx.artifact }) },
   { name: "sessions reopen", path: () => "/api/sessions", body: (ctx) => ({ file: ctx.artifact, reopen: true }) },
+  { name: "poll", path: () => "/api/poll", body: (ctx) => ({ file: ctx.artifact, timeoutMs: 0 }) },
 ];
 
 for (const route of GUARDED_WRITES) {
@@ -363,13 +364,54 @@ test("a feedback POST still delivers a populated domSnapshot to the agent", asyn
     });
     assert.equal(queued.status, 200);
 
-    const feedback = await fetch(`${ctx.base}/api/poll?file=${encodeURIComponent(ctx.artifact)}&timeoutMs=5000`).then(
-      (res) => res.json(),
-    );
+    const feedback = await fetch(`${ctx.base}/api/poll`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: ctx.artifact, timeoutMs: 5000 }),
+    }).then((res) => res.json());
 
     assert.equal(feedback.status, "feedback");
     assert.equal(feedback.dom_snapshot, 'uid=1 h1 "Demo"');
     assert.equal(feedback.prompts[0].prompt, "tighten this");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("cross-origin GET cannot drain poll feedback before the guarded CLI POST", async () => {
+  const ctx = await startServer();
+  try {
+    const queued = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({ prompts: [{ uid: "1", prompt: "keep this feedback" }] }),
+    });
+    assert.equal(queued.status, 200);
+
+    const stolen = await fetch(`${ctx.base}/api/poll?file=${encodeURIComponent(ctx.artifact)}&timeoutMs=0`, {
+      headers: { origin: HOSTILE_ORIGIN },
+    });
+    assert.equal(stolen.status, 404);
+
+    const blocked = await fetch(`${ctx.base}/api/poll`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: HOSTILE_ORIGIN },
+      body: JSON.stringify({ file: ctx.artifact, timeoutMs: 0 }),
+    });
+    assert.equal(blocked.status, 403);
+
+    const poll = () =>
+      fetch(`${ctx.base}/api/poll`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ file: ctx.artifact, timeoutMs: 0 }),
+      }).then((res) => res.json());
+    const delivered = await poll();
+    const consumed = await poll();
+
+    assert.equal(delivered.status, "feedback");
+    assert.equal(delivered.prompts[0].prompt, "keep this feedback");
+    assert.equal(consumed.status, "waiting");
   } finally {
     await ctx.close();
   }

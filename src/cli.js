@@ -243,7 +243,6 @@ async function pollCommand(args) {
     await postJson(`${baseUrl}/api/${sessionKey(absolute)}/agent-reply`, { text: agentReply });
   }
   const timeoutMs = flagValue(args, "--timeout-ms");
-  const timeoutQuery = timeoutMs ? `&timeoutMs=${encodeURIComponent(timeoutMs)}` : "";
   // The indefinite poll looks hung from the agent's side (stdout stays empty until the user
   // acts), so narrate the wait on stderr and leave re-run guidance behind if the agent's
   // harness kills the process anyway. stderr keeps the stdout JSON contract intact.
@@ -268,9 +267,14 @@ async function pollCommand(args) {
         narrateTicks: shouldNarratePollWaitTicks({ isTTY: process.stderr.isTTY }),
       });
   try {
-    const response = await fetchJson(`${baseUrl}/api/poll?file=${encodeURIComponent(absolute)}${timeoutQuery}`, {
+    const response = await fetchJson(`${baseUrl}/api/poll`, {
       retries: 3,
       retryDelayMs: 500,
+      request: {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ file: absolute, ...(timeoutMs ? { timeoutMs } : {}) }),
+      },
     });
     return createPollOutput({ file: absolute, response, agent: detectInvokingAgent(process.env) });
   } finally {
@@ -804,11 +808,15 @@ export function createServerSpawnOptions(logFd = null) {
   };
 }
 
-export async function fetchJson(url, { retries = 0, retryDelayMs = 250 } = {}) {
+/**
+ * @param {string} url
+ * @param {{ retries?: number, retryDelayMs?: number, request?: RequestInit }} [options]
+ */
+export async function fetchJson(url, { retries = 0, retryDelayMs = 250, request } = {}) {
   let response;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      response = await fetch(url);
+      response = await fetch(url, request);
       break;
     } catch (error) {
       if (error instanceof AxiError) throw error;

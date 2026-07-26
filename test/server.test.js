@@ -91,6 +91,20 @@ async function startPresenceStream(base, key) {
   };
 }
 
+/**
+ * @param {string} base
+ * @param {string} file
+ * @param {{ timeoutMs?: number, signal?: AbortSignal }} [options]
+ */
+function pollRequest(base, file, { timeoutMs, signal } = {}) {
+  return fetch(`${base}/api/poll`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file, ...(timeoutMs === undefined ? {} : { timeoutMs }) }),
+    signal,
+  });
+}
+
 test("server delegates artifact SDK generation to a dedicated source module", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 
@@ -1153,15 +1167,15 @@ test("loopback server rejects forged non-loopback Host headers (DNS rebinding)",
     assert.equal(promptForged.status, 403);
 
     // Poll for queued feedback.
-    const pollForged = await rawRequest(server.port, `/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`, {
+    const pollForged = await rawRequest(server.port, "/api/poll", {
+      method: "POST",
       host: evilHost,
+      body: JSON.stringify({ file: artifact, timeoutMs: 0 }),
     });
     assert.equal(pollForged.status, 403);
 
     // The rejected prompt must not have been queued: a legitimate poll sees nothing.
-    const pollCheck = await fetch(
-      `http://127.0.0.1:${server.port}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`,
-    );
+    const pollCheck = await pollRequest(`http://127.0.0.1:${server.port}`, artifact, { timeoutMs: 0 });
     assert.equal((await pollCheck.json()).status, "waiting");
 
     // Sanity: the same routes still work for a loopback Host.
@@ -1427,9 +1441,7 @@ test("layout warnings wake the same long-poll feedback channel as human prompts"
     });
     const { key } = await open.json();
 
-    const pollPromise = fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=5000`).then((res) =>
-      res.json(),
-    );
+    const pollPromise = pollRequest(base, artifact, { timeoutMs: 5000 }).then((res) => res.json());
     await new Promise((resolve) => setTimeout(resolve, 50));
     const warningResponse = await fetch(`${base}/api/${key}/layout-warnings`, {
       method: "POST",
@@ -1500,9 +1512,7 @@ test("warning-only layout observations do not wake the long-poll feedback channe
     });
 
     assert.deepEqual(await response.json(), { status: "recorded", layout_warnings: 0 });
-    const poll = await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=25`).then((res) =>
-      res.json(),
-    );
+    const poll = await pollRequest(base, artifact, { timeoutMs: 25 }).then((res) => res.json());
     assert.deepEqual(poll, { status: "waiting" });
   } finally {
     await server.close();
@@ -1530,7 +1540,7 @@ test("long-poll sends heartbeat bytes before feedback arrives", async () => {
 
     const controller = new AbortController();
     const res = await Promise.race([
-      fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}`, { signal: controller.signal }),
+      pollRequest(base, artifact, { signal: controller.signal }),
       new Promise((_, reject) => setTimeout(() => reject(new Error("poll did not send headers")), 500)),
     ]);
     const reader = res.body.getReader();
@@ -1987,7 +1997,7 @@ test("a user-initiated end via the keyed route blocks a plain reopen but honors 
     assert.equal(blockedBody.url, originalUrl);
 
     // A blocked open must not resurrect the session or wake a poll.
-    const stillEnded = await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`);
+    const stillEnded = await pollRequest(base, artifact, { timeoutMs: 0 });
     assert.equal((await stillEnded.json()).status, "ended");
 
     const reopened = await fetch(`${base}/api/sessions`, {
@@ -1998,7 +2008,7 @@ test("a user-initiated end via the keyed route blocks a plain reopen but honors 
     const reopenedBody = await reopened.json();
     assert.equal(reopenedBody.status, "opened");
 
-    const afterReopen = await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`);
+    const afterReopen = await pollRequest(base, artifact, { timeoutMs: 0 });
     assert.equal((await afterReopen.json()).status, "waiting");
   } finally {
     await server.close();
@@ -2045,7 +2055,7 @@ test("an agent cleanup after a user end still blocks a plain reopen", async () =
     assert.equal(blockedBody.key, key);
     assert.equal(blockedBody.url, originalUrl);
 
-    const ended = await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`);
+    const ended = await pollRequest(base, artifact, { timeoutMs: 0 });
     const endedBody = await ended.json();
     assert.equal(endedBody.status, "ended");
     assert.equal(endedBody.ended_by, "user");
@@ -2092,7 +2102,7 @@ test("an agent-initiated end via the file-based route reopens normally without t
     const reopenedBody = await reopened.json();
     assert.equal(reopenedBody.status, "opened");
 
-    const afterReopen = await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`);
+    const afterReopen = await pollRequest(base, artifact, { timeoutMs: 0 });
     assert.equal((await afterReopen.json()).status, "waiting");
   } finally {
     await server.close();
@@ -2125,7 +2135,7 @@ test("poll on an ended session reports who ended it", async () => {
 
     await fetch(`${base}/api/${key}/end`, { method: "POST" });
 
-    const polled = await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`);
+    const polled = await pollRequest(base, artifact, { timeoutMs: 0 });
     const body = await polled.json();
     assert.equal(body.status, "ended");
     assert.equal(body.ended_by, "user");
@@ -2151,7 +2161,7 @@ test("send-and-end prompt submissions wake active polls with ended attribution",
     const presence = await startPresenceStream(base, key);
     try {
       assert.equal(await presence.next(), "waiting");
-      const poll = fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}`).then((res) => res.json());
+      const poll = pollRequest(base, artifact).then((res) => res.json());
       assert.equal(await presence.next(), "listening");
 
       const submitted = await fetch(`${base}/api/${key}/prompts`, {
@@ -2171,7 +2181,7 @@ test("send-and-end prompt submissions wake active polls with ended attribution",
       assert.equal(feedback.ended_by, "user");
       assert.equal(feedback.prompts.length, 1);
 
-      const ended = await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=0`);
+      const ended = await pollRequest(base, artifact, { timeoutMs: 0 });
       const endedBody = await ended.json();
       assert.equal(endedBody.status, "ended");
       assert.equal(endedBody.ended_by, "user");
@@ -2238,7 +2248,7 @@ test("SSE agent-presence reflects waiting, listening, and working transitions", 
     const initial = await waitForPresence();
     assert.equal(initial, "waiting", "first SSE handshake should report waiting before any poll");
 
-    const pollPromise = fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}`).then((res) => res.json());
+    const pollPromise = pollRequest(base, artifact).then((res) => res.json());
     const listening = await waitForPresence();
     assert.equal(listening, "listening", "should switch to listening when poll attaches");
 
@@ -2312,7 +2322,7 @@ test("SSE agent-presence returns to waiting when a poll times out without feedba
     try {
       assert.equal(await presence.next(), "waiting");
 
-      const poll = await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=1`);
+      const poll = await pollRequest(base, artifact, { timeoutMs: 1 });
       assert.deepEqual(await poll.json(), { status: "waiting" });
 
       assert.equal(await presence.next(), "listening");
@@ -2344,9 +2354,7 @@ test("SSE agent-presence returns to waiting when a poll disconnects without feed
       assert.equal(await presence.next(), "waiting");
 
       const pollController = new AbortController();
-      const poll = fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}`, {
-        signal: pollController.signal,
-      }).then((res) => res.text());
+      const poll = pollRequest(base, artifact, { signal: pollController.signal }).then((res) => res.text());
       assert.equal(await presence.next(), "listening");
       pollController.abort();
       await poll.catch(() => {});
@@ -2379,7 +2387,7 @@ test("SSE agent-presence returns to waiting when poll feedback storage fails", a
     try {
       assert.equal(await presence.next(), "waiting");
 
-      const poll = fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}&timeoutMs=10`);
+      const poll = pollRequest(base, artifact, { timeoutMs: 10 });
       assert.equal(await presence.next(), "listening");
 
       await writeFile(stateFile, "not json");
@@ -2474,7 +2482,7 @@ test("SSE agent-presence switches to working when poll immediately takes queued 
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompts: [{ prompt: "hello", tag: "message" }] }),
     });
-    await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}`);
+    await pollRequest(base, artifact);
 
     const working = await waitForPresence();
     assert.equal(working, "working");
@@ -2509,7 +2517,7 @@ test("SSE agent-presence resets to waiting after ending and reopening a session"
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ prompts: [{ prompt: "hello", tag: "message" }] }),
       });
-      await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}`);
+      await pollRequest(base, artifact);
       assert.equal(await presence.next(), "working");
 
       await fetch(`${base}/api/${key}/end`, { method: "POST" });
@@ -2558,7 +2566,7 @@ test("SSE agent-presence returns to waiting after an agent reply", async () => {
         body: JSON.stringify({ prompts: [{ prompt: "hello", tag: "message" }] }),
       });
       // A poll that drains the feedback and releases leaves presence "working".
-      await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}`);
+      await pollRequest(base, artifact);
       assert.equal(await presence.next(), "working");
 
       // The reply concludes that work. Without a clear here, presence stays "working"
@@ -2597,7 +2605,7 @@ test("SSE agent-presence stays working when resuming an open session", async () 
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompts: [{ prompt: "hello", tag: "message" }] }),
     });
-    await fetch(`${base}/api/poll?file=${encodeURIComponent(artifact)}`);
+    await pollRequest(base, artifact);
 
     await fetch(`${base}/api/sessions`, {
       method: "POST",
