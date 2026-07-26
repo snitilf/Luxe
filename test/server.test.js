@@ -768,7 +768,10 @@ test("send and end submits queued prompts before ending the session", async () =
   assert.match(js, /let endAfterSubmit = false/);
   assert.match(js, /sendQueued\(true\)/);
   assert.match(js, /if \(shouldEndSession\) body\.endSession = true/);
-  assert.match(js, /if \(shouldEndSession\) \{\n {4}endAfterSubmit = false;\n {4}markSessionEnded\(\)/);
+  assert.match(
+    js,
+    /if \(shouldEndSession && result\.session_ended === true\) \{\n {4}endAfterSubmit = false;\n {4}markSessionEnded\(\)/,
+  );
   assert.match(js, /if \(!succeeded\) \{\n {6}endAfterSubmit = false/);
   assert.doesNotMatch(js, /await endSession\(\)/);
 });
@@ -1006,8 +1009,9 @@ test("chrome keeps queued prompts persisted until submit succeeds", async () => 
   assert.doesNotMatch(js, /const prompts = queued\.splice\(0, queued\.length\)/);
   assert.match(js, /await fetch\("\/api\/" \+ key \+ "\/prompts", \{/);
   assert.doesNotMatch(js, /queued\.splice\(0, prompts\.length\)/);
-  assert.match(js, /for \(const prompt of prompts\) \{/);
+  assert.match(js, /for \(const \[promptIndex, prompt\] of prompts\.entries\(\)\) \{/);
   assert.match(js, /const index = queued\.indexOf\(prompt\)/);
+  assert.match(js, /if \(acceptedIndices\.has\(promptIndex\)\) \{/);
   assert.match(js, /if \(index !== -1\) queued\.splice\(index, 1\)/);
 });
 

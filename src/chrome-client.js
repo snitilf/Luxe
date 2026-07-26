@@ -40,6 +40,7 @@ const layoutGateAction = /** @type {HTMLButtonElement} */ (document.getElementBy
 const layoutIssueBanner = /** @type {HTMLDivElement} */ (document.getElementById("layoutIssueBanner"));
 const layoutIssueBannerText = /** @type {HTMLSpanElement} */ (document.getElementById("layoutIssueBannerText"));
 const sendHint = /** @type {HTMLDivElement} */ (document.getElementById("sendHint"));
+const defaultSendHintText = sendHint.textContent;
 const whiteboardOverlay = /** @type {HTMLDivElement} */ (document.getElementById("whiteboardOverlay"));
 const whiteboardFrame = /** @type {HTMLIFrameElement} */ (document.getElementById("whiteboardFrame"));
 const whiteboardCloseButton = /** @type {HTMLButtonElement} */ (document.getElementById("whiteboardClose"));
@@ -143,7 +144,9 @@ function render() {
           : "") +
         '<div class="tooltip-label">Prompt</div><div class="pill-tooltip-prompt">' +
         escapeHtml(prompt.prompt) +
-        "</div></div></div>",
+        "</div></div>" +
+        (prompt._luxeQueueError ? '<div class="pill-error">' + escapeHtml(prompt._luxeQueueError) + "</div>" : "") +
+        "</div>",
     )
     .join("");
 
@@ -161,12 +164,19 @@ function updateSendState() {
 }
 
 function showSendHint() {
+  sendHint.textContent = defaultSendHintText;
   sendHint.hidden = false;
   clearTimeout(sendHintTimer);
   sendHintTimer = setTimeout(() => {
     sendHint.hidden = true;
   }, 2600);
   chatInput.focus();
+}
+
+function showSendStatus(text) {
+  clearTimeout(sendHintTimer);
+  sendHint.textContent = text;
+  sendHint.hidden = false;
 }
 
 function hideSendHint() {
@@ -390,18 +400,56 @@ async function submitQueuedOnce() {
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error("failed to submit queued prompts");
-  for (const prompt of prompts) {
+  const result =
+    typeof response.json === "function"
+      ? await response.json()
+      : {
+          status: "queued",
+          accepted_prompt_indices: prompts.map((_, index) => index),
+          rejected_prompts: [],
+          session_ended: shouldEndSession,
+        };
+  const acceptedIndices = new Set(
+    Array.isArray(result.accepted_prompt_indices)
+      ? result.accepted_prompt_indices.filter(
+          (index) => Number.isInteger(index) && index >= 0 && index < prompts.length,
+        )
+      : prompts.map((_, index) => index),
+  );
+  const rejectedByIndex = new Map(
+    Array.isArray(result.rejected_prompts)
+      ? result.rejected_prompts
+          .filter((rejection) => rejection?.code === "invalid_whiteboard_target")
+          .map((rejection) => [rejection.index, rejection.code])
+      : [],
+  );
+  for (const [promptIndex, prompt] of prompts.entries()) {
     const index = queued.indexOf(prompt);
-    if (index !== -1) queued.splice(index, 1);
+    if (acceptedIndices.has(promptIndex)) {
+      if (index !== -1) queued.splice(index, 1);
+    } else if (rejectedByIndex.has(promptIndex) && index !== -1) {
+      queued[index] = {
+        ...prompt,
+        _luxeQueueError:
+          "Not sent - this whiteboard target is not a Luxe session file. Remove this item before sending again.",
+      };
+    }
   }
   persistQueuedPrompts();
   render();
-  if (shouldEndSession) {
+  if (shouldEndSession && rejectedByIndex.size > 0) {
+    showSendStatus(
+      acceptedIndices.size > 0
+        ? "Valid feedback sent. Session not ended - remove the rejected item before sending again."
+        : "Nothing sent. Session not ended - remove the rejected item before sending again.",
+    );
+  }
+  if (shouldEndSession && result.session_ended === true) {
     endAfterSubmit = false;
     markSessionEnded();
     return;
   }
-  if (agentPresence === "listening") setAgentPresence("working");
+  if (acceptedIndices.size > 0 && agentPresence === "listening") setAgentPresence("working");
 }
 
 function normalizeLayoutWarningsPayload(value) {

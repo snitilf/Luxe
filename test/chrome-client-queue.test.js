@@ -919,6 +919,92 @@ test("chrome send and end carries the end intent with queued prompts", async () 
   assert.equal(chrome.element("chatInput").disabled, true);
 });
 
+test("partial send removes accepted prompts, marks rejected targets, and keeps send-and-end open", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      assert.equal(url, "/api/abc/prompts");
+      return {
+        ok: true,
+        async json() {
+          return {
+            status: "partial",
+            pending_prompts: 1,
+            accepted_prompt_indices: [0],
+            rejected_prompts: [{ index: 1, code: "invalid_whiteboard_target" }],
+            session_ended: false,
+          };
+        },
+      };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Human message", tag: "message", text: "Freeform message" },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: {
+      prompt: "Hostile whiteboard",
+      tag: "whiteboard",
+      target: { type: "excalidraw-scene", diagramIndex: 0, scenePath: "/etc/passwd" },
+    },
+  });
+  chrome.element("endedChip").hidden = true;
+
+  chrome.element("sendAndEnd").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Hostile whiteboard"],
+  );
+  assert.match(
+    chrome.element("annotationPills").innerHTML,
+    /Not sent - this whiteboard target is not a Luxe session file\. Remove this item before sending again\./,
+  );
+  assert.equal(chrome.element("chatInput").disabled, false);
+  assert.equal(chrome.element("endedChip").hidden, true);
+  assert.equal(chrome.element("sendHint").hidden, false);
+  assert.match(chrome.element("sendHint").textContent, /Session not ended/);
+});
+
+test("all-rejected send-and-end does not claim that feedback was sent", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      assert.equal(url, "/api/abc/prompts");
+      return {
+        ok: true,
+        async json() {
+          return {
+            status: "rejected",
+            pending_prompts: 0,
+            accepted_prompt_indices: [],
+            rejected_prompts: [{ index: 0, code: "invalid_whiteboard_target" }],
+            session_ended: false,
+          };
+        },
+      };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: {
+      prompt: "Hostile whiteboard",
+      tag: "whiteboard",
+      target: { type: "excalidraw-scene", diagramIndex: 0, scenePath: "/etc/passwd" },
+    },
+  });
+
+  chrome.element("sendAndEnd").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.equal(chrome.queued().length, 1);
+  assert.match(chrome.element("sendHint").textContent, /Nothing sent\. Session not ended/);
+  assert.doesNotMatch(chrome.element("sendHint").textContent, /Valid feedback sent/);
+});
+
 test("chrome send and end with an empty composer nudges instead of ending", async () => {
   const posts = [];
   const chrome = await createChromeHarness({

@@ -329,18 +329,32 @@ export async function serve({
     try {
       if (rejectCrossOriginWrite(req, res, "cross-origin prompt submission rejected")) return;
       const shouldEndSession = Boolean(req.body?.endSession || req.body?.end_session);
-      const session = await store.queuePrompts(req.params.key, req.body || {});
-      if (!session) {
+      const result = await store.queuePrompts(req.params.key, req.body || {});
+      if (!result) {
         res.status(404).json({ error: "session not found" });
         return;
       }
-      if (shouldEndSession) {
+      if (result.sessionEnded && shouldEndSession && !result.hasWhiteboardFeedback) {
         await cleanupWhiteboardsForEndedSession(req.params.key);
         clearFeedbackDelivery(req.params.key, activePolls, deliveredFeedback, events);
       }
-      events.emit(shouldEndSession ? "ended" : "feedback", req.params.key);
-      res.json({ status: "queued", pending_prompts: session.pending_prompts });
-      if (shouldEndSession) await shutdownIfNoLiveSessions();
+      if (result.acceptedPromptIndices.length > 0) {
+        events.emit(result.sessionEnded ? "ended" : "feedback", req.params.key);
+      }
+      const status =
+        result.rejectedPrompts.length === 0
+          ? "queued"
+          : result.acceptedPromptIndices.length > 0
+            ? "partial"
+            : "rejected";
+      res.json({
+        status,
+        pending_prompts: result.session.pending_prompts,
+        accepted_prompt_indices: result.acceptedPromptIndices,
+        rejected_prompts: result.rejectedPrompts,
+        session_ended: result.sessionEnded,
+      });
+      if (result.sessionEnded && shouldEndSession) await shutdownIfNoLiveSessions();
     } catch (error) {
       next(error);
     }
@@ -898,7 +912,9 @@ export async function serve({
   async function sweepOrphanWhiteboardsAtStartup() {
     try {
       const sessions = await store.listSessions();
-      const live = sessions.filter((session) => session.status !== "ended").map((session) => session.key);
+      const live = sessions
+        .filter((session) => session.status !== "ended" || Number(session.pending_prompts) > 0)
+        .map((session) => session.key);
       const swept = await sweepOrphanWhiteboards(whiteboardStateRoot, live);
       if (swept.length > 0) logEvent?.(`startup sweep removed whiteboard sidecars for ${swept.join(", ")}`);
     } catch (error) {

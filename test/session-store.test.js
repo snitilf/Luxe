@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { SessionStore } from "../src/session-store.js";
+import { whiteboardFeedbackPaths } from "../src/whiteboard-store.js";
 
 function feedbackResult(result) {
   assert.equal(result.status, "feedback");
@@ -132,6 +133,7 @@ test("queued whiteboard prompts normalize the excalidraw-scene target to its fix
 
     const store = new SessionStore(stateFile);
     const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
+    const { scenePath, previewPath } = whiteboardFeedbackPaths(dir, session.key, 1);
 
     await store.queuePrompts(session.key, {
       prompts: [
@@ -146,8 +148,8 @@ test("queued whiteboard prompts normalize the excalidraw-scene target to its fix
             diagramIndex: "1",
             diagramId: "mermaid-2",
             sourceHash: "abc123def4567890",
-            scenePath: "/state/whiteboards/k/1.excalidraw",
-            previewPath: "/state/whiteboards/k/1.png",
+            scenePath,
+            previewPath,
             imageFallback: false,
             stats: { added: 1, removed: 0, moved: 2, relabeled: 0, drawn: 1 },
             hostile: { nested: "should not survive" },
@@ -164,8 +166,8 @@ test("queued whiteboard prompts normalize the excalidraw-scene target to its fix
       diagramIndex: 1,
       diagramId: "mermaid-2",
       sourceHash: "abc123def4567890",
-      scenePath: "/state/whiteboards/k/1.excalidraw",
-      previewPath: "/state/whiteboards/k/1.png",
+      scenePath,
+      previewPath,
       imageFallback: false,
       stats: { added: 1, removed: 0, moved: 2, relabeled: 0, drawn: 1 },
     });

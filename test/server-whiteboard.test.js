@@ -50,10 +50,12 @@ async function startWhiteboardServer() {
   }).then((res) => res.json());
   return {
     dir,
+    assetsDir,
     // The session store canonicalizes the artifact path, and on macOS the temp
     // dir is a symlink, so kept files land under the resolved path.
     realDir: await realpath(dir),
     base,
+    artifact,
     key: opened.key,
     server,
     sameOrigin: { "content-type": "application/json", origin: base },
@@ -62,6 +64,14 @@ async function startWhiteboardServer() {
       await rm(dir, { recursive: true, force: true });
     },
   };
+}
+
+function pollOnce(ctx, timeoutMs = 0) {
+  return fetch(`${ctx.base}/api/poll`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: ctx.artifact, timeoutMs }),
+  }).then((response) => response.json());
 }
 
 test("isWhiteboardWriteApiPath matches only whiteboard write routes", () => {
@@ -308,6 +318,353 @@ test("feedback-files writes the .excalidraw and PNG sidecars and returns their p
     assert.equal(sceneFile.elements[0].id, "B");
     const png = await readFile(preview_path);
     assert.deepEqual([...png.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("prompt batches reject only whiteboard targets outside the current session", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/1/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "B", type: "ellipse" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    const validTarget = {
+      type: "excalidraw-scene",
+      diagramIndex: 1,
+      diagramId: "mermaid-2",
+      sourceHash: "source-hash",
+      scenePath,
+      previewPath,
+      imageFallback: false,
+      stats: { added: 1, removed: 0, moved: 0, relabeled: 0, drawn: 0 },
+    };
+    const hostileTarget = { ...validTarget, scenePath: "/etc/passwd", previewPath: "" };
+
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          { prompt: "Keep the human message", tag: "message", text: "Freeform message" },
+          { prompt: "Read this file", tag: "whiteboard", target: hostileTarget },
+          { prompt: "Apply the diagram edit", tag: "whiteboard", target: validTarget },
+        ],
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      status: "partial",
+      pending_prompts: 2,
+      accepted_prompt_indices: [0, 2],
+      rejected_prompts: [{ index: 1, code: "invalid_whiteboard_target" }],
+      session_ended: false,
+    });
+
+    const feedback = await pollOnce(ctx);
+    assert.deepEqual(
+      feedback.prompts.map((prompt) => prompt.prompt),
+      ["Keep the human message", "Apply the diagram edit"],
+    );
+    assert.equal(
+      feedback.prompts.some((prompt) => prompt.target?.scenePath === "/etc/passwd"),
+      false,
+    );
+    assert.equal(feedback.session_ended, undefined);
+    assert.deepEqual(await pollOnce(ctx), { status: "waiting" });
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("an all-rejected whiteboard batch does not wake polling", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        prompts: [
+          {
+            prompt: "Read a caller path",
+            tag: "whiteboard",
+            target: {
+              type: "excalidraw-scene",
+              diagramIndex: 1,
+              scenePath: "/etc/passwd",
+              previewPath: "",
+            },
+          },
+          {
+            prompt: "Use an aliased whiteboard type",
+            tag: "whiteboard",
+            target: {
+              type: "excalidraw_scene",
+              diagramIndex: 1,
+              scenePath: "/etc/passwd",
+              previewPath: "",
+            },
+          },
+          {
+            prompt: "Hide a path on a text range",
+            tag: "annotation",
+            target: {
+              type: "text-range",
+              text: "x",
+              selector: "p",
+              start: { selector: "p", path: [0], offset: 0 },
+              end: { selector: "p", path: [0], offset: 1 },
+              scene_path: "/etc/passwd",
+            },
+          },
+        ],
+      }),
+    });
+
+    assert.deepEqual(await response.json(), {
+      status: "rejected",
+      pending_prompts: 0,
+      accepted_prompt_indices: [],
+      rejected_prompts: [
+        { index: 0, code: "invalid_whiteboard_target" },
+        { index: 1, code: "invalid_whiteboard_target" },
+        { index: 2, code: "invalid_whiteboard_target" },
+      ],
+      session_ended: false,
+    });
+    assert.deepEqual(await pollOnce(ctx), { status: "waiting" });
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("all-valid whiteboard send-and-end keeps feedback files readable for polling", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "A", type: "rectangle" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    const pollPromise = pollOnce(ctx, 5000);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const response = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          {
+            prompt: "Apply the whiteboard edit",
+            tag: "whiteboard",
+            target: {
+              type: "excalidraw-scene",
+              diagramIndex: 0,
+              diagramId: "mermaid-1",
+              sourceHash: "source-hash",
+              scenePath,
+              previewPath,
+              imageFallback: false,
+              stats: { added: 1, removed: 0, moved: 0, relabeled: 0, drawn: 0 },
+            },
+          },
+        ],
+      }),
+    });
+    const result = await response.json();
+
+    assert.equal(result.session_ended, true);
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+    const feedback = await pollPromise;
+    assert.equal(feedback.session_ended, true);
+    assert.equal(feedback.prompts[0].target.scenePath, scenePath);
+    assert.equal(JSON.parse(await readFile(feedback.prompts[0].target.scenePath, "utf8")).type, "excalidraw");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("queued ended-session whiteboard feedback survives server restart until polling", async () => {
+  const ctx = await startWhiteboardServer();
+  let restarted;
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "A", type: "rectangle" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          {
+            prompt: "Apply the queued edit",
+            tag: "whiteboard",
+            target: {
+              type: "excalidraw-scene",
+              diagramIndex: 0,
+              scenePath,
+              previewPath,
+            },
+          },
+        ],
+      }),
+    });
+    await ctx.server.done;
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+
+    restarted = await serve({
+      port: 0,
+      stateFile: path.join(ctx.dir, "state.json"),
+      version: "9.9.9-test",
+      whiteboardAssetsDir: ctx.assetsDir,
+    });
+    const restartedBase = `http://127.0.0.1:${restarted.port}`;
+    const feedback = await fetch(`${restartedBase}/api/poll`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: ctx.artifact, timeoutMs: 0 }),
+    }).then((response) => response.json());
+
+    assert.equal(feedback.prompts[0].target.scenePath, scenePath);
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+  } finally {
+    await restarted?.close();
+    await ctx.close();
+  }
+});
+
+test("ending with a later message preserves an earlier queued whiteboard target", async () => {
+  const ctx = await startWhiteboardServer();
+  let restarted;
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "A", type: "rectangle" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        prompts: [
+          {
+            prompt: "Apply the earlier whiteboard edit",
+            tag: "whiteboard",
+            target: { type: "excalidraw-scene", diagramIndex: 0, scenePath, previewPath },
+          },
+        ],
+      }),
+    });
+    const ending = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [{ prompt: "A later human message", tag: "message", text: "Freeform message" }],
+      }),
+    }).then((response) => response.json());
+
+    assert.equal(ending.session_ended, true);
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+    await ctx.server.done;
+    restarted = await serve({
+      port: 0,
+      stateFile: path.join(ctx.dir, "state.json"),
+      version: "9.9.9-test",
+      whiteboardAssetsDir: ctx.assetsDir,
+    });
+    const feedback = await fetch(`http://127.0.0.1:${restarted.port}/api/poll`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: ctx.artifact, timeoutMs: 0 }),
+    }).then((response) => response.json());
+    assert.deepEqual(
+      feedback.prompts.map((prompt) => prompt.prompt),
+      ["Apply the earlier whiteboard edit", "A later human message"],
+    );
+    assert.equal(JSON.parse(await readFile(feedback.prompts[0].target.scenePath, "utf8")).type, "excalidraw");
+  } finally {
+    await restarted?.close();
+    await ctx.close();
+  }
+});
+
+test("an all-rejected repeat cannot delete already-queued ended whiteboard feedback", async () => {
+  const ctx = await startWhiteboardServer();
+  try {
+    const filesResponse = await fetch(`${ctx.base}/api/${ctx.key}/whiteboard/0/feedback-files`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        scene: { elements: [{ id: "A", type: "rectangle" }], appState: {}, files: {} },
+        pngDataUrl: PNG_DATA_URL,
+      }),
+    });
+    const { scene_path: scenePath, preview_path: previewPath } = await filesResponse.json();
+    const otherArtifact = path.join(ctx.dir, "other.html");
+    await writeFile(otherArtifact, "<!doctype html><html><body>Other session</body></html>");
+    await fetch(`${ctx.base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: otherArtifact }),
+    });
+    await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          {
+            prompt: "Apply the queued edit",
+            tag: "whiteboard",
+            target: { type: "excalidraw-scene", diagramIndex: 0, scenePath, previewPath },
+          },
+        ],
+      }),
+    });
+
+    const repeated = await fetch(`${ctx.base}/api/${ctx.key}/prompts`, {
+      method: "POST",
+      headers: ctx.sameOrigin,
+      body: JSON.stringify({
+        endSession: true,
+        prompts: [
+          {
+            prompt: "Hostile repeat",
+            tag: "whiteboard",
+            target: { type: "excalidraw-scene", diagramIndex: 0, scenePath: "/etc/passwd" },
+          },
+        ],
+      }),
+    }).then((response) => response.json());
+
+    assert.equal(repeated.status, "rejected");
+    assert.equal(JSON.parse(await readFile(scenePath, "utf8")).type, "excalidraw");
+    const feedback = await pollOnce(ctx);
+    assert.equal(feedback.prompts[0].target.scenePath, scenePath);
   } finally {
     await ctx.close();
   }
