@@ -1,0 +1,282 @@
+/* Shell chrome for the whiteboard frame. Bundled into dist/whiteboard/whiteboard.css
+   together with Excalidraw's own stylesheet by scripts/build.js.
+
+   One token source: the @import below is inlined by esbuild at build time, so
+   this file carries no palette of its own. There is no /luxe-tokens.css route
+   and none is wanted - the frame runs in an opaque origin and would have to
+   fetch it cross-origin.
+
+   The frame is fullscreen-only, so there is no inline placement to style and no
+   dark placement to branch on. The whole `data-luxe-whiteboard-theme="dark"`
+   layer that used to live here is gone, not retuned: Luxe is light only. */
+
+@import "./luxe-tokens.css";
+
+/* The shell's own type. Excalidraw draws canvas text with its own vendored
+   families; this covers the header, banners and dialog. /fonts/ answers with
+   Access-Control-Allow-Origin: * precisely because this frame is an opaque
+   origin and its font fetches are CORS-gated. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/inter-latin-500-normal.woff2") format("woff2");
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-control);
+  letter-spacing: var(--tracking-sans);
+  background: var(--canvas);
+  color: var(--ink-1);
+}
+
+#wbShell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  position: relative;
+}
+
+#wbHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Right padding reserves room for the chrome overlay's close control,
+     which floats above this header from outside the iframe. */
+  padding: 8px 52px 8px 12px;
+  background: var(--surface-1);
+  border-bottom: var(--stroke-hair) solid var(--hair);
+  flex: none;
+}
+
+#wbTitle {
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+#wbNote {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-nav);
+  border: var(--stroke-hair) solid var(--hair);
+  background: var(--surface-2);
+  color: var(--ink-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-sans);
+}
+
+#wbNote::placeholder {
+  color: var(--ink-3);
+}
+
+/* Ghost by default, one primary. Queue feedback is the action that ends the
+   review round, so it is the only filled control in the header. */
+#wbHeader button {
+  flex: none;
+  border: var(--stroke-hair) solid var(--strong);
+  border-radius: var(--radius-pill);
+  padding: 8px 16px;
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-sans);
+  cursor: pointer;
+  background: var(--surface-2);
+  color: var(--ink-1);
+}
+
+#wbHeader button:hover {
+  background: var(--canvas);
+}
+
+#wbQueue {
+  border-color: transparent;
+  background: var(--dark-fill);
+  color: var(--dark-fill-text);
+}
+
+#wbQueue:hover {
+  background: var(--dark-fill-hover);
+}
+
+#wbHeader button:disabled {
+  background: var(--disabled-fill);
+  border-color: transparent;
+  color: var(--disabled-ink);
+  cursor: default;
+}
+
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Banners always ship colour plus words, never colour alone. */
+.wb-banner {
+  flex: none;
+  padding: 8px 12px;
+  font-size: var(--text-label);
+  background: var(--info-bg);
+  color: var(--info-fg);
+  border-bottom: var(--stroke-hair) solid var(--info-border);
+}
+
+.wb-banner-warn {
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+  border-bottom-color: var(--warning-border);
+}
+
+.wb-banner button {
+  margin-left: 8px;
+  border: var(--stroke-hair) solid currentcolor;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.wb-status {
+  flex: none;
+  padding: 8px 12px;
+  font-size: var(--text-label);
+  background: var(--success-bg);
+  color: var(--success-fg);
+  border-bottom: var(--stroke-hair) solid var(--success-border);
+}
+
+#wbEditor {
+  flex: 1;
+  min-height: 0;
+}
+
+.wb-link-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--scrim);
+}
+
+.wb-link-confirm[hidden] {
+  display: none;
+}
+
+.wb-link-confirm-card {
+  width: min(100%, 440px);
+  box-sizing: border-box;
+  padding: 18px;
+  border: var(--stroke-hair) solid var(--hair);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-modal);
+}
+
+.wb-link-confirm-title {
+  font-weight: var(--weight-medium);
+}
+
+.wb-link-confirm-copy,
+.wb-link-confirm-url {
+  margin: 9px 0 0;
+  font-size: var(--text-label);
+}
+
+.wb-link-confirm-copy {
+  color: var(--ink-2);
+}
+
+.wb-link-confirm-url {
+  max-height: 5.2em;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  border-radius: var(--radius-nav);
+  background: var(--code-bg);
+  border: var(--stroke-hair) solid var(--hair);
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-mono);
+}
+
+.wb-link-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.wb-link-confirm-actions button {
+  border: var(--stroke-hair) solid var(--strong);
+  border-radius: var(--radius-pill);
+  padding: 8px 16px;
+  background: var(--surface-2);
+  color: var(--ink-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-sans);
+  cursor: pointer;
+}
+
+.wb-link-confirm-actions button:hover {
+  background: var(--canvas);
+}
+
+#wbLinkConfirmOpen {
+  border-color: transparent;
+  background: var(--dark-fill);
+  color: var(--dark-fill-text);
+}
+
+#wbLinkConfirmOpen:hover {
+  background: var(--dark-fill-hover);
+}
+
+/* Input catcher shown while the teardown flush saves the last edit. It is not
+   an unlock affordance - nothing starts locked now - so it deliberately offers
+   no way through. */
+.wb-activate {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 18px;
+  cursor: progress;
+  background: transparent;
+}
+
+.wb-activate-label {
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-micro);
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--dark-fill);
+  color: var(--dark-fill-text);
+}

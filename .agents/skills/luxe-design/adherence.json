@@ -1,0 +1,651 @@
+{
+  "generatedBy": "scripts/build-design-skill.js",
+  "source": "src/luxe-tokens.css",
+  "note": "Derived file. Run `npm run build:design-skill` after changing the tokens.",
+  "families": {
+    "sans": "Inter",
+    "mono": "JetBrains Mono"
+  },
+  "fontSizes": {
+    "--text-heading": "28px",
+    "--text-body": "16px",
+    "--text-control": "15px",
+    "--text-label": "14px"
+  },
+  "fontWeights": {
+    "--weight-regular": "400",
+    "--weight-medium": "500"
+  },
+  "radii": {
+    "--radius-nav": "8px",
+    "--radius-card": "16px",
+    "--radius-pill": "999px",
+    "--radius-inner": "12px",
+    "--radius-bubble": "16px",
+    "--radius-bubble-speaker": "6px"
+  },
+  "rules": [
+    {
+      "id": "no-literal-color",
+      "message": "Raw colour literal. Use a token via var(), or add the value to src/luxe-tokens.css."
+    },
+    {
+      "id": "font-family",
+      "message": "Font not provided by the design system. Two families only: the sans and the mono above."
+    },
+    {
+      "id": "font-size",
+      "message": "Font size outside the scale. Four sizes only, all listed in fontSizes."
+    },
+    {
+      "id": "font-weight",
+      "message": "Font weight outside the scale. Two weights only: regular and medium. No bold, no light."
+    },
+    {
+      "id": "border-radius",
+      "message": "Radius outside the geometry scale. Use a var(--radius-*) token."
+    }
+  ],
+  "tokens": [
+    {
+      "name": "--font-sans",
+      "value": "\"Inter\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif",
+      "kind": "font-family",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--font-mono",
+      "value": "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      "kind": "font-family",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--text-heading",
+      "value": "28px",
+      "kind": "length",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--text-body",
+      "value": "16px",
+      "kind": "length",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--text-control",
+      "value": "15px",
+      "kind": "length",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--text-label",
+      "value": "14px",
+      "kind": "length",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--weight-regular",
+      "value": "400",
+      "kind": "number",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--weight-medium",
+      "value": "500",
+      "kind": "number",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--tracking-sans",
+      "value": "-0.15px",
+      "kind": "length",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--tracking-mono",
+      "value": "0",
+      "kind": "number",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--tracking-micro",
+      "value": "0.4px",
+      "kind": "length",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--leading-body",
+      "value": "1.55",
+      "kind": "number",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--leading-tight",
+      "value": "1.3",
+      "kind": "number",
+      "group": "Type (spec 2.1)"
+    },
+    {
+      "name": "--radius-nav",
+      "value": "8px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--radius-card",
+      "value": "16px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--radius-pill",
+      "value": "999px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--radius-inner",
+      "value": "12px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--radius-bubble",
+      "value": "16px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--radius-bubble-speaker",
+      "value": "6px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--icon-nav",
+      "value": "14px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--icon-card",
+      "value": "20px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--stroke-hair",
+      "value": "1px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--stroke-icon",
+      "value": "1.7px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--stroke-annotate",
+      "value": "2px",
+      "kind": "length",
+      "group": "Geometry (spec 2.2)"
+    },
+    {
+      "name": "--canvas",
+      "value": "#f7f4ee",
+      "kind": "color",
+      "group": "Surfaces and ink (spec 2.3)"
+    },
+    {
+      "name": "--surface-1",
+      "value": "#fbf9f4",
+      "kind": "color",
+      "group": "Surfaces and ink (spec 2.3)"
+    },
+    {
+      "name": "--surface-2",
+      "value": "#ffffff",
+      "kind": "color",
+      "group": "Surfaces and ink (spec 2.3)"
+    },
+    {
+      "name": "--hair",
+      "value": "#e7e2d6",
+      "kind": "color",
+      "group": "Surfaces and ink (spec 2.3)"
+    },
+    {
+      "name": "--strong",
+      "value": "#cbc4b2",
+      "kind": "color",
+      "group": "Surfaces and ink (spec 2.3)"
+    },
+    {
+      "name": "--ink-1",
+      "value": "#211e17",
+      "kind": "color",
+      "group": "Surfaces and ink (spec 2.3)"
+    },
+    {
+      "name": "--ink-2",
+      "value": "#5c564a",
+      "kind": "color",
+      "group": "Surfaces and ink (spec 2.3)"
+    },
+    {
+      "name": "--ink-3",
+      "value": "#8a8375",
+      "kind": "color",
+      "group": "Surfaces and ink (spec 2.3)"
+    },
+    {
+      "name": "--dark-fill",
+      "value": "#463527",
+      "kind": "color",
+      "group": "The dark fill (spec 2.4)"
+    },
+    {
+      "name": "--dark-fill-hover",
+      "value": "#57432f",
+      "kind": "color",
+      "group": "The dark fill (spec 2.4)"
+    },
+    {
+      "name": "--dark-fill-text",
+      "value": "#f7f4ee",
+      "kind": "color",
+      "group": "The dark fill (spec 2.4)"
+    },
+    {
+      "name": "--disabled-fill",
+      "value": "#e7e2d6",
+      "kind": "color",
+      "group": "The dark fill (spec 2.4)"
+    },
+    {
+      "name": "--disabled-ink",
+      "value": "#a09a8b",
+      "kind": "color",
+      "group": "The dark fill (spec 2.4)"
+    },
+    {
+      "name": "--gold",
+      "value": "#c77f06",
+      "kind": "color",
+      "group": "The one accent (spec 2.5)"
+    },
+    {
+      "name": "--gold-wash",
+      "value": "rgba(230, 168, 32, 0.28)",
+      "kind": "color",
+      "group": "The one accent (spec 2.5)"
+    },
+    {
+      "name": "--focus-ring",
+      "value": "#3c5f8f",
+      "kind": "color",
+      "group": "The one accent (spec 2.5)"
+    },
+    {
+      "name": "--focus-ring-width",
+      "value": "2px",
+      "kind": "length",
+      "group": "The one accent (spec 2.5)"
+    },
+    {
+      "name": "--focus-ring-offset",
+      "value": "2px",
+      "kind": "length",
+      "group": "The one accent (spec 2.5)"
+    },
+    {
+      "name": "--success-fg",
+      "value": "#2e6b27",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--success-bg",
+      "value": "#edf3e4",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--success-border",
+      "value": "#cfdec0",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--warning-fg",
+      "value": "#8a5a06",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--warning-bg",
+      "value": "#faf0d8",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--warning-border",
+      "value": "#ecd9a8",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--error-fg",
+      "value": "#b3341f",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--error-bg",
+      "value": "#f9e8e2",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--error-border",
+      "value": "#eac5b8",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--info-fg",
+      "value": "#3c5f8f",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--info-bg",
+      "value": "#e9eef5",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--info-border",
+      "value": "#c6d3e3",
+      "kind": "color",
+      "group": "Status (spec 2.6)"
+    },
+    {
+      "name": "--chart-1",
+      "value": "#527dc1",
+      "kind": "color",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-2",
+      "value": "#b95d4a",
+      "kind": "color",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-3",
+      "value": "#50a67e",
+      "kind": "color",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-4",
+      "value": "#d7a44c",
+      "kind": "color",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-5",
+      "value": "#5a8637",
+      "kind": "color",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-6",
+      "value": "#ce7d93",
+      "kind": "color",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-7",
+      "value": "#7660a3",
+      "kind": "color",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-8",
+      "value": "#d36e4f",
+      "kind": "color",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-stroke",
+      "value": "2px",
+      "kind": "length",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-dot",
+      "value": "4px",
+      "kind": "length",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-dot-ring",
+      "value": "2px",
+      "kind": "length",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--chart-stack-gap",
+      "value": "2px",
+      "kind": "length",
+      "group": "Charts - the Bisque palette (spec 2.7)"
+    },
+    {
+      "name": "--seq-1",
+      "value": "#dbe4f4",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--seq-2",
+      "value": "#a8bfe6",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--seq-3",
+      "value": "#6f93d2",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--seq-4",
+      "value": "#3a6fc4",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--seq-5",
+      "value": "#274d8d",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--div-1",
+      "value": "#274d8d",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--div-2",
+      "value": "#3a6fc4",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--div-3",
+      "value": "#a8bfe6",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--div-4",
+      "value": "#e9e5da",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--div-5",
+      "value": "#dba193",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--div-6",
+      "value": "#b8452f",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--div-7",
+      "value": "#7e2c1d",
+      "kind": "color",
+      "group": "Sequential and diverging (spec 2.8)"
+    },
+    {
+      "name": "--code-bg",
+      "value": "#f7f4ec",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--diff-add-bg",
+      "value": "#e8f1dd",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--diff-add-gutter",
+      "value": "#c9dfb2",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--diff-rem-bg",
+      "value": "#f9e6e0",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--diff-rem-gutter",
+      "value": "#eec4b8",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--diff-hunk-bg",
+      "value": "#f2ecd9",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--syn-keyword",
+      "value": "#963f8b",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--syn-string",
+      "value": "#4a7a2a",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--syn-number",
+      "value": "#9a5b06",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--syn-comment",
+      "value": "#746b56",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--syn-function",
+      "value": "#2f5e9e",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--syn-type",
+      "value": "#b8511f",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--syn-punct",
+      "value": "#7a7466",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--syn-plain",
+      "value": "#2c2921",
+      "kind": "color",
+      "group": "Code and diff (spec 2.9)"
+    },
+    {
+      "name": "--toggle-track-off",
+      "value": "#d5cfc0",
+      "kind": "color",
+      "group": "Chrome-only surfaces"
+    },
+    {
+      "name": "--toggle-knob",
+      "value": "#ffffff",
+      "kind": "color",
+      "group": "Chrome-only surfaces"
+    },
+    {
+      "name": "--scrim",
+      "value": "rgba(33, 30, 23, 0.4)",
+      "kind": "color",
+      "group": "Chrome-only surfaces"
+    },
+    {
+      "name": "--shadow-modal",
+      "value": "0 18px 48px rgba(33, 30, 23, 0.14)",
+      "kind": "shadow",
+      "group": "Chrome-only surfaces"
+    },
+    {
+      "name": "--ended-opacity",
+      "value": "0.45",
+      "kind": "number",
+      "group": "Chrome-only surfaces"
+    },
+    {
+      "name": "--ease",
+      "value": "cubic-bezier(0.2, 0.6, 0.2, 1)",
+      "kind": "easing",
+      "group": "Chrome-only surfaces"
+    },
+    {
+      "name": "--dur-fast",
+      "value": "120ms",
+      "kind": "duration",
+      "group": "Chrome-only surfaces"
+    },
+    {
+      "name": "--dur",
+      "value": "180ms",
+      "kind": "duration",
+      "group": "Chrome-only surfaces"
+    }
+  ]
+}

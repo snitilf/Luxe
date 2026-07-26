@@ -2,20 +2,19 @@
 
 Thanks for wanting to contribute.
 
-**Human-authored pull requests targeting `main` must be raised through `no-mistakes`.**
-Pushing through it runs a review/test/lint pipeline and opens a deterministic PR.
-
-Quick workflow:
-
-1. Fork the repo and clone the parent repository.
-2. Make changes on a branch.
-3. Initialize the gate with your fork as the push target: `no-mistakes init --fork-url git@github.com:<you>/Luxe.git`.
-4. Commit and run:
+Pull requests target `main`. Before opening one, run the full gate locally:
 
 ```sh
-git push no-mistakes
+npm ci
+npm run check
 ```
 
-See the no-mistakes documentation for full setup and usage.
+`npm run check` builds the bundle, verifies the generated skill files are in sync, runs the design
+adherence and naming gates, then lint, formatting, types, and the test suite. CI runs the same
+thing on Linux, macOS, and Windows, so a green local run is a good predictor of a green PR.
 
-Do not hand-edit `CHANGELOG.md` or `.release-please-manifest.json` — release automation manages them.
+Keep commits small and single-purpose, and write them as `type(scope): summary`. The version
+number and changelog are derived from those messages, so the type matters: `feat` and `fix` appear
+in the changelog and drive the release, and anything else does not.
+
+Do not hand-edit `CHANGELOG.md` or `.release-please-manifest.json` - release automation manages them.

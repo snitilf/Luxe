@@ -1,0 +1,76 @@
+<!doctype html>
+<!-- @dsCard group="Brand" name="Brand · Iconography" subtitle="Inline stroke SVG at two sizes, currentColor, no icon font" viewport="700x260" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Brand - Iconography</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Icons</div>
+      <div class="row" style="gap: 20px">
+        <span class="row" style="gap: 8px">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+          <span style="font-size: var(--text-control)">Annotate</span>
+        </span>
+        <span class="row" style="gap: 8px">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 12a9 9 0 1 0 3-6.7" />
+            <path d="M3 4v5h5" />
+          </svg>
+          <span style="font-size: var(--text-control)">Reload artifact</span>
+        </span>
+        <span class="row" style="gap: 8px; color: var(--ink-2)">
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v5" />
+            <path d="M12 16h.01" />
+          </svg>
+          <span style="font-size: var(--text-control)">Status banner icon</span>
+        </span>
+      </div>
+      <p class="note">
+        Words first, icons second. Icons are inline stroke SVG on a 24 viewBox, drawn at
+        <code class="mono">--icon-nav</code> in the toolbar and <code class="mono">--icon-card</code> in cards and status
+        banners, stroke <code class="mono">--stroke-icon</code>, round caps and joins, always
+        <code class="mono">currentColor</code> so they tint with their label. No icon font, no sprite sheet, no CDN: the
+        tool has to work offline. Never fill an icon sitting beside control-size text, and never use an emoji as an icon.
+        Status is icon plus text label, never colour alone.
+      </p>
+    </div>
+  </body>
+</html>

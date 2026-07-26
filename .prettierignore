@@ -1,0 +1,12 @@
+dist
+node_modules
+.luxe
+package-lock.json
+CHANGELOG.md
+
+# The internal design skill. `tokens.css` and `adherence.json` in it are written
+# by scripts/build-design-skill.js, and `npm run check` fails when they differ
+# from what that script produces - so Prettier reformatting them would deadlock
+# the check chain against its own generator. The skill has its own formatting
+# gate instead: scripts/check-design-adherence.js.
+.agents

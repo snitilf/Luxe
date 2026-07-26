@@ -1,34 +1,80 @@
 {
-  "name": "luxe",
+  "name": "editeur-luxe",
   "version": "0.1.0",
-  "private": false,
-  "description": "Luxe skill — interactive review and visual artifact tooling",
+  "description": "Luxe - interactive review and visual artifact tooling for agents",
   "type": "module",
-  "main": "index.js",
   "bin": {
-    "luxe": "bin/luxe.js"
+    "luxe": "dist/cli.mjs"
   },
+  "files": [
+    "dist",
+    "skills/luxe",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md",
+    "README.md"
+  ],
   "scripts": {
-    "lint": "echo \"no lint configured\"",
-    "format:check": "echo \"format ok\"",
-    "typecheck": "echo \"no typecheck configured\"",
-    "test": "node ./test/cli-smoke.js",
-    "build": "echo \"No build\"",
-    "check": "npm run lint && npm run format:check && npm run typecheck && npm run test"
+    "build": "node scripts/build.js",
+    "build:skill": "node scripts/build-skill.js",
+    "build:design-skill": "node scripts/build-design-skill.js",
+    "design-lint": "node scripts/check-design-adherence.js",
+    "check": "npm run build && node scripts/build-skill.js --check && node scripts/build-design-skill.js --check && node scripts/check-design-adherence.js && npm run lint && npm run format:check && npm run typecheck && npm test && npm run naming && npm run release-config",
+    "lint": "eslint bin src test scripts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "naming": "node scripts/check-naming.js",
+    "release-config": "node scripts/check-release-config.js",
+    "prepack": "npm run build",
+    "prepare": "npm run build",
+    "test": "node --test",
+    "typecheck": "tsc --noEmit"
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com:snitilf/Luxe.git"
+    "url": "git+https://github.com/snitilf/Luxe.git"
   },
-  "keywords": ["luxe", "skill", "cli"],
+  "keywords": [
+    "luxe",
+    "skill",
+    "cli"
+  ],
   "author": "snitilf",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
-  "files": ["bin/", "src/", "dist/"],
-  "homepage": "",
+  "publishConfig": {
+    "access": "public"
+  },
   "bugs": {
     "url": "https://github.com/snitilf/Luxe/issues"
+  },
+  "homepage": "https://github.com/snitilf/Luxe#readme",
+  "dependencies": {
+    "@tailwindcss/browser": "4.2.4",
+    "axi-sdk-js": "0.1.8",
+    "chokidar": "^4.0.3",
+    "daisyui": "^5.5.19",
+    "express": "^5.2.1",
+    "open": "^10.2.0",
+    "parse5": "^8.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@excalidraw/excalidraw": "0.18.1",
+    "@excalidraw/mermaid-to-excalidraw": "2.2.2",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@pierre/diffs": "1.2.10",
+    "@types/node": "^25.6.2",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.3.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.6.0",
+    "mermaid": "11.12.1",
+    "prettier": "^3.8.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "^5.9.3"
   }
 }

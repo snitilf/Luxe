@@ -1,0 +1,882 @@
+/* @luxe-tokens */
+
+/* Bundled type. Both families are latin-subset woff2 served by the /fonts route
+ * with Access-Control-Allow-Origin: *, so the opaque-origin whiteboard frame can
+ * use them too. Nothing here reaches a CDN: the tool has to work offline and
+ * published artifacts block external hosts. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/inter-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+}
+
+/* Chrome layout constants. Not design tokens: they describe this one shell. */
+:root {
+  --bar-h: 56px;
+  --panel-w: 360px;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+}
+body {
+  background: var(--canvas);
+  color: var(--ink-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-control);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-body);
+  letter-spacing: var(--tracking-sans);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+::selection {
+  background: var(--gold-wash);
+  color: var(--ink-1);
+}
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ---- Toolbar ---------------------------------------------------------- */
+.bar {
+  height: var(--bar-h);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: var(--surface-1);
+  border-bottom: var(--stroke-hair) solid var(--hair);
+  box-sizing: border-box;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.brand-mark {
+  font-size: var(--text-control);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--ink-1);
+  flex-shrink: 0;
+}
+.bar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--hair);
+  flex: none;
+}
+.bar-file {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-mono);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.spacer {
+  flex: 1;
+}
+.ended-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+  background: var(--disabled-fill);
+  color: var(--ink-2);
+  padding: 2px 10px;
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+}
+.ended-chip[hidden] {
+  display: none;
+}
+
+/* ---- Annotate toggle --------------------------------------------------- */
+.annotate-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: var(--text-label);
+  letter-spacing: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+.annotate-switch:disabled {
+  cursor: not-allowed;
+  color: var(--disabled-ink);
+}
+.switch-track {
+  width: 34px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--toggle-track-off);
+  position: relative;
+  flex-shrink: 0;
+  transition: background var(--dur-fast) var(--ease);
+}
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-pill);
+  background: var(--toggle-knob);
+  transition:
+    left var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+.annotate-switch[aria-pressed="true"] .switch-track {
+  background: var(--dark-fill);
+}
+.annotate-switch[aria-pressed="true"] .switch-knob {
+  left: 16px;
+  background: var(--toggle-knob);
+}
+
+/* ---- Overflow menu ----------------------------------------------------- */
+.more-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.more-button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: var(--stroke-hair) solid var(--strong);
+  background: var(--surface-2);
+  color: var(--ink-1);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.more-button:hover:not(:disabled),
+.more-button[aria-expanded="true"] {
+  background: var(--canvas);
+}
+.more-button:disabled {
+  cursor: not-allowed;
+  background: var(--disabled-fill);
+  border-color: var(--hair);
+  color: var(--disabled-ink);
+}
+.menu {
+  position: absolute;
+  background: var(--surface-2);
+  border: var(--stroke-hair) solid var(--hair);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-modal);
+  padding: 6px;
+  z-index: 70;
+}
+.menu[hidden] {
+  display: none;
+}
+.more-menu {
+  right: 0;
+  top: 42px;
+  width: min(320px, calc(100vw - 24px));
+}
+.menu-head {
+  padding: 8px 10px 10px;
+}
+.menu-label {
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-micro);
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+}
+.menu-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% + 8px);
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  margin: 0 -4px;
+  border-radius: var(--radius-nav);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-mono);
+  color: var(--ink-2);
+}
+.menu-file:hover {
+  background: var(--canvas);
+}
+.menu-file > svg {
+  flex-shrink: 0;
+  color: var(--ink-3);
+}
+.menu-file-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.path-head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.path-tail {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.copy-hint {
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-sans);
+  color: var(--ink-2);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.copy-hint .icon-copy,
+.copy-hint .icon-check {
+  display: flex;
+}
+.copy-hint .icon-check {
+  display: none;
+}
+.copy-hint.copied {
+  color: var(--success-fg);
+}
+.copy-hint.copied .icon-copy {
+  display: none;
+}
+.copy-hint.copied .icon-check {
+  display: flex;
+}
+.menu-rule {
+  height: 1px;
+  background: var(--hair);
+  margin: 4px 0;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: var(--radius-nav);
+  font-family: inherit;
+  font-size: var(--text-control);
+  letter-spacing: inherit;
+  border: 0;
+  cursor: pointer;
+  background: transparent;
+  color: var(--ink-1);
+}
+.menu-item:hover:not(:disabled) {
+  background: var(--canvas);
+}
+.menu-item:disabled {
+  cursor: not-allowed;
+  color: var(--disabled-ink);
+}
+.menu-item > svg {
+  flex-shrink: 0;
+  color: var(--ink-2);
+}
+
+/* ---- Buttons ----------------------------------------------------------- */
+.button {
+  border: var(--stroke-hair) solid transparent;
+  border-radius: var(--radius-pill);
+  padding: 8px 16px;
+  background: var(--dark-fill);
+  color: var(--dark-fill-text);
+  font-family: inherit;
+  font-size: var(--text-control);
+  font-weight: var(--weight-medium);
+  letter-spacing: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.button:hover:not(:disabled) {
+  background: var(--dark-fill-hover);
+}
+.button:disabled {
+  background: var(--disabled-fill);
+  color: var(--disabled-ink);
+  cursor: not-allowed;
+}
+.button-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border-color: var(--strong);
+  color: var(--ink-1);
+}
+.button-ghost:hover:not(:disabled) {
+  background: var(--canvas);
+}
+.button-ghost:disabled {
+  background: var(--disabled-fill);
+  border-color: var(--hair);
+  color: var(--disabled-ink);
+}
+.button-ghost > svg {
+  flex-shrink: 0;
+}
+
+/* ---- Layout ------------------------------------------------------------ */
+.layout {
+  height: calc(100vh - var(--bar-h));
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--panel-w);
+}
+.frame {
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-2);
+  position: relative;
+  overflow: hidden;
+}
+.panel {
+  width: var(--panel-w);
+  border-left: var(--stroke-hair) solid var(--hair);
+  background: var(--surface-1);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.panel h2 {
+  font-size: var(--text-control);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  margin: 16px 16px 8px;
+  flex: 0 0 auto;
+}
+.panel-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Conversation ------------------------------------------------------ */
+.chat {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: visible;
+  padding: 0 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chat:empty::before {
+  content: "Agent hasn't sent a message yet. Click an element in the artifact to annotate, or type below to start.";
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-size: var(--text-label);
+  line-height: var(--leading-body);
+}
+.bubble {
+  max-width: 88%;
+  padding: 10px 14px;
+  font-size: var(--text-control);
+  line-height: var(--leading-body);
+  border-radius: var(--radius-bubble);
+  border: var(--stroke-hair) solid transparent;
+}
+.bubble.agent {
+  align-self: flex-start;
+  background: var(--surface-2);
+  border-color: var(--hair);
+  color: var(--ink-1);
+  border-bottom-left-radius: var(--radius-bubble-speaker);
+}
+.bubble.user {
+  align-self: flex-end;
+  background: var(--dark-fill);
+  color: var(--dark-fill-text);
+  border-bottom-right-radius: var(--radius-bubble-speaker);
+}
+.bubble.agent-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+}
+.spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--hair);
+  border-top-color: var(--ink-2);
+  animation: spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+.bubble small {
+  display: block;
+  margin-bottom: 4px;
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-micro);
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.bubble.user small {
+  text-align: right;
+  color: var(--dark-fill-text);
+  opacity: 0.75;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Queued and sent pills --------------------------------------------- */
+.annotation-pills {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 16px 12px;
+  flex: 0 0 auto;
+}
+.annotation-pills:empty {
+  display: none;
+}
+.pill-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  max-width: 100%;
+}
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  border: var(--stroke-hair) dashed var(--strong);
+  border-radius: var(--radius-pill);
+  background: var(--canvas);
+  color: var(--ink-3);
+  padding: 6px 8px 6px 12px;
+  font-size: var(--text-label);
+}
+.pill.sent {
+  border-style: solid;
+  border-color: var(--hair);
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.pill-state {
+  flex: none;
+  display: flex;
+  color: currentColor;
+}
+.pill-preview {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pill-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 0;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.pill-close:hover {
+  background: var(--hair);
+}
+.pill-close svg {
+  display: block;
+}
+
+/* Tooltip: dark fill, per the component table. */
+.pill-tooltip {
+  display: none;
+  position: static;
+  z-index: 5;
+  width: 100%;
+  margin-top: 8px;
+  border-radius: var(--radius-inner);
+  background: var(--dark-fill);
+  color: var(--dark-fill-text);
+  padding: 10px 12px;
+  font-size: var(--text-label);
+  box-shadow: var(--shadow-modal);
+}
+.tooltip-label {
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-micro);
+  text-transform: uppercase;
+  color: var(--dark-fill-text);
+  opacity: 0.75;
+  margin: 0 0 4px;
+}
+.pill-tooltip-target {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-mono);
+  border-radius: var(--radius-nav);
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  background: var(--dark-fill-hover);
+  overflow-wrap: anywhere;
+}
+.pill-tooltip-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pill-wrap:hover .pill-tooltip,
+.pill-wrap:focus-within .pill-tooltip {
+  display: block;
+}
+
+/* ---- Composer ---------------------------------------------------------- */
+.composer {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: var(--stroke-hair) solid var(--hair);
+  background: var(--surface-1);
+  min-width: 0;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+}
+/* Status ships as icon plus label, never colour alone (spec 2.6). */
+.presence-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: var(--stroke-hair) solid var(--warning-border);
+  border-radius: var(--radius-nav);
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+  font-size: var(--text-label);
+  line-height: var(--leading-body);
+  padding: 8px 10px;
+}
+.presence-banner[hidden] {
+  display: none;
+}
+.presence-banner > svg {
+  flex: none;
+  width: var(--icon-card);
+  height: var(--icon-card);
+}
+.composer textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 82px;
+  resize: vertical;
+  border-radius: var(--radius-nav);
+  border: var(--stroke-hair) solid var(--hair);
+  background: var(--surface-2);
+  color: var(--ink-1);
+  padding: 10px 12px;
+  font-family: var(--font-sans);
+  font-size: var(--text-control);
+  line-height: var(--leading-body);
+  letter-spacing: var(--tracking-sans);
+  box-sizing: border-box;
+}
+.composer textarea::placeholder {
+  color: var(--ink-3);
+}
+.composer textarea:disabled {
+  background: var(--disabled-fill);
+  color: var(--disabled-ink);
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+  position: relative;
+}
+.send-caption {
+  margin: 0;
+  font-size: var(--text-label);
+  line-height: var(--leading-body);
+  color: var(--ink-2);
+}
+.send-hint {
+  color: var(--ink-2);
+  font-size: var(--text-label);
+  line-height: var(--leading-body);
+}
+.send-hint[hidden] {
+  display: none;
+}
+@media (max-width: 320px) {
+  .composer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}
+
+/* ---- Scrim and modal --------------------------------------------------- */
+.scrim {
+  position: fixed;
+  inset: var(--bar-h) 0 0 0;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.scrim[hidden] {
+  display: none;
+}
+.modal {
+  width: min(380px, calc(100vw - 48px));
+  border: var(--stroke-hair) solid var(--hair);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-modal);
+  padding: 24px;
+  text-align: center;
+}
+.modal-title {
+  font-size: var(--text-control);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--ink-1);
+  margin-bottom: 8px;
+}
+.modal-copy {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-mono);
+  line-height: var(--leading-body);
+  overflow-wrap: anywhere;
+}
+.modal-action {
+  margin-top: 16px;
+}
+
+/* ---- Ended session ------------------------------------------------------
+ * Not a scrim and not a recolour: the session closes, the chrome recedes to
+ * 45% and stops accepting input, the toolbar carries a chip, and the
+ * annotation hue is removed - outlines drop to --strong - so nothing on
+ * screen still claims to be live. The artifact itself stays readable. */
+body.session-ended {
+  --gold: var(--strong);
+  --gold-wash: transparent;
+}
+body.session-ended .bar > *:not(.ended-chip),
+body.session-ended .panel {
+  opacity: var(--ended-opacity);
+}
+
+/* ---- Artifact frame ---------------------------------------------------- */
+.layout-issue-banner {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: var(--stroke-hair) solid var(--warning-border);
+  border-radius: var(--radius-inner);
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+  padding: 12px 16px;
+  font-size: var(--text-label);
+  line-height: var(--leading-body);
+}
+.layout-issue-banner[hidden] {
+  display: none;
+}
+.layout-issue-banner > svg {
+  flex: none;
+  width: var(--icon-card);
+  height: var(--icon-card);
+}
+iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--surface-2);
+  opacity: 1;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+body.layout-gate-active iframe#artifact {
+  opacity: 0;
+}
+@media (max-width: 860px) {
+  body {
+    overflow: auto;
+  }
+  .layout {
+    height: calc(100vh - var(--bar-h));
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) min(42vh, 360px);
+  }
+  .panel {
+    width: 100%;
+    border-left: 0;
+    border-top: var(--stroke-hair) solid var(--hair);
+  }
+  .chat {
+    padding-bottom: 10px;
+  }
+}
+
+/* ---- Whiteboard overlay -------------------------------------------------
+ * A full-viewport layer above the chrome hosting the sandboxed Excalidraw
+ * frame. The frame owns all whiteboard UI; this layer only provides the
+ * backdrop, a fallback close control, and an error card for when the frame
+ * cannot boot. */
+.whiteboard-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: 80;
+  display: flex;
+}
+.whiteboard-overlay[hidden] {
+  display: none;
+}
+.whiteboard-shell {
+  position: relative;
+  flex: 1;
+  margin: 16px;
+  border: var(--stroke-hair) solid var(--hair);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+}
+.whiteboard-shell iframe {
+  flex: 1;
+  border: 0;
+  width: 100%;
+  height: 100%;
+}
+.whiteboard-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--stroke-hair) solid var(--strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--ink-1);
+  cursor: pointer;
+}
+.whiteboard-close:hover {
+  background: var(--canvas);
+}
+.whiteboard-error {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px;
+  color: var(--ink-1);
+  background: var(--surface-2);
+  font-size: var(--text-control);
+  line-height: var(--leading-body);
+}
+.whiteboard-error[hidden] {
+  display: none;
+}

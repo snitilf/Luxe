@@ -1,0 +1,92 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Composer" subtitle="Input, queued pills above it, and the two send actions" viewport="700x300" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Components - Composer</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Composer</div>
+      <div
+        style="
+          background: var(--surface-1);
+          border: 1px solid var(--hair);
+          border-radius: var(--radius-card);
+          padding: 12px;
+          max-width: 52ch;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        "
+      >
+        <span
+          style="
+            align-self: flex-start;
+            border: 1px dashed var(--strong);
+            background: var(--canvas);
+            color: var(--ink-2);
+            border-radius: var(--radius-pill);
+            padding: 5px 12px;
+            font-size: var(--text-label);
+          "
+        >
+          1 queued prompt
+        </span>
+        <div
+          style="
+            background: var(--surface-2);
+            border: 1px solid var(--hair);
+            border-radius: var(--radius-nav);
+            padding: 10px 12px;
+            color: var(--ink-3);
+            font-size: var(--text-control);
+          "
+        >
+          Write a message for the agent
+        </div>
+        <div class="row" style="justify-content: flex-end; gap: 8px">
+          <button
+            style="
+              font: inherit;
+              font-size: var(--text-control);
+              background: var(--surface-2);
+              color: var(--ink-1);
+              border: 1px solid var(--strong);
+              border-radius: var(--radius-pill);
+              padding: 8px 16px;
+              cursor: pointer;
+            "
+          >
+            Send and end
+          </button>
+          <button
+            style="
+              font: inherit;
+              font-size: var(--text-control);
+              font-weight: var(--weight-medium);
+              background: var(--dark-fill);
+              color: var(--dark-fill-text);
+              border: 0;
+              border-radius: var(--radius-pill);
+              padding: 8px 16px;
+              cursor: pointer;
+            "
+          >
+            Send to agent
+          </button>
+        </div>
+        <div style="font-size: var(--text-label); color: var(--ink-2); text-align: right">
+          Send and end delivers the feedback and closes the session.
+        </div>
+      </div>
+      <p class="note">
+        Queued pills sit above the input, never inside it, so the text a person is typing is never mixed with prompts
+        they have already committed. The placeholder is the one place the third ink is allowed on text, because it is not
+        content. The destructive-adjacent action is a ghost with a plain line beneath it stating the consequence, rather
+        than a red button.
+      </p>
+    </div>
+  </body>
+</html>

@@ -12,50 +12,36 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         if: ${{ steps.release.outputs.release_created }}
         with:
           ref: ${{ steps.release.outputs.tag_name }}
 
-      - uses: pnpm/action-setup@v4
-        if: ${{ steps.release.outputs.release_created }}
-
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         if: ${{ steps.release.outputs.release_created }}
         with:
-          node-version: 24
+          node-version: 22
           registry-url: "https://registry.npmjs.org"
-          cache: pnpm
+          cache: npm
 
-      - run: pnpm install --frozen-lockfile
+      - run: npm ci
         if: ${{ steps.release.outputs.release_created }}
 
-      - run: pnpm run lint
+      - run: npm run check
         if: ${{ steps.release.outputs.release_created }}
 
-      - run: pnpm run format:check
+      # Trusted Publishing (OIDC) requires npm >= 11.5; publish auth comes from
+      # the id-token permission above, not from a token secret. Pinned to the
+      # exact npm CLI version to keep the publish path reproducible.
+      - run: npm install -g npm@11.18.0
         if: ${{ steps.release.outputs.release_created }}
 
-      - run: pnpm run typecheck
+      - run: npm publish --access public
         if: ${{ steps.release.outputs.release_created }}
-
-      - run: pnpm test
-        if: ${{ steps.release.outputs.release_created }}
-
-      - run: pnpm run build
-        if: ${{ steps.release.outputs.release_created }}
-        env:
-          LAVISH_AXI_UMAMI_HOST: https://a.kunchenguid.com
-          LAVISH_AXI_UMAMI_WEBSITE_ID: ${{ vars.LAVISH_AXI_UMAMI_WEBSITE_ID }}
-
-      - run: npm publish --access public --provenance
-        if: ${{ steps.release.outputs.release_created }}
-        env:
-          LAVISH_AXI_UMAMI_HOST: https://a.kunchenguid.com
-          LAVISH_AXI_UMAMI_WEBSITE_ID: ${{ vars.LAVISH_AXI_UMAMI_WEBSITE_ID }}

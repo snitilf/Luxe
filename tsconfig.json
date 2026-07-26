@@ -9,5 +9,5 @@
     "strict": false,
     "skipLibCheck": true
   },
-  "include": ["bin/**/*.js", "src/**/*.js", "test/**/*.js"]
+  "include": ["bin/**/*.js", "src/**/*.js", "test/**/*.js", "scripts/**/*.js"]
 }

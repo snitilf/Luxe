@@ -1,0 +1,71 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Buttons" subtitle="Cocoa primary, ghost secondary, and no coloured destructive" viewport="700x260" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Components - Buttons</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Buttons</div>
+      <div class="row">
+        <button
+          style="
+            font: inherit;
+            font-size: var(--text-control);
+            font-weight: var(--weight-medium);
+            background: var(--dark-fill);
+            color: var(--dark-fill-text);
+            border: 0;
+            border-radius: var(--radius-pill);
+            padding: 9px 18px;
+            cursor: pointer;
+          "
+        >
+          Send to agent
+        </button>
+        <button
+          style="
+            font: inherit;
+            font-size: var(--text-control);
+            background: var(--surface-2);
+            color: var(--ink-1);
+            border: 1px solid var(--strong);
+            border-radius: var(--radius-pill);
+            padding: 9px 18px;
+            cursor: pointer;
+          "
+        >
+          Send and end
+        </button>
+        <button
+          disabled
+          style="
+            font: inherit;
+            font-size: var(--text-control);
+            background: var(--disabled-fill);
+            color: var(--disabled-ink);
+            border: 0;
+            border-radius: var(--radius-pill);
+            padding: 9px 18px;
+          "
+        >
+          Send to agent
+        </button>
+      </div>
+      <p class="note">
+        One primary per surface, in the cocoa fill; hover moves to
+        <code class="mono">--dark-fill-hover</code>. Everything else is the ghost: top plane, emphasis border, body ink.
+        Destructive actions carry no colour of their own - ending a session is irreversible, but it is not a status, and
+        colour in this system is spent on charts, status and the annotation stroke. A destructive action is a ghost
+        button with a plain sentence under it saying what it does.
+      </p>
+      <p class="note">
+        Focus is the info-slate ring at <code class="mono">--focus-ring-width</code> with
+        <code class="mono">--focus-ring-offset</code>, never the gold, so a focused button never reads as an annotated
+        one.
+      </p>
+    </div>
+  </body>
+</html>

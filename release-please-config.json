@@ -1,11 +1,13 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "ccba1dbfbd63e2db1e44b7ce641f3ba068c48d34",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "packages": {
     ".": {
       "release-type": "node",
-      "package-name": "luxe"
+      "package-name": "editeur-luxe",
+      "release-as": "0.2.0"
     }
   }
 }

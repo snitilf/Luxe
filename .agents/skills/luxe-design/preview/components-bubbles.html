@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Components · Chat bubbles" subtitle="Surface and alignment tell the speakers apart, not two hues" viewport="700x280" -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Components - Chat bubbles</title>
+    <link rel="stylesheet" href="_base.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Conversation</div>
+      <div style="display: flex; flex-direction: column; gap: 10px; max-width: 46ch">
+        <div
+          style="
+            align-self: flex-start;
+            background: var(--surface-2);
+            border: 1px solid var(--hair);
+            color: var(--ink-1);
+            border-radius: var(--radius-bubble) var(--radius-bubble) var(--radius-bubble) var(--radius-bubble-speaker);
+            padding: 10px 14px;
+            font-size: var(--text-control);
+          "
+        >
+          I rebuilt the summary as a table and printed the values on the bars.
+        </div>
+        <div
+          style="
+            align-self: flex-end;
+            background: var(--dark-fill);
+            color: var(--dark-fill-text);
+            border-radius: var(--radius-bubble) var(--radius-bubble) var(--radius-bubble-speaker) var(--radius-bubble);
+            padding: 10px 14px;
+            font-size: var(--text-control);
+          "
+        >
+          The third row still wraps. Tighten it.
+        </div>
+      </div>
+      <p class="note">
+        The agent speaks from the left on the top plane with a hairline border; the user speaks from the right on the
+        cocoa fill. That is the whole distinction. Two hues for two speakers is the colour budget spent on something
+        alignment already says, so the sage-and-amber pairing that upstream used is gone. Each bubble tightens the bottom
+        corner on its own side, which points it at its author without a tail.
+      </p>
+    </div>
+  </body>
+</html>

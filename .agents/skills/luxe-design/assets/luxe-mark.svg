@@ -1,0 +1,12 @@
+<!-- The Luxe mark: a cocoa tile with an ivory L.
+     Same geometry and same two colours as the browser-tab favicon in
+     src/luxe-brand.js, which test/design-skill.test.js pins. The colours are
+     literals because an SVG cannot read a CSS custom property; both are values
+     that exist in the token file, as the dark fill and the canvas.
+     Note for editors: an XML comment may not contain a double hyphen, so token
+     names appear here without their leading dashes. A comment that breaks that
+     rule makes the whole file fail to parse and render as a broken image. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Luxe">
+  <rect width="100" height="100" rx="22" fill="#463527" />
+  <path d="M38 26v44h26" fill="none" stroke="#f7f4ee" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

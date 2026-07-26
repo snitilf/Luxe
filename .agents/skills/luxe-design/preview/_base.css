@@ -1,0 +1,86 @@
+/* Preview-card shell. Every card in /preview links this and nothing else.
+ *
+ * It sets the page to the system's own defaults - ivory canvas, ink-1 type,
+ * Inter at body size - so a card only has to style the thing it is about.
+ * Values come from tokens.css; there are no literals here by design, and the
+ * adherence lint fails if one appears.
+ *
+ * The two families are served by the product, not by this directory, so a card
+ * opened straight off disk renders in the fallback stack rather than in the
+ * bundled faces. Sizes, weights, tracking and every colour are exact either
+ * way; only the letterforms differ. */
+@import url("../tokens.css");
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-body);
+  letter-spacing: var(--tracking-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100vh;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+}
+
+/* The one uppercase form in the system: micro-labels, and only micro-labels.
+ * Uppercase closes up, so it takes the positive tracking token. */
+.label {
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-micro);
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-mono);
+  color: var(--ink-2);
+}
+
+/* Notes sit under a specimen and explain the rule it demonstrates. */
+.note {
+  font-size: var(--text-label);
+  color: var(--ink-2);
+  max-width: 60ch;
+}
+
+.swatch {
+  border-radius: var(--radius-inner);
+  border: 1px solid var(--hair);
+  padding: 12px;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-sizing: border-box;
+}
