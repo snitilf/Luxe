@@ -81,6 +81,16 @@ let layoutGateCycle = 0;
 let layoutGateTimer;
 const snapshotRequests = [];
 let endAfterSubmit = false;
+// Whether an end initiated FROM THIS TAB is in flight, and therefore whether the session
+// ending should be answered with a farewell.
+//
+// This exists because of an ordering that cannot be worked around at the call site: the
+// server emits its `ended` SSE frame BEFORE it answers the POST that caused it
+// (src/server.js, the prompts handler emits and then responds). So the stream listener
+// always reaches markSessionEnded first, and the farewell-bearing call that follows the
+// fetch response hits `if (ended) return` and does nothing. Recording the intent before
+// the request goes out is what makes the two paths agree.
+let farewellPending = false;
 let workingBubble = null;
 let submitQueuedPromise = null;
 let submitQueuedAgain = false;
@@ -654,6 +664,7 @@ function requestSnapshot(prompts, endAfter) {
 function sendQueued(endAfter) {
   if (ended || agentPresence === "working") return;
   closeMenus();
+  if (endAfter) farewellPending = true;
 
   const frozen = consumeSendFreeze(endAfter);
   const text = frozen.composerText;
@@ -951,6 +962,7 @@ async function submitLayoutWarnings(layoutWarnings) {
 
 async function endSession({ farewell: showGoodbye = false } = {}) {
   if (ended) return;
+  if (showGoodbye) farewellPending = true;
   const response = await fetch("/api/" + key + "/end", { method: "POST" });
   if (!response.ok) throw new Error("failed to end session");
   markSessionEnded({ farewell: showGoodbye });
@@ -1009,7 +1021,7 @@ function attemptTabClose() {
   }
 }
 
-function markSessionEnded({ farewell: showGoodbye = false } = {}) {
+function markSessionEnded({ farewell: showGoodbye = farewellPending } = {}) {
   if (ended) return;
   ended = true;
   closeMenus();

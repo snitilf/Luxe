@@ -47,7 +47,7 @@
    * argument is that presentation carries meaning. Newsreader at medium is
    * the exception that makes the point. */
   --font-brand: "Newsreader", Georgia, "Times New Roman", serif;
-  --text-brand: 18px;
+  --text-brand: 22px;
   --tracking-brand: -0.02em;
   --leading-brand: 1;
 
@@ -129,34 +129,41 @@
   --info-border: #c6d3e3;
 
   /* ---- Charts - the Café palette (spec 2.7) ----------------------------- *
-   * Eight slots, FIXED ORDER, never cycled and never reshuffled: the order is
-   * the colour-blind safety mechanism. Scatter/bubble/choropleth cap at four.
-   * Two slots sit below 3:1 on the canvas, so every chart must carry direct
-   * labels, printed values, or a table view - a legend alone is not enough.
+   * Eight slots, FIXED ORDER, never cycled and never reshuffled. Two slots sit
+   * below 3:1 on the canvas, so every chart must carry direct labels, printed
+   * values, or a table view - a legend alone is not enough.
    *
-   * Warm and muted so the series sit with the cocoa and the paper instead of
-   * reading as primaries dropped onto them. Warmth is hue angle, not low
-   * chroma: the first attempt at this desaturated instead of rotating, and
-   * five of eight slots fell under the chroma floor and read as grey.
+   * Warm and muted so the series sit with the cocoa and the paper rather than
+   * reading as primaries dropped onto them. Warmth is hue angle, not low chroma:
+   * an early attempt desaturated instead of rotating, and five of eight slots
+   * fell under the chroma floor and read as grey.
    *
-   * Measured, not chosen. Every slot clears the OKLCH lightness band and the
-   * chroma floor; the worst adjacent pair holds ΔE 14.7 under simulated
-   * deuteranopia against a target of 8 (Bisque managed 8.1), and 15.8 under
-   * normal vision against a floor of 15.
+   * THE METRIC THAT MATTERS IS PREFIX DEPTH. Because the order is fixed, a chart
+   * with N series uses exactly slots 1..N - so what counts is how far down the
+   * list you can go before two slots collide. Validating ADJACENT pairs only, as
+   * the first version of this palette did, never compares slot 2 with slot 4, and
+   * shipped a set where the terracotta and the caramel were indistinguishable in
+   * any four-series line chart (ΔE 6.3 normal, 2.9 deuteranopia). A reviewer
+   * caught it immediately.
    *
-   * Two slots look less dusty than the rest and cannot be fixed: pulling the
-   * eucalyptus greyer drops it under the chroma floor, and deepening the plum
-   * toward mauve collapses it into its dusty-rose NEIGHBOUR - slots 6 and 7 are
-   * adjacent, so the fixed order is what holds them apart. Both were tried and
-   * both failed the gates. */
-  --chart-1: #4c77bc; /* denim */
-  --chart-2: #a55639; /* terracotta */
-  --chart-3: #56b28f; /* eucalyptus */
-  --chart-4: #95630c; /* caramel */
-  --chart-5: #8aa960; /* sage */
-  --chart-6: #a64d5f; /* dusty rose */
-  --chart-7: #a87dbe; /* plum */
-  --chart-8: #a45a29; /* cinnamon */
+   * Measured, all pairs, Machado severity 1.0:
+   *
+   *              normal-clean through   CVD-clean through   >=3:1 on canvas
+   *   Bisque            slot 4                slot 4             5 of 8
+   *   first Café        slot 3                slot 3             6 of 8
+   *   this set          slot 7                slot 5             6 of 8
+   *
+   * Eight mutually distinguishable hues do not fit in a narrow warm arc at low
+   * chroma; nothing reaches slot 8. Past slot 5 for colour-blind readers, the
+   * labelling rule is what carries the chart, and it is not optional. */
+  --chart-1: #5b85cc; /* denim */
+  --chart-2: #874420; /* chocolate */
+  --chart-3: #4bad8e; /* eucalyptus */
+  --chart-4: #cf8b3b; /* amber */
+  --chart-5: #677d12; /* olive */
+  --chart-6: #be5b7f; /* rose */
+  --chart-7: #73488e; /* plum */
+  --chart-8: #9f4f36; /* sienna */
 
   /* Mark specs: 2px strokes, round caps and joins, 4px end dots ringed 2px in
    * --canvas, gridlines in --hair, axis text --ink-2 at 14px, 2px surface gap

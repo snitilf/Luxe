@@ -127,6 +127,24 @@ export const LUXE_DAISYUI_THEME_CSS = `<style>
     letter-spacing: -0.15px;
   }
 
+  /* The heading face. Served from Luxe's own /fonts route, which is same-origin for an
+     artifact under review and is inlined into a standalone export by resolveExportAssetPath.
+     An artifact opened straight off disk with no Luxe around simply falls back to Georgia -
+     font-display: swap means that costs nothing and shows nothing broken. */
+  @font-face {
+    font-family: "Newsreader";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/fonts/newsreader-latin-500-normal.woff2") format("woff2");
+  }
+
+  h1, h2, h3 {
+    font-family: "Newsreader", Georgia, "Times New Roman", serif;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+
   code, pre, kbd, samp {
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     letter-spacing: 0;
@@ -157,10 +175,11 @@ export const DESIGN_SYSTEM_HINT =
 // slots sit below 3:1 on the Luxe canvas, so an unlabelled series is genuinely hard to read.
 export const LUXE_CHART_GUIDANCE = Object.freeze({
   labelling_rule:
-    "Every chart MUST carry direct labels, printed values, or an accompanying table view. A legend alone is not sufficient. Two of the eight palette slots (the eucalyptus and the sage) sit below the 3:1 contrast floor on the Luxe canvas, so a legend-only chart makes those series unreadable rather than merely inelegant.",
-  palette: ["#4c77bc", "#a55639", "#56b28f", "#95630c", "#8aa960", "#a64d5f", "#a87dbe", "#a45a29"],
+    "Every chart MUST carry direct labels, printed values, or an accompanying table view. A legend alone is not sufficient. Two of the eight palette slots (the eucalyptus and the amber) sit below the 3:1 contrast floor on the Luxe canvas, so a legend-only chart makes those series unreadable rather than merely inelegant.",
+  palette: ["#5b85cc", "#874420", "#4bad8e", "#cf8b3b", "#677d12", "#be5b7f", "#73488e", "#9f4f36"],
   palette_rules: [
-    "Fixed order, never cycled and never reshuffled: the order is the colour-blind safety mechanism, not decoration.",
+    "Fixed order, never cycled and never reshuffled: the order is the colour-blind safety mechanism, not decoration. It also means an N-series chart uses exactly slots 1..N, so take them from the top - never pick slot 6 for a two-series chart.",
+    "The set stays mutually distinguishable through slot 7 for full-colour vision and slot 5 for colour-blind readers. Past that, the labelling rule below is what carries the chart, and it stops being optional.",
     "Lines, stacked bars, and grouped bars may use all eight slots. Scatter, bubble, choropleth, and small multiples cap at four.",
     "A series that itself means good or bad wears the status colours, not a categorical slot.",
     "The palette is measured against the paper canvas, so draw charts on the canvas, on a white card, or on their own light plane. Do not draw one directly onto a cocoa fill: the slots are mid-tones chosen to hold contrast against a light surface, and no eight-hue palette can clear 3:1 against both the paper and the cocoa at once. A chart inside a cocoa panel gets its own paper-coloured plate.",
@@ -207,6 +226,7 @@ export function createDesignOutput({ artifactBaselineSnippet = "" } = {}) {
     },
     theme_usage: [
       "Luxe ships exactly one theme and it is light. Paste `luxe_theme_snippet` right after the CDN snippet; it maps DaisyUI's semantic variables onto the Luxe tokens, so every DaisyUI component comes out in the system with no per-element colour work.",
+      "Headings are set in Newsreader, a serif, at medium. Body and UI stay in the sans. This is the one place the system uses a second voice, and it is what stops an artifact reading like a settings page - so do not override the heading face, and do not reach for the serif on body copy, labels or controls.",
       "Do not set `data-theme` to one of DaisyUI's stock themes and do not give a section a theme of its own. The stock themes carry their own palettes and would drop a foreign object into the page.",
       "Prefer semantic colors such as `bg-base-100`, `bg-base-200`, `text-base-content`, `bg-primary`, `text-primary-content`, `alert-warning`, and `btn-primary` so the theme block does the work.",
       "Spend colour on data, on status, and on nothing else. Surfaces and type are warm neutrals; `primary` is the cocoa fill; there is no second brand hue to reach for.",

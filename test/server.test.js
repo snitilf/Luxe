@@ -3105,14 +3105,18 @@ test("the toolbar carries the wordmark alone", async () => {
   assert.match(css, /\.brand-mark\{[^}]*color:var\(--dark-fill\)/);
 });
 
-test("clicking the page backdrop dismisses an open annotation card instead of annotating the body", () => {
+test("clicking away from an open annotation card dismisses it, wherever the click lands", () => {
   const js = createSdkJs("abc");
 
-  // <html> and <body> are not annotation targets: a click that lands on them hit
-  // empty space, which is what a reviewer means by clicking away from the card.
+  // Dismissal used to be gated on isPageBackdrop, which only accepts <html> and <body>.
+  // In an artifact with a centred column - most of them - the empty margins and the tail
+  // below the content hit-test to <main>, so clicking obviously blank space opened a
+  // SECOND card titled "Annotate <main>" instead of closing the first.
+  assert.match(js, /if \(cardIsOpen\(\)\) \{\s*dismissCard\(\);/);
+  // The backdrop is still not an annotation target when no card is open.
   assert.match(js, /function isPageBackdrop/);
   assert.match(js, /el === document\.body \|\| el === document\.documentElement/);
-  assert.match(js, /if \(isPageBackdrop\(event\.target\)\) \{\s*dismissCard\(\);/);
+  assert.match(js, /if \(isPageBackdrop\(event\.target\)\) return;/);
 });
 
 test("dismissing never discards a draft the reviewer has typed", () => {

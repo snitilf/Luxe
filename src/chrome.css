@@ -48,6 +48,9 @@
    * panel - heading, chat, pills, composer - measures from these, so the column has
    * one spacing system instead of four near-identical ones. */
   --panel-inset: 16px;
+  /* A 360px column is a much narrower measure than body copy, so it wants less leading
+   * than --leading-body (1.55). */
+  --leading-panel: 1.45;
   --panel-gap: 16px;
   --panel-gap-tight: 8px;
 }
@@ -448,7 +451,12 @@ body {
 .frame {
   min-width: 0;
   min-height: 0;
-  background: var(--surface-2);
+  /* The canvas, not the card white. The artifact iframe is cross-origin-isolated and
+   * composites separately, so when macOS rubber-bands past the top or bottom the gap it
+   * opens is painted with whatever sits BEHIND the frame - which was the card white, and
+   * read as a white flash against the ivory chrome on every over-scroll. It is also what shows
+   * during the layout gate's opacity fade, so this improves that too. */
+  background: var(--canvas);
   position: relative;
   overflow: hidden;
 }
@@ -503,9 +511,11 @@ body {
 }
 .bubble {
   max-width: 88%;
-  padding: 10px 14px;
-  font-size: var(--text-control);
-  line-height: var(--leading-body);
+  /* 8px vertical rather than 10: with the speaker labels gone, the bubble no longer
+   * needs to separate two stacked text blocks inside itself. */
+  padding: 8px 14px;
+  font-size: var(--text-body);
+  line-height: var(--leading-panel);
   border-radius: var(--radius-bubble);
   border: var(--stroke-hair) solid transparent;
 }
@@ -537,19 +547,19 @@ body {
   animation: spin 0.8s linear infinite;
   flex: 0 0 auto;
 }
+/* The speaker label costs ~26px on every bubble and repeats what the layout already
+ * says: user bubbles are cocoa and right-aligned, agent bubbles are white and left.
+ * Kept in the DOM for screen readers and removed from view. */
 .bubble small {
-  display: block;
-  margin-bottom: 4px;
-  font-size: var(--text-label);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-micro);
-  text-transform: uppercase;
-  color: var(--ink-2);
-}
-.bubble.user small {
-  text-align: right;
-  color: var(--dark-fill-text);
-  opacity: 0.75;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 @keyframes spin {
   to {
@@ -772,7 +782,10 @@ body {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 82px;
+  /* Two lines, not four. The old 82px floor was reserved whether or not anything had
+   * been typed, and the panel is the scarcest space in the product. */
+  min-height: 52px;
+  max-height: 40vh;
   resize: vertical;
   border-radius: var(--radius-nav);
   border: var(--stroke-hair) solid var(--hair);
@@ -907,7 +920,7 @@ iframe {
   width: 100%;
   height: 100%;
   border: 0;
-  background: var(--surface-2);
+  background: var(--canvas);
   opacity: 1;
   transition: opacity var(--dur-fast) var(--ease);
 }

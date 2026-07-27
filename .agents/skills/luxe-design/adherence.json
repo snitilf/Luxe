@@ -12,7 +12,7 @@
     "--text-body": "16px",
     "--text-control": "15px",
     "--text-label": "14px",
-    "--text-brand": "18px"
+    "--text-brand": "22px"
   },
   "fontWeights": {
     "--weight-regular": "400",
@@ -93,7 +93,7 @@
     },
     {
       "name": "--text-brand",
-      "value": "18px",
+      "value": "22px",
       "kind": "length",
       "group": "The brand scope"
     },
@@ -399,49 +399,49 @@
     },
     {
       "name": "--chart-1",
-      "value": "#4c77bc",
+      "value": "#5b85cc",
       "kind": "color",
       "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-2",
-      "value": "#a55639",
+      "value": "#874420",
       "kind": "color",
       "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-3",
-      "value": "#56b28f",
+      "value": "#4bad8e",
       "kind": "color",
       "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-4",
-      "value": "#95630c",
+      "value": "#cf8b3b",
       "kind": "color",
       "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-5",
-      "value": "#8aa960",
+      "value": "#677d12",
       "kind": "color",
       "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-6",
-      "value": "#a64d5f",
+      "value": "#be5b7f",
       "kind": "color",
       "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-7",
-      "value": "#a87dbe",
+      "value": "#73488e",
       "kind": "color",
       "group": "Charts - the Café palette (spec 2.7)"
     },
     {
       "name": "--chart-8",
-      "value": "#a45a29",
+      "value": "#9f4f36",
       "kind": "color",
       "group": "Charts - the Café palette (spec 2.7)"
     },

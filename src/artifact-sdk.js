@@ -681,10 +681,23 @@ export function createArtifactSdk(
   function setAffordanceState(entry) {
     const busy = openWhiteboardIndex === entry.index;
     entry.button.disabled = busy || annotationMode || sessionEnded;
-    entry.button.textContent = busy ? "Open in whiteboard" : "Edit as whiteboard";
+    entry.button.textContent = busy ? "Editing in the whiteboard" : "Edit as whiteboard";
     entry.button.setAttribute("aria-disabled", String(entry.button.disabled));
     entry.button.title = affordanceReason(entry);
+    // A disabled control has to LOOK disabled. Without this the button kept full opacity
+    // and cursor:pointer, so a reviewer with annotate mode on clicked a control that
+    // looked entirely live and nothing happened - which reads as a broken feature rather
+    // than an unavailable one. The zoom buttons beside it already dim; this is the same
+    // treatment, and the reason is on the tooltip either way.
+    setControlEnabled(entry.button, !entry.button.disabled);
     entry.updateZoom?.();
+  }
+
+  // One place decides what disabled looks like, so no control in this toolbar can be
+  // disabled-but-inviting again.
+  function setControlEnabled(button, enabled) {
+    button.style.opacity = enabled ? "1" : "0.45";
+    button.style.cursor = enabled ? "pointer" : "default";
   }
 
   function refreshAffordances() {
@@ -806,12 +819,11 @@ export function createArtifactSdk(
         // The ends of the clamp disable rather than silently doing nothing.
         zoomIn.disabled = viewport.atMaxZoom();
         zoomOut.disabled = viewport.atMinZoom();
-        for (const control of [zoomIn, zoomOut]) {
-          control.setAttribute("aria-disabled", String(control.disabled));
-          control.style.opacity = control.disabled ? "0.45" : "1";
-        }
         reset.disabled = percent === 100;
-        reset.setAttribute("aria-disabled", String(reset.disabled));
+        for (const control of [zoomIn, zoomOut, reset]) {
+          control.setAttribute("aria-disabled", String(control.disabled));
+          setControlEnabled(control, !control.disabled);
+        }
         window.clearTimeout(announceTimer);
         announceTimer = window.setTimeout(() => {
           status.textContent = `Diagram zoom ${percent} percent`;
@@ -2074,13 +2086,26 @@ export function createArtifactSdk(
         ignoreNextClick = false;
         return;
       }
-      // The page backdrop is not an annotation target: a click that lands on <html>
-      // or <body> itself hit empty space, not content. Treat it as "dismiss", which
-      // is what a reviewer means by clicking away from an open card.
-      if (isPageBackdrop(event.target)) {
+      // Clicking away from an OPEN card dismisses it. Full stop - it does not matter
+      // what the click landed on.
+      //
+      // This used to be gated on `isPageBackdrop`, which only accepts <html> and <body>
+      // themselves. In any artifact with a centred column - which is most of them - the
+      // visually empty margins, the gaps between sections and the whole tail below the
+      // content all hit-test to <main>, not <body>. So clicking obviously-empty space
+      // opened a second card titled "Annotate <main>" instead of closing the first, and
+      // worse, `showAnnotationCard` closes unconditionally and therefore threw away an
+      // unsent draft that `dismissCard`'s guard exists to protect.
+      //
+      // `dismissCard` keeps that draft guard, so a card holding typed text still refuses
+      // to go, and the click is simply spent.
+      if (cardIsOpen()) {
         dismissCard();
         return;
       }
+      // No card open: the backdrop is still not an annotation target, since a click on
+      // <html> or <body> hit empty space rather than content.
+      if (isPageBackdrop(event.target)) return;
       showAnnotationCard(event.target);
     },
     true,

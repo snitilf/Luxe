@@ -54,14 +54,14 @@ export const LUXE_MERMAID_THEME_VARIABLES = Object.freeze({
   // reshuffled and never cycled. Mermaid asks for twelve; a chart needing more
   // than eight series is past what this palette can carry, and the spec's
   // answer to that is to redesign the chart, not to invent slot nine.
-  pie1: "#4c77bc",
-  pie2: "#a55639",
-  pie3: "#56b28f",
-  pie4: "#95630c",
-  pie5: "#8aa960",
-  pie6: "#a64d5f",
-  pie7: "#a87dbe",
-  pie8: "#a45a29",
+  pie1: "#5b85cc",
+  pie2: "#874420",
+  pie3: "#4bad8e",
+  pie4: "#cf8b3b",
+  pie5: "#677d12",
+  pie6: "#be5b7f",
+  pie7: "#73488e",
+  pie8: "#9f4f36",
   // Mermaid draws slices at 0.7 opacity and separates them with black strokes.
   // Full opacity is what makes a slice the token value rather than a lightened
   // approximation of it, and the separator is the canvas, matching the 2px
