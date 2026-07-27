@@ -34,6 +34,10 @@ const BASELINE_TOKENS = [
   ["--luxe-bl-on-dark-code-bg", "on-dark-code-bg"],
   ["--luxe-bl-on-dark-mark-bg", "on-dark-mark-bg"],
   ["--luxe-bl-on-dark-ink", "dark-fill-text"],
+  // Fallbacks for a component that brings its own light key onto a dark surface; see the
+  // `.kbd` note in artifact-baseline.css.
+  ["--luxe-bl-key-bg", "surface-1"],
+  ["--luxe-bl-key-ink", "ink-1"],
 ];
 
 function readToken(tokensCss, name) {

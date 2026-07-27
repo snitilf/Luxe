@@ -159,9 +159,20 @@ export const LUXE_DAISYUI_THEME_CSS = `<style>
      and replaces the text with an <svg>, so a bare pre selector paints every diagram on the
      page as a code block - a border and an inset fill around a picture. That was already true
      when this plane sat two units off the canvas; it was simply invisible. Making the plane
-     visible made the bug visible with it. */
+     visible made the bug visible with it.
+
+     The plane brings its own ink as well as its own fill, and it has to: DaisyUI's
+     .mockup-code is built for an inverted terminal and keeps its foreground at
+     --color-neutral-content, which this theme maps to the near-white paper tone. Painting
+     the plane light without saying anything about the text left .mockup-code at roughly
+     1.06:1 - light ink on a light plane, effectively invisible - from the day this rule was
+     written, back when the fill was the older, lighter --code-bg. --syn-plain is the code
+     plane's own ink: it is what the Shiki theme paints unhighlighted code with
+     (editor.foreground, and the variable/source/text scopes), so highlighted and
+     unhighlighted code on this surface are the same colour rather than two near-blacks. */
   pre:not(.mermaid), .mockup-code {
     background: #efe9db;
+    color: #2c2921;
     border: 1px solid #cbc4b2;
     border-radius: 12px;
     padding: 14px 16px;
@@ -175,6 +186,22 @@ export const LUXE_DAISYUI_THEME_CSS = `<style>
     border: 0;
     padding: 0;
     font-size: inherit;
+  }
+
+  /* Nor is a <pre> inside a .mockup-code. DaisyUI builds the terminal mockup as a container
+     with one <pre> per line, and every one of those lines is matched by the pre:not(.mermaid)
+     half of the rule above - so each line came out as its own bordered, rounded, padded plate
+     instead of the block reading as one terminal. The outer .mockup-code stays the plane; the
+     lines inside it are just lines. Equal specificity to pre:not(.mermaid) (one class, one
+     element on both sides) and it comes later, which is what settles it - an author's own
+     rule still wins on top of both. */
+  .mockup-code pre {
+    background: none;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    font-size: inherit;
+    line-height: inherit;
   }
 </style>`;
 

@@ -86,6 +86,35 @@
     color: var(--luxe-bl-on-dark-ink);
   }
 
+  /* DaisyUI's `.kbd` is the exception, and it is an instructive one: it is not a bare
+   * element taking the surface's colour, it is a component that already paints itself a
+   * light key. The rule above matches it, loses its `background` to `.kbd`'s own
+   * class-specificity `background-color` - correctly, this file is built to lose - and
+   * leaves the light on-dark ink standing on that light key. Measured at 1.04:1.
+   *
+   * The repair is NOT to outweigh `.kbd`. Raising specificity here would buy the fix by
+   * breaking the contract at the top of this file, and it is unnecessary: the key's
+   * background is not Luxe's to take from a component that brought one. What went wrong is
+   * that half a pair was applied - a foreground chosen for a dark plane, over a background
+   * somebody else chose. So state the pair together, still at zero specificity.
+   *
+   * Where DaisyUI is present its own `.kbd` background wins, and this rule names the same
+   * value, so nothing moves; the foreground is what this rule is here to set, and it beats
+   * only inheritance, which needs no specificity at all. (DaisyUI added a `color` to `.kbd`
+   * after 5.5.x; where that is loaded it wins, and it sets `--color-base-content` - the same
+   * value named below. Correct either way.) Where DaisyUI is absent - an artifact that wrote
+   * `class="kbd"` against its own CSS, or one Luxe tagged through `data-luxe-on-dark` - both
+   * declarations land from here and stay consistent with each other.
+   *
+   * The DaisyUI variables are READ, never defined: `--color-base-200`/`--color-base-content`
+   * are a contrasting pair by construction in any DaisyUI theme, which keeps this correct on
+   * a dark theme too, where a hardcoded light key would not be. The `--luxe-bl-*` fallbacks
+   * carry the no-DaisyUI case. */
+  :where(.bg-primary, .bg-neutral, .bg-secondary, .bg-accent, [data-luxe-on-dark]) :where(kbd.kbd) {
+    background: var(--color-base-200, var(--luxe-bl-key-bg));
+    color: var(--color-base-content, var(--luxe-bl-key-ink));
+  }
+
   /* ---- Clipped controls in dense rows -----------------------------------
    * DaisyUI's `btn` carries a fixed height that a compact table row is shorter
    * than, so the label is cut off vertically. Luxe's own layout audit caught this

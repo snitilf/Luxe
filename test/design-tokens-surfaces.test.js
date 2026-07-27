@@ -136,6 +136,12 @@ test("every colour the DaisyUI theme block restates is pinned to its token", asy
     await token("radius-inner"),
     `the DaisyUI code plane's radius must be --radius-inner (${await token("radius-inner")})`,
   );
+  assert.equal(
+    declaration(plane, "color", "code-plane"),
+    await token("syn-plain"),
+    `the DaisyUI code plane's ink must be --syn-plain (${await token("syn-plain")}), the same ink the ` +
+      `Shiki theme paints unhighlighted code with`,
+  );
 
   // And the net under all of it: no hex in the block that is not a token value
   // this test pins. A value swapped between two pinned properties is caught by
@@ -147,6 +153,7 @@ test("every colour the DaisyUI theme block restates is pinned to its token", asy
     "ink-1",
     "code-bg",
     "strong",
+    "syn-plain",
   ]) {
     pinned.add((await token(name)).toLowerCase());
   }
@@ -157,6 +164,74 @@ test("every colour the DaisyUI theme block restates is pinned to its token", asy
         `Every restated value must be asserted equal to the token it copies, or it is free to drift.`,
     );
   }
+});
+
+// ---- The terminal mockup ----------------------------------------------------
+
+// Two halves of one bug, both caused by the code-plane rule taking `.mockup-code` on
+// without finishing the job.
+//
+// Half one: the rule paints the plane light and says nothing about the text, so DaisyUI's
+// `.mockup-code` kept its foreground at `--color-neutral-content` - which this theme maps
+// to the near-white paper tone - and the block rendered at roughly 1.06:1. Light ink on a
+// light plane, effectively invisible, and true from the day the rule was written: the older
+// `--code-bg` it used to name was light too, so recessing the plane neither caused this nor
+// fixed it.
+//
+// Half two: `.mockup-code` is a container with one `<pre>` per terminal line, and every one
+// of those lines is matched by the `pre:not(.mermaid)` half of the same selector. Each line
+// came out as its own bordered, rounded, padded plate instead of the block reading as one
+// terminal.
+test("the terminal mockup is one legible plane, not a stack of plates", async () => {
+  const plane = ruleBody(
+    (rule) => /\bpre\b/.test(rule.selector) && /background\s*:/.test(rule.body),
+    "code-plane rule",
+  );
+  const ink = await token("syn-plain");
+  const codeBg = await token("code-bg");
+
+  // Half one: the plane names its own ink, and that ink is readable on it.
+  assert.equal(declaration(plane, "color", "code-plane"), ink);
+  const ratio = wcagContrast(ink, codeBg);
+  assert.ok(
+    ratio >= TEXT_FLOOR,
+    `the code plane's ink (${ink}) is ${ratio.toFixed(2)}:1 on --code-bg (${codeBg}), floor is ${TEXT_FLOOR}:1`,
+  );
+
+  // Half two: the per-line <pre> inside a .mockup-code is not a code plane of its own.
+  const rules = themeRules();
+  const planeIndex = rules.findIndex((rule) => /\bpre\b/.test(rule.selector) && /background\s*:/.test(rule.body));
+  const resetIndex = rules.findIndex((rule) => /^\.mockup-code\s+(>\s*)?pre$/.test(rule.selector.trim()));
+  assert.ok(
+    resetIndex >= 0,
+    "no rule neutralises the <pre> elements inside a .mockup-code, so every terminal LINE is painted " +
+      "as its own code plane - a stack of bordered plates instead of one block",
+  );
+  assert.ok(
+    resetIndex > planeIndex,
+    "the .mockup-code inner-line reset must come after the code-plane rule: the two selectors weigh the " +
+      "same (one class, one element each), so source order is what decides which one wins",
+  );
+
+  const reset = rules[resetIndex].body;
+  // Everything the plane rule imposes on a line has to be taken back off, or the line keeps
+  // whichever piece was forgotten - a stray border, a stray radius, a doubled inset.
+  const neutralised = /** @type {[string, RegExp][]} */ ([
+    ["background", /^(none|transparent|0 0)$/],
+    ["border", /^0$/],
+    ["border-radius", /^0$/],
+    ["padding", /^0$/],
+  ]);
+  for (const [property, neutral] of neutralised) {
+    assert.match(
+      declaration(reset, property, ".mockup-code inner line"),
+      neutral,
+      `the .mockup-code inner-line reset leaves \`${property}\` from the code-plane rule in place, so each ` +
+        `terminal line still draws part of a plate`,
+    );
+  }
+  // And it must not reintroduce an ink of its own: the line inherits the plane's.
+  assert.doesNotMatch(reset, /(^|[;\s])color\s*:/, "the inner-line reset should inherit the plane's ink, not set one");
 });
 
 // ---- The 4.5:1 floor, on every surface the inks render on -------------------
