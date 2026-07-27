@@ -162,7 +162,7 @@ The component contract, in token terms:
 
 | Component | Specification |
 | --- | --- |
-| Toolbar | Middle plane, hairline underneath, wordmark at control size and medium weight, hairline divider, file name in mono at the second ink |
+| Toolbar | Middle plane, hairline underneath, the wordmark alone at the brand size in Newsreader medium and the cocoa. No file name: the path lives in the overflow menu |
 | Primary button | Cocoa fill with its paired text; hover moves to the hover fill; disabled uses the disabled fill and ink |
 | Ghost button | Top plane, emphasis border, first ink |
 | Annotate toggle | On: cocoa track, ivory knob. Off: the off-track token, ivory knob |

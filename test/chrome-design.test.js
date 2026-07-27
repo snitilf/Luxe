@@ -12,7 +12,7 @@ process.env.LUXE_HOST = "127.0.0.1";
 process.env.LUXE_LINK_HOST = "127.0.0.1";
 
 import { inlineLuxeTokens, LUXE_TOKENS_MARKER } from "../src/chrome-css.js";
-import { MARK_FIELD, MARK_INK } from "../src/luxe-brand.js";
+import { MARK_PAPER, MARK_COCOA } from "../src/luxe-brand.js";
 import { createSdkJs, readLuxeTokensCss, serve } from "../src/server.js";
 
 const HEX = /#[0-9a-fA-F]{3,8}\b/g;
@@ -34,18 +34,24 @@ test("hex literals live only in the token file", async () => {
 // The one exception, declared and pinned: a favicon is an SVG data URI in a
 // <link>, so it can neither read a custom property nor be served through CSS.
 test("the favicon mark mirrors the tokens exactly", async () => {
-  assert.equal(MARK_FIELD, await tokenValue("dark-fill"));
-  assert.equal(MARK_INK, await tokenValue("canvas"));
-  assert.equal(MARK_INK, await tokenValue("dark-fill-text"));
+  // The mark inverted: an ivory field with a cocoa keyline and letterform, matching the
+  // Newsreader wordmark beside it in the toolbar.
+  assert.equal(MARK_PAPER, await tokenValue("canvas"));
+  assert.equal(MARK_PAPER, await tokenValue("dark-fill-text"));
+  assert.equal(MARK_COCOA, await tokenValue("dark-fill"));
 });
 
-test("chrome CSS uses only the four allowed font sizes and two weights", async () => {
+test("chrome CSS uses only the allowed font sizes and two weights", async () => {
   const css = await read("src/chrome.css");
+  // Four content sizes, plus the brand size - which is legal on the wordmark and nowhere
+  // else. The scope is a rule the token file states and review enforces; a regex over
+  // declarations can only check that the value comes from the scale at all.
   const allowedSizeTokens = new Set([
     "var(--text-heading)",
     "var(--text-body)",
     "var(--text-control)",
     "var(--text-label)",
+    "var(--text-brand)",
     "inherit",
   ]);
   for (const [, value] of css.matchAll(/font-size:\s*([^;]+);/g)) {
@@ -142,7 +148,8 @@ test("chrome CSS declares the four bundled faces and nothing else", async () => 
     ([, family, weight]) => `${family} ${weight}`,
   );
 
-  assert.deepEqual(families, ["Inter 400", "Inter 500", "JetBrains Mono 400", "JetBrains Mono 500"]);
+  // Newsreader ships one weight: the wordmark is four characters at a single size.
+  assert.deepEqual(families, ["Inter 400", "Inter 500", "Newsreader 500", "JetBrains Mono 400", "JetBrains Mono 500"]);
   assert.match(css, /url\("\/fonts\/inter-latin-400-normal\.woff2"\) format\("woff2"\)/);
 });
 

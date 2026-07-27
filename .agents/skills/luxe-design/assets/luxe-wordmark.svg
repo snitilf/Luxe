@@ -1,27 +1,30 @@
-<!-- The Luxe wordmark: the mark, a hairline, and the product name.
-     The name is set in the system sans at medium, the only weight the wordmark
-     ever takes. There is no logotype: drawing the name as outlines would let it
-     drift from the interface it sits above.
+<!-- The Luxe wordmark: the mark, then the product name.
+     The name is LIVE TEXT, never outlines. Drawing it as paths would let it
+     drift from the interface it sits above, and the point of a wordmark set in
+     the product's own brand face is that it is the same type.
+     An SVG can embed a webfont via a base64 @font-face in <defs>, and this one
+     deliberately does not: it would inflate a ~1KB brand asset to tens of KB to
+     duplicate a face the product already serves from /fonts. The consequence is
+     that this file falls back to Georgia wherever Newsreader is not installed.
+     In the chrome the face is bundled; in the HTML previews beside this file it
+     is loaded properly; in the raw SVG it is not.
      Colours are literals because an SVG cannot read a CSS custom property; all
-     three are values that exist in the token file, as the dark fill, the canvas
-     and the first ink. Upstream's wordmark carried CSS classes with no
-     stylesheet behind them and rendered as flat black text; this one uses
-     presentation attributes so it renders correctly wherever it is dropped.
+     three exist in the token file, as the canvas, the dark fill and the first ink.
      Note for editors: an XML comment may not contain a double hyphen, so token
      names appear here without their leading dashes. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 72" width="240" height="72" role="img" aria-label="Luxe">
-  <g transform="translate(8 8) scale(0.56)">
-    <rect width="100" height="100" rx="22" fill="#463527" />
-    <path d="M38 26v44h26" fill="none" stroke="#f7f4ee" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+  <g transform="translate(8 12) scale(1.5)">
+    <rect x="2" y="2" width="28" height="28" rx="6" fill="#f7f4ee" stroke="#463527" stroke-width="2" />
+    <path d="M8.5 7.25H17V8.35L14.8 8.95V21.4H20.25C22.15 21.4 23.05 20.45 23.85 18.7L25 19.05L24.05 24H8.5V22.9L11.4 22.2V8.95L8.5 8.35Z" fill="#463527" />
   </g>
   <text
-    x="80"
-    y="47"
-    fill="#211e17"
-    font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    x="72"
+    y="46"
+    fill="#463527"
+    font-family="Newsreader, Georgia, 'Times New Roman', serif"
     font-size="28"
     font-weight="500"
-    letter-spacing="-0.15"
+    letter-spacing="-0.56"
   >
     Luxe
   </text>

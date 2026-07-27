@@ -18,7 +18,6 @@ import {
   displayPathParts,
   emitRemoteBindingWarning,
   exportContentDisposition,
-  extractArtifactHead,
   hasLiveReloadRootOptIn,
   hostnameFromHostHeader,
   isAllowedHostHeader,
@@ -497,7 +496,7 @@ test("chrome top bar follows the design mock wordmark and overflow menu treatmen
 
   assert.match(html, /class="brand-mark">Luxe/);
   assert.doesNotMatch(html, /class="brand-support"/);
-  assert.match(css, /\.brand-mark\{[^}]*color:var\(--ink-1\)/);
+  assert.match(css, /\.brand-mark\{[^}]*color:var\(--dark-fill\)/);
   assert.match(html, /class="more-button" id="moreButton"/);
   assert.match(html, /class="menu more-menu" id="moreMenu" hidden/);
   assert.doesNotMatch(html, /class="file-input"/);
@@ -621,22 +620,6 @@ test("clipboard copy falls back when navigator clipboard rejects", async () => {
   assert.match(js, /await navigator\.clipboard\.writeText\(text\)/);
   assert.match(js, /document\.execCommand\("copy"\)/);
   assert.doesNotMatch(js, /navigator\.clipboard\.writeText\(text\)\.catch/);
-});
-
-test("chrome top bar is a wordmark, a hairline divider and the file name in mono", async () => {
-  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact/index.html" });
-  const css = await chromeCssSource();
-
-  assert.match(css, /\.bar\{[^}]*align-items:center/);
-  assert.match(css, /\.bar\{[^}]*background:var\(--surface-1\)/);
-  assert.match(html, /class="brand-mark">Luxe</);
-  assert.match(html, /class="bar-divider" aria-hidden="true"></);
-  assert.match(html, /class="bar-file" title="\/tmp\/artifact\/index\.html">index\.html</);
-  assert.match(css, /\.brand-mark\{[^}]*font-size:var\(--text-control\)/);
-  assert.match(css, /\.brand-mark\{[^}]*font-weight:var\(--weight-medium\)/);
-  assert.match(css, /\.bar-divider\{[^}]*background:var\(--hair\)/);
-  assert.match(css, /\.bar-file\{[^}]*font-family:var\(--font-mono\)/);
-  assert.match(css, /\.bar-file\{[^}]*color:var\(--ink-2\)/);
 });
 
 // Agent and user are told apart by surface and alignment, not by two hues:
@@ -3091,97 +3074,35 @@ test("chrome client chat input sends on Enter and inserts newline on Shift+Enter
   assert.match(js, /sendQueued\(false\)/);
 });
 
-test("chrome falls back to a default favicon and title when none are provided", () => {
+test("every session tab reads Luxe and wears the Luxe mark", () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
 
+  assert.match(html, /<title>Luxe<\/title>/);
   assert.match(html, /<link rel="icon" href="data:image\/svg\+xml,/);
-  assert.match(html, /<title>Luxe Editor<\/title>/);
+
+  // The artifact's own <title> and <link rel="icon"> are no longer read. A wall of Luxe
+  // tabs should look like Luxe, and reading a title and an href out of untrusted artifact
+  // HTML was a parsing surface with nothing left to justify it.
+  assert.doesNotMatch(html, /Luxe Editor/);
 });
 
-test("chrome adopts a favicon tag and tab title passed from the artifact", () => {
-  const faviconTag =
-    '<link rel="icon" href="data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\'><text>🗂️</text></svg>">';
-  const html = createChromeHtml(
-    { key: "abc", file: "/tmp/artifact.html" },
-    { faviconTag, title: "Project Board · Luxe" },
-  );
+test("the toolbar carries the wordmark alone", async () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact/index.html" });
+  const css = await chromeCssSource();
 
-  assert.ok(html.includes(faviconTag), "artifact favicon tag is injected verbatim");
-  assert.match(html, /<title>Project Board · Luxe<\/title>/);
-});
+  assert.match(html, /<div class="brand"><span class="brand-mark">Luxe<\/span><\/div>/);
+  // The file name is gone from the bar. It is still one click away in the overflow menu,
+  // which is where a path belongs.
+  assert.doesNotMatch(html, /class="bar-file"/);
+  assert.doesNotMatch(html, /class="bar-divider"/);
+  assert.match(html, /class="menu-file"[^>]*title="Copy path/);
 
-test("chrome tab title from the artifact is HTML-escaped", () => {
-  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { title: "<script>alert(1)</script>" });
-
-  assert.doesNotMatch(html, /<title><script>/);
-  assert.match(html, /&lt;script&gt;/);
-});
-
-test("extractArtifactHead pulls a data-URI favicon and title from the artifact head", () => {
-  const artifact = `<!doctype html><html><head>
-    <title>  Weekly   Board  </title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
-    </head><body></body></html>`;
-  const { faviconTag, title } = extractArtifactHead(artifact);
-
-  assert.match(faviconTag, /rel="icon"/);
-  assert.match(faviconTag, /viewBox='0 0 100 100'/, "data-URI '>' chars must not truncate the tag");
-  assert.match(faviconTag, /<\/svg>">$/, "the full link tag is captured");
-  assert.equal(title, "Weekly Board");
-});
-
-test("extractArtifactHead handles shortcut icon and absolute hrefs", () => {
-  const artifact = `<head><link rel="shortcut icon" href="https://example.com/fav.ico"></head>`;
-  const { faviconTag } = extractArtifactHead(artifact);
-
-  assert.match(faviconTag, /href="https:\/\/example\.com\/fav\.ico"/);
-});
-
-test("extractArtifactHead reconstructs a clean tag and drops artifact-supplied attributes", () => {
-  const hostile = extractArtifactHead(
-    '<head><link rel="stylesheet icon" href="data:text/css,x" onload="steal()" onerror="steal()"></head>',
-  );
-  assert.equal(hostile.faviconTag, '<link rel="icon" href="data:text/css,x">');
-  assert.doesNotMatch(hostile.faviconTag, /onload|onerror|steal|stylesheet/i);
-
-  const breakout = extractArtifactHead(`<head><link rel='icon' href='data:image/png,x" onload="steal()'></head>`);
-  assert.doesNotMatch(breakout.faviconTag, /onload="/i);
-  assert.match(breakout.faviconTag, /^<link rel="icon" href="[^"]*">$/);
-  assert.match(breakout.faviconTag, /&quot;/);
-});
-
-test("extractArtifactHead falls back to the default for missing or relative favicons", () => {
-  const none = extractArtifactHead("<head><title>No icon</title></head>");
-  assert.match(none.faviconTag, /data:image\/svg\+xml/);
-  assert.equal(none.title, "No icon");
-
-  // Relative hrefs would not resolve against the chrome page, so they fall back.
-  const relative = extractArtifactHead('<head><link rel="icon" href="favicon.png"></head>');
-  assert.match(relative.faviconTag, /data:image\/svg\+xml/);
-});
-
-test("extractArtifactHead does not hang on an unterminated link tag", () => {
-  const start = process.hrtime.bigint();
-  const result = extractArtifactHead("<head><link " + '"'.repeat(60000));
-  const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
-  assert.ok(elapsedMs < 1000, `expected linear scan, took ${elapsedMs}ms`);
-  assert.match(result.faviconTag, /data:image\/svg\+xml/);
-});
-
-test("extractArtifactHead reads the real href, not one hidden in another attribute", () => {
-  // A `data-href` (longer attribute name) must not be mistaken for `href`; the
-  // real, relative href should win and fall back to the default favicon.
-  const dataHref = extractArtifactHead(
-    '<head><link rel="icon" data-href="data:image/png,decoy" href="favicon.png"></head>',
-  );
-  assert.match(dataHref.faviconTag, /data:image\/svg\+xml/, "data-href decoy must not be adopted");
-
-  // A `href=` sequence inside another attribute's quoted value must not be
-  // adopted either; the genuine absolute href should be used.
-  const inValue = extractArtifactHead(
-    '<head><link rel="icon" title="see href=data:image/png,decoy" href="https://cdn.example.com/logo.png"></head>',
-  );
-  assert.equal(inValue.faviconTag, '<link rel="icon" href="https://cdn.example.com/logo.png">');
+  // The product name is set in the brand face, at the brand size, in the cocoa - not in
+  // the same sans at the same size as the buttons beside it.
+  assert.match(css, /\.brand-mark\{[^}]*font-family:var\(--font-brand\)/);
+  assert.match(css, /\.brand-mark\{[^}]*font-size:var\(--text-brand\)/);
+  assert.match(css, /\.brand-mark\{[^}]*letter-spacing:var\(--tracking-brand\)/);
+  assert.match(css, /\.brand-mark\{[^}]*color:var\(--dark-fill\)/);
 });
 
 test("clicking the page backdrop dismisses an open annotation card instead of annotating the body", () => {

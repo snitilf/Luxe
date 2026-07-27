@@ -22,6 +22,24 @@
   --text-control: 15px; /* controls, buttons, chat bubbles, card body */
   --text-label: 14px; /* labels, meta, axis text, legends, chips, mono */
 
+  /* ---- The brand scope --------------------------------------------------
+   * FOUR CONTENT SIZES, plus one brand size. TWO CONTENT FAMILIES, plus one
+   * brand family. The rule above still holds for everything a reader reads;
+   * these three tokens are legal on the wordmark and nowhere else, and the
+   * adherence lint reads them from this file so "nowhere else" is enforced
+   * by the same mechanism as the rest of the scale.
+   *
+   * The amendment is deliberate. The comment this replaces said there was
+   * deliberately no serif token because "the upstream serif wordmark is
+   * gone" - but a product name set in the same face as its own toolbar
+   * buttons is a UI label, not a wordmark, and Luxe is a tool whose whole
+   * argument is that presentation carries meaning. Newsreader at medium is
+   * the exception that makes the point. */
+  --font-brand: "Newsreader", Georgia, "Times New Roman", serif;
+  --text-brand: 18px;
+  --tracking-brand: -0.02em;
+  --leading-brand: 1;
+
   --weight-regular: 400;
   --weight-medium: 500;
 

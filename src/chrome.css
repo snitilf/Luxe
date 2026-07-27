@@ -19,6 +19,13 @@
   src: url("/fonts/inter-latin-500-normal.woff2") format("woff2");
 }
 @font-face {
+  font-family: "Newsreader";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/newsreader-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
   font-family: "JetBrains Mono";
   font-style: normal;
   font-weight: 400;
@@ -127,11 +134,16 @@ body {
   min-width: 0;
   white-space: nowrap;
 }
+/* The product name, not a toolbar label. Newsreader medium at the brand size, in the
+ * cocoa rather than the first ink, so the one place the product says its own name looks
+ * like a wordmark instead of another control. */
 .brand-mark {
-  font-size: var(--text-control);
+  font-family: var(--font-brand);
+  font-size: var(--text-brand);
   font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-  color: var(--ink-1);
+  letter-spacing: var(--tracking-brand);
+  line-height: var(--leading-brand);
+  color: var(--dark-fill);
   flex-shrink: 0;
 }
 .bar-divider {

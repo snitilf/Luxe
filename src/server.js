@@ -557,15 +557,7 @@ export async function serve({
         return;
       }
       await watchSession(session, watchers, events, logEvent);
-      const artifactHtml = await readFile(session.file, "utf8").catch(() => "");
-      const { faviconTag, title } = extractArtifactHead(artifactHtml);
-      res.type("html").send(
-        createChromeHtml(session, {
-          layoutGateEnabled: shouldEnableLayoutGate(req.query || {}),
-          faviconTag,
-          title: title ? `${title} · Luxe` : "Luxe Editor",
-        }),
-      );
+      res.type("html").send(createChromeHtml(session, { layoutGateEnabled: shouldEnableLayoutGate(req.query || {}) }));
     } catch (error) {
       next(error);
     }
@@ -1581,46 +1573,12 @@ async function injectArtifactBaseline(html) {
 // the SVG is percent-encoded rather than embedded raw.
 const LUXE_DEFAULT_FAVICON = `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(LUXE_FAVICON_SVG)}">`;
 
-function readTagAttr(tag, name) {
-  // Tokenize real attributes rather than searching for the bare name anywhere in
-  // the tag: a `\b`-anchored name matches attribute-name suffixes (e.g. `href`
-  // inside `data-href`) and names that appear inside another attribute's quoted
-  // value (e.g. `href=` inside a `title="... href=x"`), both of which would make
-  // us adopt the wrong href. Walking whole `name="value"` pairs consumes each
-  // value as one unit, so only genuine attribute names are matched.
-  const attrRe = /([a-z][\w:-]*)\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi;
-  const target = name.toLowerCase();
-  let match;
-  while ((match = attrRe.exec(tag)) !== null) {
-    if (match[1].toLowerCase() === target) {
-      return (match[3] ?? match[4] ?? match[5] ?? "").trim();
-    }
-  }
-  return "";
-}
-
-// Pull a tab favicon + title out of the artifact's own <head>. Luxe renders the
-// artifact in a sandboxed iframe, so the artifact's own <link rel="icon"> and
-// <title> never reach the browser tab; surfacing them here makes a wall of Luxe
-// tabs identifiable. Falls back to the Luxe default favicon. Only data: and
-// absolute (http/https/protocol-relative) icon hrefs are adopted verbatim;
-// artifact-relative hrefs would not resolve against the chrome page, so they fall
-// back to the default.
-export function extractArtifactHead(html) {
-  const head = String(html || "").slice(0, 10000);
-  let faviconTag = LUXE_DEFAULT_FAVICON;
-  const linkTags = head.match(/<link\b(?:"[^"]*"|'[^']*'|[^"'>])*>/gi) || [];
-  const iconTag = linkTags.find((tag) => /(^|\s)icon(\s|$)/i.test(readTagAttr(tag, "rel")));
-  const iconHref = iconTag ? readTagAttr(iconTag, "href") : "";
-  if (iconHref && /^(data:|https?:|\/\/)/i.test(iconHref)) {
-    const safeHref = iconHref.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-    faviconTag = `<link rel="icon" href="${safeHref}">`;
-  }
-  let title = "";
-  const titleMatch = head.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  if (titleMatch) title = titleMatch[1].replace(/\s+/g, " ").trim();
-  return { faviconTag, title };
-}
+// Removed with the artifact-title and artifact-favicon adoption they existed for.
+// Every Luxe tab now reads "Luxe" and wears the Luxe mark: an artifact-supplied icon was
+// the one remaining way a Luxe tab could stop looking like Luxe, and reading a title and
+// a <link href> out of untrusted artifact HTML was a parsing surface with nothing left to
+// justify it. See git history for readTagAttr/extractArtifactHead if a future feature
+// needs to read the artifact head again.
 
 // Single source of truth for the annotate/explore default. The chrome owns the mode and
 // drives the artifact SDK over postMessage, so this value has to reach three places that
@@ -1631,10 +1589,7 @@ export function extractArtifactHead(html) {
 // like an ordinary page until the reviewer deliberately turns annotation on.
 export const ANNOTATION_DEFAULT = false;
 
-export function createChromeHtml(
-  session,
-  { layoutGateEnabled = true, faviconTag = LUXE_DEFAULT_FAVICON, title = "Luxe Editor" } = {},
-) {
+export function createChromeHtml(session, { layoutGateEnabled = true } = {}) {
   const sessionJson = jsonScript({
     key: session.key,
     file: session.file,
@@ -1659,12 +1614,12 @@ export function createChromeHtml(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)}</title>
-${faviconTag}
+<title>Luxe</title>
+${LUXE_DEFAULT_FAVICON}
 <link rel="stylesheet" href="/chrome.css">
 </head>
 <body class="${bodyClass}">
-<div class="bar"><div class="brand"><span class="brand-mark">Luxe</span><span class="bar-divider" aria-hidden="true"></span><span class="bar-file" title="${escapeHtml(session.file)}">${escapeHtml(pathTail)}</span></div><div class="spacer" aria-hidden="true"></div><span class="ended-chip" id="endedChip" hidden>${chromeIcons.check}<span>Session ended</span></span><button class="annotate-switch" id="annotation" type="button" aria-pressed="${annotationPressed}" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><div class="menu-rule"></div><button class="menu-item" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
+<div class="bar"><div class="brand"><span class="brand-mark">Luxe</span></div><div class="spacer" aria-hidden="true"></div><span class="ended-chip" id="endedChip" hidden>${chromeIcons.check}<span>Session ended</span></span><button class="annotate-switch" id="annotation" type="button" aria-pressed="${annotationPressed}" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><div class="menu-rule"></div><button class="menu-item" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
 <div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-downloads" data-artifact-src="/artifact/${session.key}/index.html"></iframe><div class="layout-issue-banner" id="layoutIssueBanner" hidden>${chromeIcons.alert}<span id="layoutIssueBannerText">Luxe received a reported warning. Your agent has been notified.</span></div></div><aside class="panel"><h2>Conversation</h2><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer"><div class="presence-banner" id="presenceBanner" hidden>${chromeIcons.alert}<span id="presenceBannerText">Your agent is not listening. If this persists, ask your agent to poll for updates from Luxe.</span></div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first.</div><p class="send-caption" id="sendCaption">Send &amp; End delivers the feedback and closes the session.</p><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button" aria-describedby="sendCaption sendHint">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send" aria-describedby="sendHint">Send to agent</button></div></div></aside></div>
 <div class="scrim layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden}><div class="modal"><div class="modal-title" id="layoutGateTitle">Checking layout. One moment.</div><p class="modal-copy" id="layoutGateCopy">Luxe is waiting for fonts and final geometry before revealing this artifact.</p><button class="button modal-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
 <div class="farewell" id="farewell" role="dialog" aria-modal="true" aria-labelledby="farewellTitle" hidden><div class="farewell-card"><div class="farewell-title" id="farewellTitle">ok thanks bye, see you in the terminal!</div><p class="farewell-copy" id="farewellCopy">Your feedback is on its way. You can close this tab.</p><button class="button farewell-action" id="farewellClose" type="button">Close this tab</button></div></div>

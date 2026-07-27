@@ -62,6 +62,9 @@ const GENERIC_FAMILIES = new Set([
   "roboto",
   "menlo",
   "consolas",
+  // The brand face's own fallback chain, same role as the sans stack's entries above.
+  "georgia",
+  "times new roman",
 ]);
 
 const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\([^)]*\)/gi;
@@ -311,18 +314,13 @@ function svgPresentationAttrs(source) {
 // way the SVG spec does: as that many px, so it can compare against the scale.
 const withPxUnit = (/** @type {string} */ value) => (/^-?[\d.]+$/.test(value) ? `${value}px` : value);
 
-// The brand mark's outer tile corner is drawn at rx="22" in both the standalone
-// mark and the wordmark, matching the favicon's rx='22' in src/luxe-brand.js
-// (that file is not lint-scanned, since it is .js, but the three are meant to
-// stay byte-identical - see test/design-skill.test.js). 22px is not on the
-// geometry scale and none of the six radii fit the brand tile without visibly
-// changing it, so this is a deliberate, narrowly-scoped exemption for exactly
-// that attribute on exactly these two files rather than a loosened rule.
-// Recorded as an open item for Filip in notes/dev/gotchas.md.
-const RADIUS_EXEMPTIONS = new Map([
-  [".agents/skills/luxe-design/assets/luxe-mark.svg", new Set(["22"])],
-  [".agents/skills/luxe-design/assets/luxe-wordmark.svg", new Set(["22"])],
-]);
+// The brand mark's tile corner is drawn at rx="6", which IS on the geometry scale
+// (--radius-bubble-speaker). The keyline mark that replaced the old solid tile in July
+// 2026 resolved this: the previous artwork used rx="22", which was on no scale and needed
+// a narrowly-scoped exemption for exactly that attribute on exactly those two files.
+// Nothing needs exempting now, and the map is kept empty rather than deleted so the
+// mechanism is still here if a future brand asset genuinely needs one.
+const RADIUS_EXEMPTIONS = new Map();
 
 /**
  * @param {string} file
