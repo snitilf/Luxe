@@ -60,6 +60,16 @@ const SAVE_DEBOUNCE_MS = 800;
 // on a slow disk finishes first, short enough that the user is not stuck.
 const SAVE_TO_MACHINE_TIMEOUT_MS = 20000;
 
+// Initial-fit geometry. See `fitSceneToViewport` for why each of these exists.
+// The factor is the share of the free canvas the scene is allowed to fill, so
+// 0.8 leaves a tenth of the shorter axis as breathing room on each side. The
+// cap is what keeps a one-node diagram from being blown up into a billboard:
+// nothing converted is ever magnified past twice its natural size.
+const FIT_VIEWPORT_ZOOM_FACTOR = 0.8;
+const FIT_MAX_ZOOM = 2;
+// Excalidraw's own gap between its floating UI and fitted content.
+const FIT_EDGE_PADDING = 16;
+
 const state = {
   diagramIndex: 0,
   diagramId: "",
@@ -332,6 +342,56 @@ function onLinkOpen(element, event) {
   showLinkConfirmation(safe);
 }
 
+// The area of the canvas the initial fit is allowed to use, measured the way
+// Excalidraw measures it for its own fits. `scrollToContent` accepts
+// `canvasOffsets` but never fills it in: every internal caller hands it
+// `getEditorUIOffsets()`, and that method is not on the public
+// `excalidrawAPI`. Passing nothing means the fit centres on the raw canvas
+// rect, so the scene is laid out as if the floating toolbar island were not
+// there and a full-height scene opens partly underneath it.
+//
+// Only the top row exists at mount time - the left properties panel appears
+// with a selection, the sidebar with the library - so this measures the
+// toolbar and leaves the other three edges at Excalidraw's own padding. The
+// rect lookup is read-only and falls back to plain padding, so an upstream
+// class rename costs the top clearance and nothing else.
+function editorUIOffsets(container) {
+  const offsets = {
+    top: FIT_EDGE_PADDING,
+    right: FIT_EDGE_PADDING,
+    bottom: FIT_EDGE_PADDING,
+    left: FIT_EDGE_PADDING,
+  };
+  const containerRect = container?.getBoundingClientRect?.();
+  const toolbarRect = container?.querySelector?.(".App-toolbar")?.getBoundingClientRect?.();
+  if (containerRect && toolbarRect) {
+    offsets.top = Math.max(toolbarRect.bottom - containerRect.top, 0) + FIT_EDGE_PADDING;
+  }
+  return offsets;
+}
+
+// A converted Mermaid diagram is usually small in scene units - four boxes and
+// three arrows is under a thousand points wide - while the overlay canvas is
+// the whole viewport. `fitToContent` caps zoom at 100%, so such a scene opened
+// marooned in a mostly empty canvas at a size where Excalidraw's own toolbar
+// island was wider than the entire diagram. `fitToViewport` lifts that cap and
+// actually uses the space; `FIT_MAX_ZOOM` is what stops it turning a single
+// node into a billboard, and `FIT_VIEWPORT_ZOOM_FACTOR` is the margin.
+function fitSceneToViewport(api) {
+  try {
+    const elements = api.getSceneElements();
+    if (!elements || elements.length === 0) return;
+    api.scrollToContent(elements, {
+      fitToViewport: true,
+      viewportZoomFactor: FIT_VIEWPORT_ZOOM_FACTOR,
+      maxZoom: FIT_MAX_ZOOM,
+      canvasOffsets: editorUIOffsets(document.getElementById("wbEditor")),
+    });
+  } catch {
+    // The fit is cosmetic; initialData's scrollToContent already centred us.
+  }
+}
+
 // The overlay owns the viewport, so the editor starts unlocked - there is no
 // page behind it whose scrolling could be trapped. `setLocked` is still exposed
 // on `state` because the teardown flush locks the canvas while the last save is
@@ -353,16 +413,7 @@ function EditorApp({ elements, appState, files }) {
       onLinkOpen,
       excalidrawAPI: (api) => {
         state.api = api;
-        // Fit the whole scene into the viewport: a scene converted at its
-        // natural 100% size can open as a zoomed-in corner, which reads as
-        // broken.
-        window.setTimeout(() => {
-          try {
-            api.scrollToContent(api.getSceneElements(), { fitToContent: true });
-          } catch {
-            // scrollToContent is cosmetic; initialData already centered us.
-          }
-        }, 0);
+        window.setTimeout(() => fitSceneToViewport(api), 0);
       },
       UIOptions: {
         canvasActions: {
