@@ -47,6 +47,7 @@ const whiteboardCloseButton = /** @type {HTMLButtonElement} */ (document.getElem
 const whiteboardError = /** @type {HTMLDivElement} */ (document.getElementById("whiteboardError"));
 const farewell = /** @type {HTMLDivElement} */ (document.getElementById("farewell"));
 const farewellClose = /** @type {HTMLButtonElement} */ (document.getElementById("farewellClose"));
+const farewellCopy = /** @type {HTMLParagraphElement} */ (document.getElementById("farewellCopy"));
 const artifactSrc = frame.dataset.artifactSrc || frame.getAttribute?.("data-artifact-src") || frame.src || "";
 
 const queued = loadQueuedPrompts();
@@ -201,11 +202,27 @@ function truncateTopic(value) {
 // which is the "big circle and all the code" Filip reported. This restores the restraint
 // and keeps the disclosure, because hover-only content is unreachable by touch and by
 // keyboard.
+function promptDetail(body, topic) {
+  if (!body || body === topic) return "";
+  const lower = body.toLowerCase();
+  const prefix = topic.replace(/…$/, "").toLowerCase();
+  // A truncated topic IS this prompt, cut short - so there is no second line to show.
+  // Checked before the prefix strip below, which would otherwise hand back the tail of a
+  // word: topic "…keep w…" over body "…keep writes up." leaves "rites up."
+  if (topic.endsWith("…") && lower.startsWith(prefix)) return "";
+  if (prefix && lower.startsWith(prefix)) {
+    return body.slice(prefix.length).replace(/^\s*[:\-\u2013\u2014]?\s*/, "");
+  }
+  return body;
+}
+
 function promptInlineHtml(prompt) {
   const topic = promptTopic(prompt);
-  const body = String(prompt.prompt || "").trim();
-  // Only worth a second line when it says something the topic did not.
-  const detail = body && body !== topic && !topic.startsWith(body.slice(0, TOPIC_MAX - 1)) ? body : "";
+  // Only worth a second line when it says something the topic did not. An artifact that
+  // sets topic "Rollback window" and prompt "Rollback window: 30 days" was printing the
+  // topic twice, which reads like debug output - so the redundant prefix is stripped and
+  // what remains is the answer alone.
+  const detail = promptDetail(String(prompt.prompt || "").trim(), topic);
   return (
     '<div class="pill-topic">' +
     escapeHtml(topic) +
@@ -1013,12 +1030,34 @@ function showFarewell() {
   attemptTabClose();
 }
 
+// Try to close, and when the browser refuses, say so instead of leaving a button that
+// visibly does nothing. window.close() only works on a tab that script opened, and Luxe
+// hands the URL to the `open` package, so in an ordinary session the refusal is the
+// normal outcome - it is silent, there is no error to catch, and the tab simply stays.
 function attemptTabClose() {
   try {
     window.close();
   } catch {
-    // Refused, which is the normal case. The card already says so.
+    // Refused. Handled below by the fact that the window is still here.
   }
+  // If the close had worked, nothing after this runs. Since it usually does not, swap the
+  // button for the keystroke that actually closes a tab the reader opened themselves.
+  setTimeout(() => {
+    if (!farewellClose || farewellClose.hidden) return;
+    farewellClose.hidden = true;
+    if (farewellCopy) {
+      farewellCopy.textContent = isApplePlatform()
+        ? "Your feedback is on its way. Press \u2318W to close this tab."
+        : "Your feedback is on its way. Press Ctrl+W to close this tab.";
+    }
+  }, 120);
+}
+
+function isApplePlatform() {
+  // userAgentData is the modern source and is not in the DOM lib typings, hence the cast.
+  const data = /** @type {any} */ (navigator).userAgentData;
+  const platform = String(data?.platform || navigator.platform || navigator.userAgent || "");
+  return /mac|iphone|ipad|ipod/i.test(platform);
 }
 
 function markSessionEnded({ farewell: showGoodbye = farewellPending } = {}) {

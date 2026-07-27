@@ -2277,3 +2277,30 @@ test("the topic falls back through declared, question key, then prompt", async (
     "Fix the spacing",
   ]);
 });
+
+// A pill's second line exists to say what the topic did not. Two ways it can fail: an
+// artifact that sets topic "Rollback window" and prompt "Rollback window: 30 days" prints
+// the topic twice, and a prompt with no topic at all gets a topic truncated FROM that
+// prompt - stripping that prefix hands back the tail of a word.
+test("a queued pill never repeats its own topic, or a fragment of it", async () => {
+  const chrome = await createChromeHarness();
+  const queue = (prompt) => chrome.sendFrameMessage({ type: "luxe:queuePrompt", prompt });
+
+  queue({ prompt: "Rollback window: 30 days", tag: "choice", topic: "Rollback window" });
+  queue({ prompt: "Forty minutes is too long for a Sunday. Split it and keep writes up.", tag: "annotation" });
+  queue({ prompt: "Use the Pro plan", tag: "choice", topic: "Billing plan" });
+
+  const html = chrome.element("annotationPills").innerHTML;
+  const details = [...html.matchAll(/class="pill-detail">([^<]*)</g)].map((m) => m[1]);
+
+  // The redundant "Rollback window: " prefix is gone, the answer remains.
+  assert.ok(details.includes("30 days"), `expected the answer alone, got ${JSON.stringify(details)}`);
+  // The long annotation is its own topic, so it gets no second line - and certainly not
+  // the string "rites up.".
+  assert.ok(
+    !details.some((d) => /^rites/.test(d)),
+    `a truncated topic leaked a word fragment: ${JSON.stringify(details)}`,
+  );
+  // A topic that says something different keeps its detail line.
+  assert.ok(details.includes("Use the Pro plan"));
+});

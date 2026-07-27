@@ -452,6 +452,49 @@ export function createArtifactSdk(
     return ids.get(el);
   }
 
+  // A reviewer is annotating a paragraph, not a <p>. The raw tag name was a developer
+  // wink that reads, at a glance, like an unrendered template variable - and this string
+  // is the title of the most-seen surface in the product. Anything unrecognised keeps the
+  // tag, which is still better than nothing for a custom element.
+  const FRIENDLY_ELEMENT_NAMES = {
+    p: "paragraph",
+    h1: "heading",
+    h2: "heading",
+    h3: "heading",
+    h4: "heading",
+    h5: "heading",
+    h6: "heading",
+    li: "list item",
+    ul: "list",
+    ol: "list",
+    table: "table",
+    tr: "table row",
+    td: "table cell",
+    th: "table heading",
+    img: "image",
+    svg: "graphic",
+    figure: "figure",
+    figcaption: "caption",
+    blockquote: "quote",
+    pre: "code block",
+    code: "code",
+    button: "button",
+    a: "link",
+    section: "section",
+    header: "header",
+    footer: "footer",
+    form: "form",
+    label: "label",
+    input: "field",
+    textarea: "field",
+    select: "field",
+  };
+
+  function friendlyElementName(tag) {
+    const name = String(tag || "").toLowerCase();
+    return FRIENDLY_ELEMENT_NAMES[name] || `&lt;${escapeAnnotationText(name)}&gt;`;
+  }
+
   function escapeAnnotationText(value) {
     return String(value).replace(
       /[&<>"']/g,
@@ -1852,7 +1895,7 @@ export function createArtifactSdk(
     // rule after it references a token; no colour is written here.
     style.textContent =
       luxeTokensCss.replace(/:root(\s*\{)/, ":host$1") +
-      `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;font-family:var(--font-sans);letter-spacing:var(--tracking-sans)}*{box-sizing:border-box}:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ring);outline-offset:var(--focus-ring-offset)}.luxe-text-highlight{position:fixed;pointer-events:none;background:var(--gold-wash);border-radius:2px}.luxe-annotation-badge{position:fixed;display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:var(--radius-pill);background:var(--gold);color:var(--ink-1);border:2px solid var(--canvas);font-size:var(--text-label);font-weight:var(--weight-medium);line-height:1;pointer-events:none}.luxe-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:16px;border-radius:var(--radius-card);background:var(--surface-2);color:var(--ink-1);border:var(--stroke-hair) solid var(--hair);box-shadow:var(--shadow-modal);font-size:var(--text-control);line-height:var(--leading-body)}.luxe-heading{font-weight:var(--weight-medium);margin-bottom:8px}.luxe-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-nav);border:var(--stroke-hair) solid var(--hair);background:var(--surface-2);color:var(--ink-1);padding:10px 12px;font-family:var(--font-sans);font-size:var(--text-control);line-height:var(--leading-body);letter-spacing:var(--tracking-sans)}.luxe-annotation-card textarea::placeholder{color:var(--ink-3)}.luxe-annotation-card .luxe-hint{margin-top:8px;font-size:var(--text-label);color:var(--ink-2)}.luxe-annotation-card .luxe-row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}.luxe-annotation-card button{border:var(--stroke-hair) solid transparent;border-radius:var(--radius-pill);padding:8px 16px;font-family:var(--font-sans);font-size:var(--text-control);font-weight:var(--weight-medium);letter-spacing:var(--tracking-sans);cursor:pointer}.luxe-annotation-card .luxe-send{background:var(--dark-fill);color:var(--dark-fill-text)}.luxe-annotation-card .luxe-send:hover{background:var(--dark-fill-hover)}.luxe-annotation-card .luxe-cancel{background:var(--surface-2);border-color:var(--strong);color:var(--ink-1)}.luxe-annotation-card .luxe-cancel:hover{background:var(--canvas)}`;
+      `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;font-family:var(--font-sans);letter-spacing:var(--tracking-sans)}*{box-sizing:border-box}:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ring);outline-offset:var(--focus-ring-offset)}.luxe-text-highlight{position:fixed;pointer-events:none;background:var(--gold-wash);border-radius:2px}.luxe-annotation-badge{position:fixed;display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:var(--radius-pill);background:var(--gold);color:var(--ink-1);border:2px solid var(--canvas);font-size:var(--text-label);font-weight:var(--weight-medium);line-height:1;pointer-events:none}.luxe-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:16px;border-radius:var(--radius-card);background:var(--surface-2);color:var(--ink-1);border:var(--stroke-hair) solid var(--strong);box-shadow:0 2px 6px rgba(33,30,23,.10),var(--shadow-modal);font-size:var(--text-control);line-height:var(--leading-body)}.luxe-heading{font-weight:var(--weight-medium);margin-bottom:8px}.luxe-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-nav);border:var(--stroke-hair) solid var(--hair);background:var(--surface-2);color:var(--ink-1);padding:10px 12px;font-family:var(--font-sans);font-size:var(--text-control);line-height:var(--leading-body);letter-spacing:var(--tracking-sans)}.luxe-annotation-card textarea::placeholder{color:var(--ink-3)}.luxe-annotation-card .luxe-hint{margin-top:8px;font-size:var(--text-label);color:var(--ink-2)}.luxe-annotation-card .luxe-row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}.luxe-annotation-card button{border:var(--stroke-hair) solid transparent;border-radius:var(--radius-pill);padding:8px 16px;font-family:var(--font-sans);font-size:var(--text-control);font-weight:var(--weight-medium);letter-spacing:var(--tracking-sans);cursor:pointer}.luxe-annotation-card .luxe-send{background:var(--dark-fill);color:var(--dark-fill-text)}.luxe-annotation-card .luxe-send:hover{background:var(--dark-fill-hover)}.luxe-annotation-card .luxe-cancel{background:var(--surface-2);border-color:var(--strong);color:var(--ink-1)}.luxe-annotation-card .luxe-cancel:hover{background:var(--canvas)}`;
     shadow.appendChild(style);
     return shadow;
   }
@@ -1935,7 +1978,7 @@ export function createArtifactSdk(
         ? "Annotate text"
         : c.tag === "mermaid-node"
           ? "Annotate node" + (nodeLabel ? ": " + escapeAnnotationText(nodeLabel) : "")
-          : "Annotate &lt;" + c.tag + "&gt;";
+          : "Annotate " + friendlyElementName(c.tag);
     const placeholder =
       c.tag === "text"
         ? "Tell the agent what to change about this text..."

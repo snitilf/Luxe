@@ -21,14 +21,13 @@ Your agent has a plan. Right now it arrives as chat prose you skim, half underst
 Luxe turns it into a page: a rendered HTML artifact with real diagrams, tables, and comparisons, opened in your local browser.
 You read the decision, click the part you disagree with, redraw the diagram if it's wrong, and send it back.
 
-```
-  ┌──────────────┐     ┌───────────────────┐     ┌──────────────────┐
-  │ agent writes │ ──▶ │ luxe opens it in  │ ──▶ │ you point, redraw│
-  │ artifact.html│     │ your browser      │     │ and send         │
-  └──────────────┘     └───────────────────┘     └────────┬─────────┘
-         ▲                                                │
-         └──────────── luxe poll returns your notes ──────┘
-```
+<img src="docs/media/review.png" alt="A migration plan open in Luxe: a paragraph outlined in gold with an annotation card being written, and three queued answers in the conversation panel" width="100%">
+
+<p align="center"><em>What you review.</em></p>
+
+<img src="docs/media/feedback.png" alt="The same feedback arriving in the agent's terminal as three structured prompts, each with a topic" width="100%">
+
+<p align="center"><em>What your agent gets: structured prompts it can act on, not a screenshot.</em></p>
 
 ## Quick Start
 

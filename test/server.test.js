@@ -358,10 +358,16 @@ test("turning annotation mode off clears selection and floating card", () => {
   assert.match(js, /if \(!annotationMode\) closeCard\(\)/);
 });
 
-test("annotation card title renders selected tag as an html element name", () => {
+test("the annotation card names the element in words, not as a tag", () => {
   const js = createSdkJs("abc");
 
-  assert.match(js, /"Annotate &lt;" \+ c\.tag \+ "&gt;"/);
+  // "Annotate <p>" was a developer wink that reads like an unrendered template variable,
+  // and this is the title of the most-seen surface in the product.
+  assert.match(js, /"Annotate " \+ friendlyElementName\(c\.tag\)/);
+  assert.match(js, /p: "paragraph"/);
+  assert.match(js, /pre: "code block"/);
+  // An unrecognised or custom element still says something rather than nothing.
+  assert.match(js, /FRIENDLY_ELEMENT_NAMES\[name\] \|\| `&lt;\$\{escapeAnnotationText\(name\)\}&gt;`/);
 });
 
 test("annotation card shadow styles use the Luxe design tokens", async () => {
