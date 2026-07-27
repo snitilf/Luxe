@@ -40,11 +40,27 @@ async function freePort() {
   return port;
 }
 
-// A wide flowchart: the shape where the old top-right button landed on a node.
+// Two shapes, because the strip's alignment depends on which one it is under. The wide
+// flowchart is where the old top-right button landed on a node. The narrow one is where
+// aligning to the CONTAINER instead of the DIAGRAM parks the controls in empty space
+// beside the thing they control - which looks perfectly correct under the wide one.
+//
+// The stylesheet is the one that matters as much as the diagrams: a bare
+// `pre { background; border; border-radius }` is what every code-block theme ends in,
+// including the snippet Luxe itself tells authors to paste. It paints every Mermaid
+// diagram as a code block, and a zero-specificity repair loses to it.
 const ARTIFACT = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Diagram toolbar</title></head>
+<html><head><meta charset="utf-8"><title>Diagram toolbar</title>
+<style>
+  pre, .mockup-code {
+    background: #f7f4ec;
+    border: 1px solid #e7e2d6;
+    border-radius: 12px;
+  }
+</style>
+</head>
 <body>
-<pre class="mermaid">
+<pre class="mermaid" id="wide">
 flowchart LR
   A[Client] --> B[Chrome]
   B --> C[Artifact SDK]
@@ -52,6 +68,11 @@ flowchart LR
   D --> E[Server]
   E --> F[Agent poll]
 </pre>
+<pre class="mermaid" id="narrow">
+flowchart TD
+  X[Start] --> Y[Stop]
+</pre>
+<pre id="code">const answer = 42;</pre>
 <script type="module">
 import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
 mermaid.initialize({ startOnLoad: false, theme: "base", securityLevel: "strict" });
@@ -113,22 +134,191 @@ test(
         run("chrome-devtools-axi", ["wait", "3000"], chromeEnv);
 
         const geometry = evaluate(`() => {
-        const bar = document.querySelector('[role=toolbar]');
-        const svg = document.querySelector('.mermaid svg');
-        const b = bar.getBoundingClientRect(), s = svg.getBoundingClientRect();
-        const buttons = [...bar.querySelectorAll('button')].map((x) => ({
-          name: x.getAttribute('aria-label') || x.textContent,
-          h: Math.round(x.getBoundingClientRect().height),
-        }));
-        return JSON.stringify({ overlaps: b.top < s.bottom - 1, buttons });
+        const diagrams = [...document.querySelectorAll('.mermaid')].map((container) => {
+          const bar = container.querySelector('[role=toolbar]');
+          const svg = container.querySelector('svg');
+          const group = container.querySelector('[role=group]');
+          const cs = getComputedStyle(container);
+          const b = bar.getBoundingClientRect(), s = svg.getBoundingClientRect();
+          const controls = [...bar.querySelectorAll('button')];
+          const first = controls[0].getBoundingClientRect();
+          const last = controls[controls.length - 1].getBoundingClientRect();
+          return {
+            id: container.id,
+            overlaps: b.top < s.bottom - 1,
+            padTop: parseFloat(cs.paddingTop),
+            padLeft: parseFloat(cs.paddingLeft),
+            // Distance from each end of the control run to the matching end of the
+            // DIAGRAM. One of the two is what the strip is anchored to.
+            rightEdgeDelta: Math.round(last.right - s.right),
+            leftEdgeDelta: Math.round(first.left - s.left),
+            groups: container.querySelectorAll('[role=group]').length,
+            groupBorder: group ? getComputedStyle(group).borderTopWidth : null,
+            buttons: controls.map((x) => {
+              const r = x.getBoundingClientRect(), s2 = getComputedStyle(x);
+              return {
+                name: x.getAttribute('aria-label') || x.textContent,
+                w: Math.round(r.width),
+                h: Math.round(r.height),
+                bg: s2.backgroundColor,
+              };
+            }),
+          };
+        });
+        return JSON.stringify({ diagrams });
       }`);
 
-        assert.equal(geometry.overlaps, false, `the toolbar overlaps the diagram at ${viewport}`);
-        for (const button of geometry.buttons) {
-          assert.ok(button.name, `a toolbar control has no accessible name at ${viewport}`);
-          assert.ok(button.h >= 24, `${button.name} is only ${button.h}px tall at ${viewport}`);
+        for (const diagram of geometry.diagrams) {
+          const where = `${diagram.id} at ${viewport}`;
+          assert.equal(diagram.overlaps, false, `the toolbar overlaps the diagram: ${where}`);
+          assert.ok(diagram.padTop >= 16, `the diagram has no room above it: ${where}`);
+          assert.ok(diagram.padLeft >= 12, `the diagram has no room beside it: ${where}`);
+          // One segmented object for the three zoom controls, not three loose buttons.
+          assert.equal(diagram.groups, 1, `the zoom controls are not one segmented object: ${where}`);
+          assert.notEqual(diagram.groupBorder, "0px", `the segmented control has no boundary: ${where}`);
+          // Anchored to the DIAGRAM at one end or the other. Container-relative alignment
+          // passes under a wide diagram and strands the controls beside a narrow one, so
+          // this is asserted against the SVG's own box and on both shapes.
+          assert.ok(
+            Math.abs(diagram.rightEdgeDelta) <= 2 || Math.abs(diagram.leftEdgeDelta) <= 2,
+            `the strip is not anchored to the diagram (left ${diagram.leftEdgeDelta}px, right ` +
+              `${diagram.rightEdgeDelta}px from its edges): ${where}`,
+          );
+          for (const button of diagram.buttons) {
+            assert.ok(button.name, `a toolbar control has no accessible name: ${where}`);
+            // 32px, not the 24px WCAG 2.5.8 floor: the larger target is a recorded decision,
+            // and quieting these controls visually is not allowed to shrink it.
+            assert.ok(button.h >= 32, `${button.name} is only ${button.h}px tall: ${where}`);
+            assert.ok(button.w >= 32, `${button.name} is only ${button.w}px wide: ${where}`);
+            // Unfilled at rest. The boundary carries the affordance, not a fill.
+            assert.match(button.bg, /rgba\(0, 0, 0, 0\)|transparent/, `${button.name} is filled at rest: ${where}`);
+          }
         }
       }
+
+      // The lit state, measured as contrast rather than trusted as a colour name. The
+      // treatment this replaced was --surface-1, which is a real token, is applied by a
+      // real rule, and is invisible: 1.04:1 against the canvas.
+      const lit = evaluate(`() => {
+      const luminance = (colour) => {
+        const [r, g, b] = colour.match(/\\d+(\\.\\d+)?/g).slice(0, 3).map((v) => {
+          const c = Number(v) / 255;
+          return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const contrast = (a, b) => {
+        const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+        return (x + 0.05) / (y + 0.05);
+      };
+      const surfaceBehind = (el) => {
+        let node = el.parentElement;
+        while (node) {
+          const bg = getComputedStyle(node).backgroundColor;
+          if (bg && !/rgba\\(0, 0, 0, 0\\)|transparent/.test(bg)) return bg;
+          node = node.parentElement;
+        }
+        return 'rgb(255, 255, 255)';
+      };
+      const button = document.querySelector('[role=toolbar] button');
+      const surface = surfaceBehind(button);
+      const resting = getComputedStyle(button).backgroundColor;
+      button.focus();
+      const cs = getComputedStyle(button);
+      return JSON.stringify({
+        focusVisible: button.matches(':focus-visible'),
+        restingIsUnfilled: /rgba\\(0, 0, 0, 0\\)/.test(resting),
+        litVsSurface: contrast(cs.backgroundColor, surface),
+        glyphOnLit: contrast(cs.color, cs.backgroundColor),
+        outline: cs.outlineStyle + ' ' + cs.outlineWidth,
+        outlineOffset: cs.outlineOffset,
+      });
+    }`);
+      assert.equal(lit.focusVisible, true);
+      assert.equal(lit.restingIsUnfilled, true, "the control is filled at rest");
+      assert.ok(
+        lit.litVsSurface >= 3,
+        `the lit state is ${lit.litVsSurface.toFixed(2)}:1 against the surface behind it, which nobody can see`,
+      );
+      assert.ok(lit.glyphOnLit >= 4.5, `the glyph is ${lit.glyphOnLit.toFixed(2)}:1 on the lit fill`);
+      assert.match(lit.outline, /solid \d/, "the focus ring is missing");
+      assert.notEqual(lit.outlineOffset, "0px", "the focus ring lost its offset");
+
+      // The disabled readout, which is the state the page loads in: "100%" is showing and
+      // resetting to fit is a no-op. Its contrast is not exempt just because it is disabled.
+      const readout = evaluate(`() => {
+      const luminance = (colour) => {
+        const [r, g, b] = colour.match(/\\d+(\\.\\d+)?/g).slice(0, 3).map((v) => {
+          const c = Number(v) / 255;
+          return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const contrast = (a, b) => {
+        const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+        return (x + 0.05) / (y + 0.05);
+      };
+      const bar = document.querySelector('[role=toolbar]');
+      const [out, reset] = [...bar.querySelectorAll('button')];
+      const surface = 'rgb(255, 255, 255)';
+      const atFit = { disabled: reset.disabled, text: reset.textContent, ink: contrast(getComputedStyle(reset).color, surface) };
+      for (let i = 0; i < 40; i += 1) out.click();
+      const clamped = { disabled: out.disabled, ink: contrast(getComputedStyle(out).color, surface) };
+      reset.click();
+      return JSON.stringify({ atFit, clamped });
+    }`);
+      assert.equal(readout.atFit.disabled, true, "the reset control no longer disables at fit");
+      assert.equal(readout.atFit.text, "100%");
+      assert.ok(
+        readout.atFit.ink >= 4.5,
+        `the zoom readout is ${readout.atFit.ink.toFixed(2)}:1 while disabled, and it is disabled on load`,
+      );
+      assert.equal(readout.clamped.disabled, true, "zoom out no longer disables at the clamp");
+      assert.ok(readout.clamped.ink >= 3, `a clamped control is ${readout.clamped.ink.toFixed(2)}:1 and unreadable`);
+
+      // The code-block frame. The fixture's `pre` rule paints a border and an inset fill
+      // around every <pre> on the page, which for a Mermaid diagram means drawing a picture
+      // inside a code block. Luxe undoes it on the diagrams and must not touch real code.
+      const framing = evaluate(`() => {
+      const describe = (el) => {
+        const cs = getComputedStyle(el);
+        return {
+          background: cs.backgroundColor,
+          borderWidth: cs.borderTopWidth,
+          borderRadius: cs.borderTopLeftRadius,
+          paddingTop: cs.paddingTop,
+          marked: el.hasAttribute('data-luxe-diagram'),
+        };
+      };
+      return JSON.stringify({
+        wide: describe(document.getElementById('wide')),
+        narrow: describe(document.getElementById('narrow')),
+        code: describe(document.getElementById('code')),
+      });
+    }`);
+
+      for (const id of ["wide", "narrow"]) {
+        const diagram = framing[id];
+        assert.equal(diagram.marked, true, `${id} was never marked as a rendered diagram`);
+        assert.match(
+          diagram.background,
+          /rgba\(0, 0, 0, 0\)|transparent/,
+          `${id} still carries the code-block fill behind the diagram`,
+        );
+        assert.equal(diagram.borderWidth, "0px", `${id} still carries the code-block border around the diagram`);
+        assert.equal(diagram.borderRadius, "0px", `${id} still carries the code-block corner radius`);
+        // The reset must not take the breathing room with it.
+        assert.equal(diagram.paddingTop, "20px", `${id} lost its padding to the frame reset`);
+      }
+      // A real code block is a real code block. The repair is scoped, not a global restyle.
+      assert.equal(framing.code.marked, false, "a plain code block was marked as a diagram");
+      assert.doesNotMatch(
+        framing.code.background,
+        /rgba\(0, 0, 0, 0\)/,
+        "the repair stripped a real code block's fill",
+      );
+      assert.equal(framing.code.borderWidth, "1px", "the repair stripped a real code block's border");
+      assert.equal(framing.code.borderRadius, "12px", "the repair stripped a real code block's corner radius");
 
       // Zoom, reset, and both ends of the clamp.
       const zoom = evaluate(`() => {
@@ -204,7 +394,7 @@ test(
           const text = event.data.snapshot || '';
           resolve(JSON.stringify({
             carriesDiagram: /Artifact SDK/.test(text),
-            leaksToolbar: /diagram-toolbar|Zoom in|Zoom out|Reset zoom|Edit as whiteboard/.test(text),
+            leaksToolbar: /diagram-toolbar|Diagram zoom|Zoom in|Zoom out|Reset zoom|Edit as whiteboard/.test(text),
           }));
         }
       });
