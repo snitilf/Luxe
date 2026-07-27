@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { LUXE_DAISYUI_THEME_CSS, LUXE_CHART_GUIDANCE } from "../src/design-reference.js";
+import { linearRgb, token, wcagContrast } from "./helpers/design-tokens.js";
 import { LUXE_SHIKI_THEME } from "../src/luxe-shiki-theme.js";
 import {
   LUXE_MERMAID_INIT,
@@ -15,27 +16,13 @@ import {
   LUXE_WHITEBOARD_CANVAS_BACKGROUND,
 } from "../src/mermaid-theme.js";
 
-const tokensPromise = readFile(new URL("../src/luxe-tokens.css", import.meta.url), "utf8");
-
-async function token(name) {
-  const match = new RegExp(`--${name}\\s*:\\s*([^;]+);`).exec(await tokensPromise);
-  assert.ok(match, `token --${name} is missing from luxe-tokens.css`);
-  return match[1].trim();
-}
-
 // ---- Colour maths -----------------------------------------------------------
 // Enough of it to assert the properties the chart palette was selected for. These
 // mirror the data-viz skill's validator; they live here rather than being imported
 // because that script ships with the skill, not with this repo, and a test may not
 // depend on a path that only exists while the skill is loaded.
-
-function linearRgb(hex) {
-  const n = parseInt(hex.replace("#", ""), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
-    const c = v / 255;
-    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
-}
+// `linearRgb`, `token` and `wcagContrast` come from the shared helper; only the
+// OKLab/CVD maths below is private to this file.
 
 /** @param {number[]} rgb linear-light sRGB */
 function oklab(rgb) {
@@ -83,15 +70,6 @@ function cvdDeltaE(hexA, hexB, kind) {
   const a = oklab(simulate(linearRgb(hexA), kind));
   const b = oklab(simulate(linearRgb(hexB), kind));
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) * 100;
-}
-
-function wcagContrast(hexA, hexB) {
-  const lum = (hex) => {
-    const [r, g, b] = linearRgb(hex);
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  };
-  const [hi, lo] = [lum(hexA), lum(hexB)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
 }
 
 // notes/UI-REVAMP.md section 3, verbatim. A bare `theme:` name is not enough -
@@ -274,6 +252,70 @@ test("the Shiki theme is built from the code-plane tokens", async () => {
   assert.equal(foreground("markup.deleted"), await token("error-fg"));
 });
 
+// The theme's header claims every syntax scope except punctuation clears 4.5:1
+// on the code plane. That claim was prose only, so when `--code-bg` was recessed
+// from #f7f4ec to #efe9db - the right call, the old plane was invisible against
+// the canvas - four scopes silently fell under the bar and nothing failed. This
+// test is the claim. It reads the plane and the inks out of `luxe-tokens.css`
+// rather than restating them, because a copied expected value is exactly how the
+// guarantee died the first time: it would have kept passing against the old
+// background.
+const SYNTAX_SCOPE_TOKENS = [
+  "syn-keyword",
+  "syn-string",
+  "syn-number",
+  "syn-comment",
+  "syn-function",
+  "syn-type",
+  "syn-plain",
+];
+
+test("every syntax ink clears 4.5:1 on the code plane", async () => {
+  const plane = await token("code-bg");
+
+  for (const name of SYNTAX_SCOPE_TOKENS) {
+    const ink = await token(name);
+    const ratio = wcagContrast(ink, plane);
+    assert.ok(ratio >= 4.5, `--${name} (${ink}) is ${ratio.toFixed(2)}:1 on --code-bg (${plane}), floor is 4.5:1`);
+  }
+
+  // The list above is the palette's side of the guarantee. This is the theme's:
+  // it sweeps what Shiki will actually paint, so a scope added to the theme
+  // later is measured whether or not anyone remembers to name it here. The
+  // punctuation entry is the only one allowed to skip, and it is identified by
+  // its token value, not by its position in the list.
+  const punct = await token("syn-punct");
+  for (const entry of LUXE_SHIKI_THEME.tokenColors) {
+    const ink = entry.settings.foreground;
+    if (ink === punct) continue;
+    const ratio = wcagContrast(ink, plane);
+    assert.ok(
+      ratio >= 4.5,
+      `scope ${entry.scope[0]} (${ink}) is ${ratio.toFixed(2)}:1 on --code-bg (${plane}), floor is 4.5:1`,
+    );
+  }
+});
+
+// --syn-punct is the one carve-out, and it is deliberate: punctuation is
+// decoration-grade, it may never be the only thing distinguishing two
+// constructs, so it is allowed to sit below the text floor. Asserted by name and
+// bounded on both sides - if it ever climbs past 4.5 the exception is obsolete
+// and should be deleted rather than left as a permanent excuse, and if it sinks
+// toward the plane it has stopped being legible at all.
+test("punctuation is the one documented exception to the 4.5:1 floor", async () => {
+  const plane = await token("code-bg");
+  const punct = await token("syn-punct");
+  const ratio = wcagContrast(punct, plane);
+
+  assert.ok(ratio < 4.5, `--syn-punct (${punct}) now clears 4.5:1 at ${ratio.toFixed(2)}:1; drop the exception`);
+  assert.ok(ratio >= 3, `--syn-punct (${punct}) is only ${ratio.toFixed(2)}:1 on --code-bg (${plane}), floor is 3:1`);
+  assert.equal(SYNTAX_SCOPE_TOKENS.includes("syn-punct"), false);
+
+  // And the exception is stated where a reader of the theme will meet it.
+  const source = await readFile(new URL("../src/luxe-shiki-theme.js", import.meta.url), "utf8");
+  assert.match(source, /[Pp]unctuation is the one exception/);
+});
+
 // Ten of section 2.9's eleven colours are in the theme. The eleventh, the
 // hunk-header background, cannot be: a TextMate theme colours text through
 // scopes and surfaces through a closed set of keys, and there is no hunk-header
@@ -321,6 +363,43 @@ test("the DaisyUI theme block maps onto the Luxe tokens", async () => {
   assert.equal(LUXE_DAISYUI_THEME_CSS.includes(await token("gold")), false);
   assert.match(LUXE_DAISYUI_THEME_CSS, /color-scheme: light/);
   assert.doesNotMatch(LUXE_DAISYUI_THEME_CSS, /prefers-color-scheme/);
+});
+
+// Mermaid authors diagrams as `<pre class="mermaid">` and then replaces the text content
+// with an `<svg>`, so a bare `pre` selector in the code-plane rule paints every diagram on
+// the page as a code block. The bug hid for a long time because the fill used to sit only
+// two units off the canvas, nearly indistinguishable from it, until the plane was made
+// visible and the border-and-fill-around-a-picture became obvious too.
+test("the code-plane rule never matches a mermaid diagram", () => {
+  // Strip CSS comments first: the selector search below scans back to the previous `}`,
+  // and the explanatory comment above the rule is full of prose containing the word
+  // "pre" and commas, which would otherwise get swept into the match and split like a
+  // selector list.
+  const css = LUXE_DAISYUI_THEME_CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // Find the selector list for the declaration block that sets the code plane's
+  // background (the fill + border block, not the font-family reset above it).
+  const ruleMatch = /([^{}]*\bpre\b[^{}]*)\{\s*background:/.exec(css);
+  assert.ok(
+    ruleMatch,
+    "could not find a `pre`-matching rule that sets a background - has the code-plane rule moved or been renamed?",
+  );
+
+  const selectorList = ruleMatch[1];
+  const selectors = selectorList.split(",").map((s) => s.trim());
+  const preSelectors = selectors.filter((s) => /\bpre\b/.test(s));
+  assert.ok(preSelectors.length > 0, "no `pre` compound found in the code-plane selector list");
+
+  for (const selector of preSelectors) {
+    assert.match(
+      selector,
+      /pre:not\(\.mermaid\)/,
+      `the code-plane selector "${selector}" matches a bare <pre>, which means it will also match ` +
+        `<pre class="mermaid">. Mermaid replaces that element's text with an <svg>, so this rule ` +
+        `will paint every diagram on the page with an inset background and border, framing pictures ` +
+        `as code blocks. Exclude mermaid explicitly, e.g. "pre:not(.mermaid)".`,
+    );
+  }
 });
 
 test("the chart guidance is the token palette in the spec's fixed order", async () => {

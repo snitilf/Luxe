@@ -350,16 +350,16 @@ test("design output ships the bespoke Luxe Shiki theme as usable JSON", () => {
 
   assert.equal(theme.name, "luxe");
   assert.equal(theme.type, "light");
-  assert.equal(theme.colors["editor.background"], "#f7f4ec");
+  assert.equal(theme.colors["editor.background"], "#efe9db");
   assert.equal(theme.colors["diffEditor.insertedTextBackground"], "#e8f1dd");
   assert.equal(theme.colors["diffEditor.removedTextBackground"], "#f9e6e0");
   const foreground = (scope) => theme.tokenColors.find((entry) => entry.scope.includes(scope))?.settings.foreground;
   assert.equal(foreground("keyword"), "#963f8b");
-  assert.equal(foreground("string"), "#4a7a2a");
-  assert.equal(foreground("constant.numeric"), "#9a5b06");
-  assert.equal(foreground("comment"), "#746b56");
+  assert.equal(foreground("string"), "#467525");
+  assert.equal(foreground("constant.numeric"), "#995a05");
+  assert.equal(foreground("comment"), "#716853");
   assert.equal(foreground("entity.name.function"), "#2f5e9e");
-  assert.equal(foreground("entity.name.type"), "#b8511f");
+  assert.equal(foreground("entity.name.type"), "#b04a15");
   assert.equal(foreground("punctuation"), "#7a7466");
   assert.match(output.code_theme.note, /bespoke Shiki theme/);
 });

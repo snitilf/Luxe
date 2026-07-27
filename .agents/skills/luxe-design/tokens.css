@@ -187,19 +187,38 @@
   --div-7: #852b06;
 
   /* ---- Code and diff (spec 2.9) ----------------------------------------- */
-  --code-bg: #f7f4ec;
+  /* Deliberately DARKER than --canvas, not lighter: a code block is an inset,
+   * recessed plane, the opposite direction from --surface-1/--surface-2, which are
+   * raised. The previous value sat two units off the canvas, which made the code
+   * plane invisible. Do not "correct" this back toward the canvas. */
+  --code-bg: #efe9db;
   --diff-add-bg: #e8f1dd;
   --diff-add-gutter: #c9dfb2;
   --diff-rem-bg: #f9e6e0;
   --diff-rem-gutter: #eec4b8;
   --diff-hunk-bg: #f2ecd9;
 
+  /* Every ink here clears 4.5:1 on EVERY surface it is painted on - the code
+   * plane and all three diff tints above - and --syn-punct is the single
+   * deliberate exception, decoration-grade and held to 3:1 instead. Recessing
+   * the code plane to #efe9db cost roughly 0.4 of a contrast point, which pushed
+   * type names, strings, comments and numerics under the bar; they were darkened
+   * along their own hue (OKLCH lightness only, chroma and hue held) by the
+   * smallest step that clears 4.5:1, not lifted back toward the background.
+   *
+   * The floor on the code plane is enforced by test/design-tokens-derived.test.js;
+   * test/design-tokens-surfaces.test.js extends the same assertion to --diff-add-bg,
+   * --diff-rem-bg and --diff-hunk-bg, which are not derived from --code-bg and so
+   * would otherwise have been free to move under the inks without failing anything.
+   * The diff tints are all lighter than the code plane today, which is why the
+   * floor held there by luck; measure before you re-tune any of these, in either
+   * direction - darkening a diff tint is as breaking as darkening an ink. */
   --syn-keyword: #963f8b;
-  --syn-string: #4a7a2a;
-  --syn-number: #9a5b06;
-  --syn-comment: #746b56;
+  --syn-string: #467525;
+  --syn-number: #995a05;
+  --syn-comment: #716853;
   --syn-function: #2f5e9e;
-  --syn-type: #b8511f;
+  --syn-type: #b04a15;
   --syn-punct: #7a7466; /* decoration-grade, the one token below 4.5:1 */
   --syn-plain: #2c2921;
 

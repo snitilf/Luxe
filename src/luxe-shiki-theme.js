@@ -5,10 +5,19 @@
 // a token in `luxe-tokens.css`, pinned by `test/design-tokens-derived.test.js`.
 //
 // Design notes carried over from the spec:
-//   - the code plane is `--code-bg` (#f7f4ec), not the page canvas, so a code
-//     block reads as an inset surface rather than as more paper;
-//   - every syntax token except punctuation clears 4.5:1 on that plane, and
-//     they are all darks, so they survive on the added and removed diff tints;
+//   - the code plane is `--code-bg` (#efe9db), not the page canvas, so a code
+//     block reads as an inset surface rather than as more paper. It is darker than
+//     the canvas on purpose - recessed, not raised;
+//   - every syntax token is a dark ink, so it survives on the added and removed
+//     diff tints as well as on the code plane. Measured against `--code-bg`
+//     (#efe9db), every scope except punctuation clears 4.5:1: they run 12.00:1
+//     (variables) down to 4.52:1 (`entity.name.type`), with the four tightest -
+//     type names 4.52, strings 4.53, numerics 4.54, comments 4.56 - sitting in a
+//     4.52 to 4.56 band. Recessing the plane to #efe9db had cost those four the
+//     bar (4.10 to 4.48); they were darkened along their own hue rather than the
+//     plane being lightened back toward the canvas. `test/design-tokens-derived.test.js`
+//     computes these ratios from the tokens and fails if any of them drops.
+//     Punctuation is the one exception, and the floor, at 3.84:1;
 //   - punctuation is decoration-grade on purpose. It must never be the only
 //     thing distinguishing two constructs.
 //
@@ -29,7 +38,7 @@ export const LUXE_SHIKI_THEME = Object.freeze({
   type: "light",
   semanticHighlighting: true,
   colors: {
-    "editor.background": "#f7f4ec",
+    "editor.background": "#efe9db",
     "editor.foreground": "#2c2921",
     "editorLineNumber.foreground": "#8a8375",
     "editorLineNumber.activeForeground": "#5c564a",
@@ -42,7 +51,7 @@ export const LUXE_SHIKI_THEME = Object.freeze({
   tokenColors: [
     {
       scope: ["comment", "punctuation.definition.comment", "string.comment"],
-      settings: { foreground: "#746b56", fontStyle: "italic" },
+      settings: { foreground: "#716853", fontStyle: "italic" },
     },
     {
       scope: [
@@ -60,11 +69,11 @@ export const LUXE_SHIKI_THEME = Object.freeze({
     },
     {
       scope: ["string", "string.quoted", "string.template", "constant.character", "constant.other.symbol"],
-      settings: { foreground: "#4a7a2a" },
+      settings: { foreground: "#467525" },
     },
     {
       scope: ["constant.numeric", "constant.language.boolean", "constant.language.null", "constant.other"],
-      settings: { foreground: "#9a5b06" },
+      settings: { foreground: "#995a05" },
     },
     {
       scope: ["entity.name.function", "support.function", "meta.function-call", "variable.function"],
@@ -79,7 +88,7 @@ export const LUXE_SHIKI_THEME = Object.freeze({
         "support.class",
         "entity.name.tag",
       ],
-      settings: { foreground: "#b8511f" },
+      settings: { foreground: "#b04a15" },
     },
     {
       scope: ["punctuation", "meta.brace", "punctuation.separator", "punctuation.terminator"],

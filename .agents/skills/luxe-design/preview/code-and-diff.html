@@ -14,9 +14,9 @@
         style="
           margin: 0;
           background: var(--code-bg);
-          border: 1px solid var(--hair);
+          border: 1px solid var(--strong);
           border-radius: var(--radius-inner);
-          padding: 12px;
+          padding: 14px 16px;
           color: var(--syn-plain);
           overflow-x: auto;
         "
@@ -26,7 +26,7 @@
       <div class="label">Diff</div>
       <div
         class="mono"
-        style="border: 1px solid var(--hair); border-radius: var(--radius-inner); overflow: hidden; background: var(--code-bg)"
+        style="border: 1px solid var(--strong); border-radius: var(--radius-inner); overflow: hidden; background: var(--code-bg)"
       >
         <div style="background: var(--diff-hunk-bg); padding: 4px 12px; color: var(--ink-2)">@@ chrome.css @@</div>
         <div style="background: var(--diff-rem-bg); border-left: 4px solid var(--diff-rem-gutter); padding: 4px 12px">
@@ -38,7 +38,8 @@
       </div>
 
       <p class="note">
-        Code sits on its own plane with a hairline border, set in the mono at label size. The syntax inks are shipped as
+        Code sits on its own recessed plane - --code-bg is darker than the canvas, not lighter - inside a --strong
+        border, set in the mono at label size. The syntax inks are shipped as
         a bespoke theme rather than a borrowed one, and every one of them is a dark, so they all survive on both diff
         tints. Punctuation is the single decoration-grade ink in the set. The hunk-header tint has no equivalent key in a
         theme file and is applied by the surrounding component instead.

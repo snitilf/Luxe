@@ -150,10 +150,31 @@ export const LUXE_DAISYUI_THEME_CSS = `<style>
     letter-spacing: 0;
   }
 
-  pre, .mockup-code {
-    background: #f7f4ec;
-    border: 1px solid #e7e2d6;
+  /* The code plane is inset: --code-bg is darker than the canvas, and --strong draws the
+     border so the block reads as its own surface rather than as more paper. 12px is
+     --radius-inner, the radius the spec gives code and diff blocks. 14px is --text-label,
+     the scale's mono size - code sets smaller than body copy, not at body size.
+
+     .mermaid is excluded deliberately. Mermaid takes its source from a <pre class="mermaid">
+     and replaces the text with an <svg>, so a bare pre selector paints every diagram on the
+     page as a code block - a border and an inset fill around a picture. That was already true
+     when this plane sat two units off the canvas; it was simply invisible. Making the plane
+     visible made the bug visible with it. */
+  pre:not(.mermaid), .mockup-code {
+    background: #efe9db;
+    border: 1px solid #cbc4b2;
     border-radius: 12px;
+    padding: 14px 16px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* A <code> inside a <pre> is the same plane, not a second one stacked on it. */
+  pre:not(.mermaid) code, .mockup-code code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
   }
 </style>`;
 

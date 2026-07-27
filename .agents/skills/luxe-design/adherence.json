@@ -543,7 +543,7 @@
     },
     {
       "name": "--code-bg",
-      "value": "#f7f4ec",
+      "value": "#efe9db",
       "kind": "color",
       "group": "Code and diff (spec 2.9)"
     },
@@ -585,19 +585,19 @@
     },
     {
       "name": "--syn-string",
-      "value": "#4a7a2a",
+      "value": "#467525",
       "kind": "color",
       "group": "Code and diff (spec 2.9)"
     },
     {
       "name": "--syn-number",
-      "value": "#9a5b06",
+      "value": "#995a05",
       "kind": "color",
       "group": "Code and diff (spec 2.9)"
     },
     {
       "name": "--syn-comment",
-      "value": "#746b56",
+      "value": "#716853",
       "kind": "color",
       "group": "Code and diff (spec 2.9)"
     },
@@ -609,7 +609,7 @@
     },
     {
       "name": "--syn-type",
-      "value": "#b8511f",
+      "value": "#b04a15",
       "kind": "color",
       "group": "Code and diff (spec 2.9)"
     },
