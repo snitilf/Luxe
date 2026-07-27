@@ -13,6 +13,9 @@ async function createChromeHarness({
   fetchImpl = async () => ({ ok: true }),
   sessionData = defaultSessionData,
   artifactSrc = "",
+  // Luxe ships on macOS, Linux and Windows, so anything that reads the platform has to be
+  // exercised on more than the machine the suite happens to run on.
+  navigator = { platform: "MacIntel", userAgent: "test" },
 } = {}) {
   const source = await readFile(sourceUrl, "utf8");
   const storage = new Map();
@@ -203,7 +206,7 @@ async function createChromeHarness({
         reloadCount += 1;
       },
     },
-    navigator: { platform: "MacIntel", userAgent: "test" },
+    navigator,
     setTimeout: fakeSetTimeout,
     URL: {
       createObjectURL() {
@@ -2312,39 +2315,47 @@ test("a queued pill never repeats its own topic, or a fragment of it", async () 
   assert.ok(details.includes("Use the Pro plan"));
 });
 
-// The farewell exists to be read. Closing the tab the instant the card paints turns the
-// message into a flash, which is the same as not writing one - so the automatic attempt
-// waits, and the button stays live for anyone who does not want to.
-test("the farewell is readable before the tab tries to close itself", async () => {
+// window.close() only closes a tab that script opened, and Luxe hands the URL to the `open`
+// package, so the tab is always user-opened and the call is always refused. The card must
+// never attempt it - not on a timer, not behind a button - and must name the keystroke that
+// does work instead.
+test("the farewell never tries to close the tab", async () => {
   const chrome = await createChromeHarness();
 
   chrome.element("end").onclick();
   await flushPromises();
 
   assert.equal(chrome.element("farewell").hidden, false, "the card is up");
-  assert.deepEqual(chrome.closeAttempts, [], "nothing tried to close while it was being read");
-
-  // Anything short of the linger must not close it either.
-  chrome.runTimers(600);
-  assert.deepEqual(chrome.closeAttempts, []);
-
-  chrome.runTimers(4000);
-  assert.equal(chrome.closeAttempts.length, 1, "the attempt fires after the linger");
+  chrome.runTimers(10000);
+  assert.deepEqual(chrome.closeAttempts, [], "no timer fires a close the browser will refuse");
 });
 
-test("a refused close tells the reader which keys actually close a tab", async () => {
+test("the farewell names the close keystroke for the reader's platform", async () => {
+  const apple = await createChromeHarness();
+  apple.element("end").onclick();
+  await flushPromises();
+  assert.equal(apple.element("farewellCopy").textContent, "Your feedback is on its way. Press ⌘W to close this tab.");
+
+  // Not the Apple string off a Mac: CI runs ubuntu and windows too.
+  const windows = await createChromeHarness({
+    navigator: { platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+  });
+  windows.element("end").onclick();
+  await flushPromises();
+  assert.equal(
+    windows.element("farewellCopy").textContent,
+    "Your feedback is on its way. Press Ctrl+W to close this tab.",
+  );
+});
+
+// The card is `role="dialog" aria-modal="true"` and holds nothing focusable, so focus has to
+// land on the card itself. Without that, ending a session leaves keyboard and screen-reader
+// users parked on chrome that is now behind a scrim and inert.
+test("the farewell takes focus so its dialog is announced", async () => {
   const chrome = await createChromeHarness();
 
   chrome.element("end").onclick();
   await flushPromises();
 
-  // The button is live immediately - waiting is optional, not imposed.
-  chrome.element("farewellClose").onclick();
-  assert.equal(chrome.closeAttempts.length, 1);
-
-  // The refusal is silent, so it is detected by the window still being here afterwards.
-  assert.equal(chrome.element("farewellClose").hidden, false, "the button is still up until we know");
-  chrome.runTimers(600);
-  assert.equal(chrome.element("farewellClose").hidden, true, "the button that cannot work is withdrawn");
-  assert.match(chrome.element("farewellCopy").textContent, /⌘W|Ctrl\+W/);
+  assert.equal(chrome.element("farewell").focused, true, "focus moved into the dialog");
 });

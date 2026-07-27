@@ -46,7 +46,6 @@ const whiteboardFrame = /** @type {HTMLIFrameElement} */ (document.getElementByI
 const whiteboardCloseButton = /** @type {HTMLButtonElement} */ (document.getElementById("whiteboardClose"));
 const whiteboardError = /** @type {HTMLDivElement} */ (document.getElementById("whiteboardError"));
 const farewell = /** @type {HTMLDivElement} */ (document.getElementById("farewell"));
-const farewellClose = /** @type {HTMLButtonElement} */ (document.getElementById("farewellClose"));
 const farewellCopy = /** @type {HTMLParagraphElement} */ (document.getElementById("farewellCopy"));
 const artifactSrc = frame.dataset.artifactSrc || frame.getAttribute?.("data-artifact-src") || frame.src || "";
 
@@ -109,8 +108,6 @@ let sendHintOwner = null;
 // file so `markSessionEnded` can close it without reaching into the boot section.
 /** @type {EventSource | null} */
 let eventStream = null;
-/** @type {ReturnType<typeof setTimeout> | undefined} */
-let farewellCloseTimer;
 
 function escapeHtml(value) {
   return String(value).replace(
@@ -1016,51 +1013,33 @@ function clearSessionTimers() {
 
 // The goodbye, and the honest half of "close the page".
 //
-// window.close() only works on a tab that script opened. Luxe hands the URL to the `open`
-// package, so in every ordinary session the tab is user-opened and the call is refused
-// silently. That makes the card the deliverable and the close attempt the bonus - not the
-// other way round - so the card says what to do when the browser declines.
+// The card never offers to close the tab, because it cannot. window.close() only works on
+// a tab that script opened, and Luxe hands the URL to the `open` package, so in every
+// ordinary session the tab is user-opened and the call is refused silently. A button that
+// is refused every time is worse than no button, so the card tells the reviewer the
+// keystroke that does work and stops there.
 //
 // Shown when the reviewer ends the session from this tab - Send & End, or End session in
 // the overflow menu - and not when it ended some other way: the agent running `luxe end`,
 // or a reload of a session that was already over. A farewell answers a goodbye; popping
 // one over a page nobody just said goodbye on is a jump scare.
-// Long enough to read the goodbye. Closing the instant the card paints means the message
-// only ever exists as a flash, which is the same as not writing one.
-const FAREWELL_LINGER_MS = 4000;
-// A refused close is silent - there is no error to catch and the window simply stays - so
-// the only way to know is to look afterwards. Long enough to be sure, short enough that
-// the swap does not read as a second thought.
-const CLOSE_REFUSED_AFTER_MS = 600;
 
 function showFarewell() {
   if (!farewell) return;
+  // The server renders this markup with no idea what the reviewer is on, so the final copy
+  // is settled here - before the card is unhidden, so the wrong shortcut never paints.
+  if (farewellCopy) farewellCopy.textContent = farewellCopyText();
   farewell.hidden = false;
-  farewellClose?.focus?.();
-  // Let it be read first. The button is live throughout for anyone who does not want to
-  // wait; this timer is only the automatic attempt.
-  farewellCloseTimer = setTimeout(attemptTabClose, FAREWELL_LINGER_MS);
+  // The card is `aria-modal`, and with the button gone it holds nothing focusable. Focusing
+  // the card itself moves focus into the dialog so its accessible name is announced,
+  // instead of stranding keyboard and screen-reader users on the chrome behind the scrim.
+  farewell.focus?.();
 }
 
-// window.close() only works on a tab that script opened, and Luxe hands the URL to the
-// `open` package, so in an ordinary session the refusal is the normal outcome. When it is
-// refused, say what actually closes a tab instead of leaving a button that does nothing.
-function attemptTabClose() {
-  clearTimeout(farewellCloseTimer);
-  try {
-    window.close();
-  } catch {
-    // Refused. Detected below by the window still being here.
-  }
-  setTimeout(() => {
-    if (!farewellClose || farewellClose.hidden) return;
-    farewellClose.hidden = true;
-    if (farewellCopy) {
-      farewellCopy.textContent = isApplePlatform()
-        ? "Your feedback is on its way. Press \u2318W to close this tab."
-        : "Your feedback is on its way. Press Ctrl+W to close this tab.";
-    }
-  }, CLOSE_REFUSED_AFTER_MS);
+function farewellCopyText() {
+  return isApplePlatform()
+    ? "Your feedback is on its way. Press \u2318W to close this tab."
+    : "Your feedback is on its way. Press Ctrl+W to close this tab.";
 }
 
 function isApplePlatform() {
@@ -1750,11 +1729,6 @@ document.addEventListener("mousedown", (event) => {
   if (!moreMenu.hidden && !moreWrap.contains(target)) setMenuOpen(moreButton, moreMenu, false);
 });
 whiteboardCloseButton.onclick = closeWhiteboard;
-// A second, explicit try. The first fires automatically when the card appears; browsers
-// refuse that one for a user-opened tab, but some accept a close driven directly by a
-// click. When it is refused again nothing happens and the card stays put, which is why
-// the copy says "you can close this tab" rather than promising anything.
-if (farewellClose) farewellClose.onclick = attemptTabClose;
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     if (!whiteboardOverlay.hidden) {

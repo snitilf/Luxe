@@ -3023,6 +3023,27 @@ test("ended session recedes the chrome behind a toolbar chip", async () => {
   assert.match(js, /moreButton\.disabled = true/);
 });
 
+// The farewell card carries no close control, because there is none to carry: the tab is
+// user-opened, so window.close() is refused every time. The markup ships the non-Apple copy
+// as its default and the client rewrites it for the reader's platform before unhiding, and
+// the card takes tabindex="-1" because an aria-modal dialog with nothing focusable inside
+// strands keyboard and screen-reader users.
+test("the farewell card has no close button and can hold focus", async () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+  const js = await chromeClientSource();
+  const css = await chromeCssSource();
+
+  assert.match(html, /id="farewell" role="dialog" aria-modal="true" aria-labelledby="farewellTitle" tabindex="-1"/);
+  assert.match(html, /id="farewellCopy">Your feedback is on its way\. Press Ctrl\+W to close this tab\.</);
+  assert.doesNotMatch(html, /farewellClose/);
+  assert.doesNotMatch(html, /farewell-action/);
+  assert.doesNotMatch(css, /\.farewell-action/);
+  // No close attempt survives anywhere in the client.
+  assert.doesNotMatch(js, /farewellClose/);
+  assert.doesNotMatch(js, /attemptTabClose/);
+  assert.match(js, /farewell\.focus\?\.\(\)/);
+});
+
 test("layout gate curtain uses the scrim and modal styling", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const noGateHtml = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { layoutGateEnabled: false });

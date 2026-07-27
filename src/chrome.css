@@ -953,11 +953,10 @@ body.layout-gate-active iframe#artifact {
  * ended treatment above is a deliberate decision that finishing a review is
  * not a curtain, and the artifact stays readable behind this card.
  *
- * The card is also the honest half of the close. Luxe opens sessions with the
- * `open` package, so the tab is user-opened and window.close() is refused by
- * every browser; when that refusal happens this is what the reviewer is left
- * with, so it has to stand on its own rather than being a flash before an
- * exit that never comes. */
+ * The card is honest about the close. Luxe opens sessions with the `open`
+ * package, so the tab is user-opened and window.close() is refused by every
+ * browser; rather than offer a control that can never work, the card names the
+ * keystroke that does and stands on its own. */
 .farewell {
   position: fixed;
   inset: 0;
@@ -991,9 +990,6 @@ body.layout-gate-active iframe#artifact {
   color: var(--ink-2);
   font-size: var(--text-control);
   line-height: var(--leading-body);
-}
-.farewell-action {
-  margin-top: 24px;
 }
 /* The ended chrome recedes to 45%; the farewell must not recede with it. */
 body.session-ended .farewell {
