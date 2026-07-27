@@ -514,7 +514,7 @@ body {
   /* 8px vertical rather than 10: with the speaker labels gone, the bubble no longer
    * needs to separate two stacked text blocks inside itself. */
   padding: 8px 14px;
-  font-size: var(--text-body);
+  font-size: var(--text-control);
   line-height: var(--leading-panel);
   border-radius: var(--radius-bubble);
   border: var(--stroke-hair) solid transparent;
