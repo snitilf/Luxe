@@ -25,6 +25,7 @@ async function createChromeHarness({
   const elements = new Map();
   const timers = new Map();
   const srcLoads = [];
+  const closeAttempts = [];
   let nextTimerId = 1;
   let reloadCount = 0;
 
@@ -202,7 +203,7 @@ async function createChromeHarness({
         reloadCount += 1;
       },
     },
-    navigator: {},
+    navigator: { platform: "MacIntel", userAgent: "test" },
     setTimeout: fakeSetTimeout,
     URL: {
       createObjectURL() {
@@ -259,6 +260,11 @@ async function createChromeHarness({
         if (!windowListeners.has(type)) windowListeners.set(type, []);
         windowListeners.get(type).push(handler);
       },
+      // Records the attempt without pretending it succeeded, which is the real browser
+      // behaviour for a tab the page did not open: silent refusal, window still here.
+      close() {
+        closeAttempts.push(true);
+      },
     },
   };
 
@@ -267,6 +273,7 @@ async function createChromeHarness({
   return {
     element,
     frame,
+    closeAttempts,
     postedToFrame,
     postedToWhiteboard,
     createInlineWhiteboard() {
@@ -2303,4 +2310,41 @@ test("a queued pill never repeats its own topic, or a fragment of it", async () 
   );
   // A topic that says something different keeps its detail line.
   assert.ok(details.includes("Use the Pro plan"));
+});
+
+// The farewell exists to be read. Closing the tab the instant the card paints turns the
+// message into a flash, which is the same as not writing one - so the automatic attempt
+// waits, and the button stays live for anyone who does not want to.
+test("the farewell is readable before the tab tries to close itself", async () => {
+  const chrome = await createChromeHarness();
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  assert.equal(chrome.element("farewell").hidden, false, "the card is up");
+  assert.deepEqual(chrome.closeAttempts, [], "nothing tried to close while it was being read");
+
+  // Anything short of the linger must not close it either.
+  chrome.runTimers(600);
+  assert.deepEqual(chrome.closeAttempts, []);
+
+  chrome.runTimers(4000);
+  assert.equal(chrome.closeAttempts.length, 1, "the attempt fires after the linger");
+});
+
+test("a refused close tells the reader which keys actually close a tab", async () => {
+  const chrome = await createChromeHarness();
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  // The button is live immediately - waiting is optional, not imposed.
+  chrome.element("farewellClose").onclick();
+  assert.equal(chrome.closeAttempts.length, 1);
+
+  // The refusal is silent, so it is detected by the window still being here afterwards.
+  assert.equal(chrome.element("farewellClose").hidden, false, "the button is still up until we know");
+  chrome.runTimers(600);
+  assert.equal(chrome.element("farewellClose").hidden, true, "the button that cannot work is withdrawn");
+  assert.match(chrome.element("farewellCopy").textContent, /⌘W|Ctrl\+W/);
 });

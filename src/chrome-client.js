@@ -109,6 +109,8 @@ let sendHintOwner = null;
 // file so `markSessionEnded` can close it without reaching into the boot section.
 /** @type {EventSource | null} */
 let eventStream = null;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let farewellCloseTimer;
 
 function escapeHtml(value) {
   return String(value).replace(
@@ -1023,25 +1025,33 @@ function clearSessionTimers() {
 // the overflow menu - and not when it ended some other way: the agent running `luxe end`,
 // or a reload of a session that was already over. A farewell answers a goodbye; popping
 // one over a page nobody just said goodbye on is a jump scare.
+// Long enough to read the goodbye. Closing the instant the card paints means the message
+// only ever exists as a flash, which is the same as not writing one.
+const FAREWELL_LINGER_MS = 4000;
+// A refused close is silent - there is no error to catch and the window simply stays - so
+// the only way to know is to look afterwards. Long enough to be sure, short enough that
+// the swap does not read as a second thought.
+const CLOSE_REFUSED_AFTER_MS = 600;
+
 function showFarewell() {
   if (!farewell) return;
   farewell.hidden = false;
   farewellClose?.focus?.();
-  attemptTabClose();
+  // Let it be read first. The button is live throughout for anyone who does not want to
+  // wait; this timer is only the automatic attempt.
+  farewellCloseTimer = setTimeout(attemptTabClose, FAREWELL_LINGER_MS);
 }
 
-// Try to close, and when the browser refuses, say so instead of leaving a button that
-// visibly does nothing. window.close() only works on a tab that script opened, and Luxe
-// hands the URL to the `open` package, so in an ordinary session the refusal is the
-// normal outcome - it is silent, there is no error to catch, and the tab simply stays.
+// window.close() only works on a tab that script opened, and Luxe hands the URL to the
+// `open` package, so in an ordinary session the refusal is the normal outcome. When it is
+// refused, say what actually closes a tab instead of leaving a button that does nothing.
 function attemptTabClose() {
+  clearTimeout(farewellCloseTimer);
   try {
     window.close();
   } catch {
-    // Refused. Handled below by the fact that the window is still here.
+    // Refused. Detected below by the window still being here.
   }
-  // If the close had worked, nothing after this runs. Since it usually does not, swap the
-  // button for the keystroke that actually closes a tab the reader opened themselves.
   setTimeout(() => {
     if (!farewellClose || farewellClose.hidden) return;
     farewellClose.hidden = true;
@@ -1050,7 +1060,7 @@ function attemptTabClose() {
         ? "Your feedback is on its way. Press \u2318W to close this tab."
         : "Your feedback is on its way. Press Ctrl+W to close this tab.";
     }
-  }, 120);
+  }, CLOSE_REFUSED_AFTER_MS);
 }
 
 function isApplePlatform() {
