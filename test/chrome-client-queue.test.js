@@ -97,8 +97,33 @@ async function createChromeHarness({
       addEventListener(type, handler) {
         listeners.set(type, handler);
       },
-      querySelectorAll() {
-        return [];
+      children: [],
+      // Enough of a matcher for the selectors the chrome actually uses:
+      // comma-separated class chains with an optional :not(.class). The fake returned []
+      // before, which made syncChat's "remove the old bubbles" step a silent no-op - so a
+      // second sync would have appended duplicates and no test could have noticed.
+      querySelectorAll(selector) {
+        if (!selector) return [];
+        const groups = String(selector)
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean);
+        const matches = (el, group) => {
+          const not = /:not\(([^)]*)\)/.exec(group);
+          const excluded = not ? not[1].split(".").filter(Boolean) : [];
+          const required = group
+            .replace(/:not\([^)]*\)/, "")
+            .split(".")
+            .filter(Boolean);
+          const classes = String(el.className || "")
+            .split(/\s+/)
+            .filter(Boolean);
+          return required.every((name) => classes.includes(name)) && !excluded.some((name) => classes.includes(name));
+        };
+        return this.children.filter((child) => groups.some((group) => matches(child, group)));
+      },
+      renderedChildren() {
+        return [...this.children];
       },
       querySelector(selector) {
         if (selector !== "span") return null;
@@ -107,7 +132,9 @@ async function createChromeHarness({
         return elements.get(childId);
       },
       appendChild(child) {
+        if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((c) => c !== child);
         child.parentElement = this;
+        this.children = [...this.children, child];
         this.lastAppendedChild = child;
         return child;
       },
@@ -118,6 +145,9 @@ async function createChromeHarness({
       },
       remove() {
         this.removed = true;
+        if (this.parentElement) {
+          this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+        }
         this.parentElement = null;
       },
       focus() {
@@ -388,10 +418,18 @@ test("queue storage drops uid and unknown metadata while confirmation shows ever
   assert.match(rendered, /Quarterly results/);
   assert.match(rendered, /main &gt; h1#results/);
   assert.match(rendered, /annotation/);
-  assert.match(rendered, /aria-label="Text: Quarterly results"/);
-  assert.match(rendered, /<span class="visually-hidden">Selector: <\/span><code>main &gt; h1#results<\/code>/);
-  assert.match(rendered, /aria-label="Tag: annotation"/);
+  // The pill face carries the topic and nothing else; the selector, the quoted source
+  // text and the tag moved behind the disclosure, which is the whole point of the
+  // redesign - they are how an agent locates a target, not how a reviewer recognises
+  // their own question.
+  assert.match(rendered, /<div class="pill-topic">Tighten the heading<\/div>/);
+  const face = rendered.slice(0, rendered.indexOf("<details"));
+  assert.doesNotMatch(face, /Quarterly results/, "quoted text is not on the pill face");
+  assert.doesNotMatch(face, /h1#results/, "the selector is not on the pill face");
+  assert.doesNotMatch(face, /annotation/, "the tag chip is not on the pill face");
   assert.match(rendered, /<details[^>]*class="pill-target-details"/);
+  assert.match(rendered, /<dt>Selector<\/dt><dd>main &gt; h1#results<\/dd>/);
+  assert.match(rendered, /<dt>Kind<\/dt><dd>annotation<\/dd>/);
   assert.match(rendered, /Diagram ID/);
   assert.match(rendered, /approve/);
   assert.doesNotMatch(
@@ -2181,4 +2219,61 @@ test("reloading a finished session does not say goodbye", async () => {
 
   assert.equal(chrome.element("chatInput").disabled, true);
   assert.equal(chrome.element("farewell").hidden, true, "a reload is not a goodbye");
+});
+
+// A receipt is Luxe's note that something was delivered, not something the reviewer said,
+// so it must not wear a speech bubble - and it must survive the chat-sync that rebuilds
+// the conversation, which is why it is a server-side chat entry rather than a DOM node.
+test("receipts render as notes, not messages, and survive a chat sync", async () => {
+  const chrome = await createChromeHarness();
+  const syncChat = chrome.eventSource().listeners.get("chat-sync");
+
+  syncChat({
+    data: JSON.stringify({
+      chat: [
+        { role: "user", kind: "receipt", text: "Queue answered - Billing plan" },
+        { role: "user", text: "Typed by hand" },
+        { role: "agent", text: "On it" },
+      ],
+    }),
+  });
+
+  const rendered = chrome.element("chatLog").renderedChildren();
+  assert.deepEqual(
+    rendered.map((el) => el.className),
+    ["chat-receipt", "bubble user", "bubble agent"],
+  );
+  // No "YOU" label on the receipt: nobody said it.
+  assert.doesNotMatch(rendered[0].innerHTML, /<small>/);
+  assert.match(rendered[0].innerHTML, /Queue answered - Billing plan/);
+
+  // A second sync must replace the receipt, not stack another copy beside it.
+  syncChat({
+    data: JSON.stringify({ chat: [{ role: "user", kind: "receipt", text: "Queue answered - Billing plan" }] }),
+  });
+  assert.equal(chrome.element("chatLog").renderedChildren().length, 1);
+});
+
+test("the topic falls back through declared, question key, then prompt", async () => {
+  const chrome = await createChromeHarness();
+  const queue = (prompt) => chrome.sendFrameMessage({ type: "luxe:queuePrompt", prompt });
+
+  queue({ prompt: "Use the Pro plan", tag: "choice", topic: "Billing plan" });
+  queue({ prompt: "Ship on Friday", tag: "choice", _luxeQueueKey: "question:rollout-date" });
+  queue({ prompt: "Tighten this heading", tag: "annotation" });
+  // A composite dedupe key and an element path are structure, not names - printing
+  // either would be worse than falling through to the prompt.
+  queue({ prompt: "Pick the blue one", tag: "choice", _luxeQueueKey: "form:signup|radio:colour" });
+  queue({ prompt: "Fix the spacing", tag: "annotation", _luxeQueueKey: "div > form > fieldset" });
+
+  const topics = [...chrome.element("annotationPills").innerHTML.matchAll(/class="pill-topic">([^<]*)</g)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(topics, [
+    "Billing plan",
+    "Rollout date",
+    "Tighten this heading",
+    "Pick the blue one",
+    "Fix the spacing",
+  ]);
 });

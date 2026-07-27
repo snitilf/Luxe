@@ -1038,7 +1038,7 @@ export function createArtifactSdk(
 
   function queuePrompt(prompt, options = {}) {
     const originElement = options.element || document.activeElement || document.body;
-    /** @type {{ uid: string, prompt: string, selector: string, tag: string, text: string, target?: unknown, _luxeQueueKey?: string }} */
+    /** @type {{ uid: string, prompt: string, selector: string, tag: string, text: string, topic?: string, target?: unknown, _luxeQueueKey?: string }} */
     const item = {
       ...context(originElement),
       prompt: String(prompt || ""),
@@ -1050,6 +1050,12 @@ export function createArtifactSdk(
     if (options.selector) item.selector = String(options.selector);
     if (options.tag) item.tag = String(options.tag);
     if (options.text) item.text = String(options.text);
+    // A short human name for what this prompt is about - "Billing plan", "Rollout date".
+    // It is what the queued pill and the conversation receipt are titled with, so the
+    // reviewer reads their own question back rather than a dedupe key or a prompt
+    // fragment. Optional: without it Luxe derives something from the queue key and then
+    // from the prompt, which is always worse than a name the author chose.
+    if (options.topic) item.topic = String(options.topic).slice(0, 80);
     if (options.target) item.target = options.target;
     if (options.data) item.prompt += "\n\nContext data:\n" + JSON.stringify(options.data, null, 2);
 

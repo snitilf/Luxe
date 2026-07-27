@@ -138,39 +138,69 @@ function persistQueuedPrompts() {
   }
 }
 
-// Queued prompts are dashed with a clock glyph; while a send is in flight the
-// same pills go solid, which is the "sent" treatment in the component table.
-const PILL_CLOCK_ICON =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>';
-const PILL_SENT_ICON =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+// Queued and sending are told apart by the border treatment the component table
+// specifies - dashed while queued, solid once in flight. There is deliberately no state
+// glyph: a 24px outlined circle beside two lines of text competes with them for
+// attention, and it is the "big circle" half of the reported noise.
 
+// What to call a queued item, in three tiers.
+//
+// 1. The topic the artifact declared. Always the best answer, because the author knows
+//    what the question was.
+// 2. A `question:` queue key, de-prefixed and humanised. `deriveQueueKey` is a DEDUPE
+//    key, not a label - its other branches produce `form:signup|radio:name` composites
+//    and raw `div > form > fieldset` element paths, and printing either of those would
+//    be worse than showing nothing. Only the branch that carries a real question name
+//    is accepted.
+// 3. The prompt itself, trimmed to a phrase. Never the bare tag: "Queue answered -
+//    choice" is technically true and tells the reader nothing.
+const TOPIC_MAX = 60;
+
+function humanizeTopic(value) {
+  const words = String(value).replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!words) return "";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function promptTopic(prompt) {
+  const declared = typeof prompt?.topic === "string" ? prompt.topic.trim() : "";
+  if (declared) return truncateTopic(declared);
+
+  const key = promptQueueKey(prompt);
+  // Composites and element paths are structure, not names.
+  if (key.startsWith("question:") && !key.includes("|") && !key.includes(">")) {
+    const humanized = humanizeTopic(key.slice("question:".length));
+    if (humanized) return truncateTopic(humanized);
+  }
+
+  const body = String(prompt?.prompt || "").trim();
+  if (body) return truncateTopic(body.split("\n")[0]);
+  return "Feedback";
+}
+
+function truncateTopic(value) {
+  const text = String(value).replace(/\s+/g, " ").trim();
+  return text.length > TOPIC_MAX ? text.slice(0, TOPIC_MAX - 1).trimEnd() + "…" : text;
+}
+
+// A queued pill names what is queued and gets out of the way.
+//
+// Upstream showed one ellipsized line and put the selector and the full prompt behind a
+// hover tooltip. The port replaced that with a clock glyph, the raw CSS selector in mono,
+// a tag chip and an expandable table of node paths and offsets, all on screen at once -
+// which is the "big circle and all the code" Filip reported. This restores the restraint
+// and keeps the disclosure, because hover-only content is unreachable by touch and by
+// keyboard.
 function promptInlineHtml(prompt) {
-  const context = [];
-  if (prompt.text) {
-    context.push(
-      '<span class="pill-text" aria-label="Text: ' +
-        escapeHtml(prompt.text) +
-        '">“' +
-        escapeHtml(prompt.text) +
-        "”</span>",
-    );
-  }
-  if (prompt.selector) {
-    context.push(
-      '<span class="pill-selector"><span class="visually-hidden">Selector: </span><code>' +
-        escapeHtml(prompt.selector) +
-        "</code></span>",
-    );
-  }
-  if (prompt.tag) {
-    context.push(
-      '<span class="pill-tag" aria-label="Tag: ' + escapeHtml(prompt.tag) + '">' + escapeHtml(prompt.tag) + "</span>",
-    );
-  }
+  const topic = promptTopic(prompt);
+  const body = String(prompt.prompt || "").trim();
+  // Only worth a second line when it says something the topic did not.
+  const detail = body && body !== topic && !topic.startsWith(body.slice(0, TOPIC_MAX - 1)) ? body : "";
   return (
-    (prompt.prompt ? '<div class="pill-preview">' + escapeHtml(prompt.prompt) + "</div>" : "") +
-    (context.length ? '<div class="pill-context">' + context.join("") + "</div>" : "")
+    '<div class="pill-topic">' +
+    escapeHtml(topic) +
+    "</div>" +
+    (detail ? '<div class="pill-detail">' + escapeHtml(detail) + "</div>" : "")
   );
 }
 
@@ -178,8 +208,25 @@ function targetFieldHtml(label, value) {
   return "<div><dt>" + escapeHtml(label) + "</dt><dd>" + escapeHtml(value === "" ? "(empty)" : value) + "</dd></div>";
 }
 
-function targetDisclosureHtml(target) {
-  if (!target) return "";
+// Everything the pill face no longer shows. The selector, the quoted source text and the
+// tag are here rather than on screen: they are how an agent locates the target, not how a
+// reviewer recognises their own question, and they were the bulk of the noise.
+function promptDisclosureHtml(prompt) {
+  const rows = [];
+  if (prompt.tag) rows.push(["Kind", prompt.tag]);
+  if (prompt.text) rows.push(["Text", prompt.text]);
+  if (prompt.selector) rows.push(["Selector", prompt.selector]);
+  const target = prompt.target;
+  if (target) rows.push(...targetRows(target));
+  if (!rows.length) return "";
+  return (
+    '<details class="pill-target-details"><summary>Details</summary><dl>' +
+    rows.map(([label, value]) => targetFieldHtml(label, value)).join("") +
+    "</dl></details>"
+  );
+}
+
+function targetRows(target) {
   const rows = [["Type", target.type]];
   if (target.type === "mermaid-node") {
     rows.push(
@@ -214,11 +261,7 @@ function targetDisclosureHtml(target) {
       ["Drawn", target.stats.drawn],
     );
   }
-  return (
-    '<details class="pill-target-details"><summary>Target details</summary><dl>' +
-    rows.map(([label, value]) => targetFieldHtml(label, value)).join("") +
-    "</dl></details>"
-  );
+  return rows;
 }
 
 function render() {
@@ -228,14 +271,12 @@ function render() {
       (prompt, index) =>
         '<div class="pill-wrap"><div class="pill' +
         (sending ? " sent" : "") +
-        '"><span class="pill-state">' +
-        (sending ? PILL_SENT_ICON : PILL_CLOCK_ICON) +
-        '</span><div class="pill-fields">' +
+        '"><div class="pill-fields">' +
         promptInlineHtml(prompt) +
         '</div><button class="pill-close" type="button" aria-label="Remove queued prompt" data-index="' +
         index +
         '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button></div>' +
-        targetDisclosureHtml(prompt.target) +
+        promptDisclosureHtml(prompt) +
         (prompt._luxeQueueError ? '<div class="pill-error">' + escapeHtml(prompt._luxeQueueError) + "</div>" : "") +
         "</div>",
     )
@@ -343,24 +384,32 @@ async function copyText(text) {
   return true;
 }
 
-function addChat(role, text, shouldScroll = true) {
+// A receipt is not a message. It records that a queued item was delivered, so it gets a
+// quiet one-line treatment rather than a speech bubble with a "YOU" label - the reviewer
+// did not say "Queue answered - Billing plan", Luxe did.
+function addChat(role, text, shouldScroll = true, kind = "") {
   if (!text) return;
 
   const el = document.createElement("div");
-  el.className = "bubble " + role;
-  el.innerHTML = "<small>" + (role === "agent" ? "Agent" : "You") + "</small><div>" + escapeHtml(text) + "</div>";
+  if (kind === "receipt") {
+    el.className = "chat-receipt";
+    el.innerHTML = '<span class="chat-receipt-mark" aria-hidden="true"></span><span>' + escapeHtml(text) + "</span>";
+  } else {
+    el.className = "bubble " + role;
+    el.innerHTML = "<small>" + (role === "agent" ? "Agent" : "You") + "</small><div>" + escapeHtml(text) + "</div>";
+  }
   chatLog.appendChild(el);
   if (shouldScroll) scrollElementIntoView(el);
   return el;
 }
 
 function syncChat(chat) {
-  for (const el of [...chatLog.querySelectorAll(".bubble.user,.bubble.agent:not(.agent-working)")]) {
+  for (const el of [...chatLog.querySelectorAll(".bubble.user,.bubble.agent:not(.agent-working),.chat-receipt")]) {
     el.remove();
   }
 
   let lastChatBubble = null;
-  for (const item of chat) lastChatBubble = addChat(item.role, item.text, false) || lastChatBubble;
+  for (const item of chat) lastChatBubble = addChat(item.role, item.text, false, item.kind) || lastChatBubble;
   if (workingBubble) {
     chatLog.appendChild(workingBubble);
     scrollElementIntoView(workingBubble);
@@ -478,6 +527,11 @@ function normalizeQueuedPrompt(prompt, { preserveBrowserMetadata = false } = {})
     selector: String(prompt?.selector || ""),
     tag: String(prompt?.tag || ""),
   };
+  // Bounded here as well as in the SDK: this path also loads prompts back out of
+  // sessionStorage, which anything running in the page could have written to. Omitted
+  // when absent so a prompt without a topic keeps the shape it has always had.
+  const topic = String(prompt?.topic || "").slice(0, 80);
+  if (topic) normalized.topic = topic;
   const target = normalizeQueueTarget(prompt?.target);
   if (target) normalized.target = target;
   const queueKey = promptQueueKey(prompt);
@@ -516,6 +570,9 @@ function stripInternalPromptFields(prompt) {
     selector: normalized.selector,
     tag: normalized.tag,
   };
+  // Omitted rather than sent empty, like target: every field on the wire is one the
+  // reviewer confirmed, and an always-present "" is noise in the payload the agent reads.
+  if (normalized.topic) clean.topic = normalized.topic;
   if (normalized.target) clean.target = normalized.target;
   return clean;
 }
@@ -1689,6 +1746,6 @@ if (!initialEnded) {
 }
 
 render();
-initialChat.forEach((item) => addChat(item.role, item.text));
+initialChat.forEach((item) => addChat(item.role, item.text, true, item.kind));
 if (initialEnded) markSessionEnded();
 else setAgentPresence("waiting");

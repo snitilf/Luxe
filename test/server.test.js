@@ -666,9 +666,15 @@ test("queued pills are dashed and sent pills are solid", async () => {
   assert.match(css, /\.pill\.sent\{[^}]*border-color:var\(--hair\)/);
   assert.match(css, /\.pill\.sent\{[^}]*background:var\(--surface-2\)/);
   assert.match(css, /\.pill\.sent\{[^}]*color:var\(--ink-2\)/);
-  // The queued pill carries a clock glyph, the sent pill a check.
-  assert.match(js, /PILL_CLOCK_ICON/);
-  assert.match(js, /PILL_SENT_ICON/);
+  // The border treatment is the ONLY thing distinguishing queued from sending. There is
+  // deliberately no state glyph: a 24px outlined circle beside two lines of text competes
+  // with them, and it was half of the reported noise.
+  assert.doesNotMatch(js, /PILL_CLOCK_ICON|PILL_SENT_ICON|pill-state/);
+  // The face carries the topic; everything an agent needs to locate the target is behind
+  // the disclosure.
+  assert.match(js, /<div class="pill-topic">/);
+  assert.match(js, /<summary>Details<\/summary>/);
+  assert.doesNotMatch(css, /\.pill-selector\{/);
 });
 
 test("chrome includes a chat-like prompt composer and agent reply listener", async () => {
@@ -857,9 +863,8 @@ test("chrome puts queued annotations above the chat composer as preview pills", 
     /<div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"><\/div><div class="annotation-pills" id="annotationPills"><\/div><\/div><div class="composer">/,
   );
   assert.match(js, /class="pill/);
-  assert.match(js, /pill-preview/);
+  assert.match(js, /pill-topic/);
   assert.match(js, /removeQueuedPrompt/);
-  assert.match(js, /pill-context/);
   assert.match(css, /\.pill-fields\{[^}]*flex-direction:column/);
   assert.doesNotMatch(js, /togglePill/);
   assert.doesNotMatch(html, /<h2>Queued Annotations<\/h2>/);
@@ -890,14 +895,16 @@ test("annotation pills show human fields inline and disclose structured target f
   const js = await chromeClientSource();
   const css = await chromeCssSource();
 
-  assert.match(js, /prompt\.prompt \? '<div class="pill-preview">/);
-  assert.match(js, /prompt\.text/);
-  assert.match(js, /prompt\.selector/);
-  assert.match(js, /prompt\.tag/);
-  assert.match(js, /aria-label="Text: /);
-  assert.match(js, /class="visually-hidden">Selector: <\/span><code>/);
-  assert.match(js, /aria-label="Tag: /);
-  assert.match(js, /<details class="pill-target-details"><summary>Target details<\/summary><dl>/);
+  // The face names the item. The selector, the quoted source text and the tag are how an
+  // agent locates a target rather than how a reviewer recognises their own question, so
+  // they sit behind the disclosure with the structured target fields.
+  assert.match(js, /'<div class="pill-topic">'/);
+  assert.match(js, /<details class="pill-target-details"><summary>Details<\/summary><dl>/);
+  assert.match(js, /rows\.push\(\["Kind", prompt\.tag\]\)/);
+  assert.match(js, /rows\.push\(\["Text", prompt\.text\]\)/);
+  assert.match(js, /rows\.push\(\["Selector", prompt\.selector\]\)/);
+  // Kept accessible rather than hover-only: upstream used a hover tooltip, which is
+  // unreachable by touch and by keyboard.
   assert.match(css, /\.pill-wrap\{[^}]*width:100%/);
   assert.match(css, /\.pill-target-details\{[^}]*width:100%/);
   assert.match(css, /\.pill-target-details summary\{[^}]*cursor:pointer/);

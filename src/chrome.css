@@ -545,6 +545,27 @@ body {
   }
 }
 
+/* A delivered queued item. Deliberately not a bubble: nobody said this, it is the
+ * conversation's own note that something was handed over. One line, second ink, with a
+ * small cocoa dot as the only mark. */
+.chat-receipt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: stretch;
+  padding: 2px 2px 2px 0;
+  color: var(--ink-2);
+  font-size: var(--text-label);
+  line-height: var(--leading-tight);
+}
+.chat-receipt-mark {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--dark-fill);
+}
+
 /* ---- Queued and sent pills --------------------------------------------- */
 .annotation-pills {
   display: flex;
@@ -566,7 +587,7 @@ body {
 }
 .pill {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   max-width: 100%;
   border: var(--stroke-hair) dashed var(--strong);
@@ -582,46 +603,29 @@ body {
   background: var(--surface-2);
   color: var(--ink-2);
 }
-.pill-state {
-  flex: none;
-  display: flex;
-  color: currentColor;
-  margin-top: 2px;
-}
 .pill-fields {
   display: flex;
   flex: 1;
   min-width: 0;
   flex-direction: column;
-  gap: 5px;
+  gap: 2px;
 }
-.pill-context {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  min-width: 0;
-  gap: 6px;
-  line-height: var(--leading-tight);
-}
-.pill-preview {
+/* The topic is the line that identifies the item, so it takes the reading ink. Both
+ * lines are clamped to one line each: a queued pill is a receipt, not the content. */
+.pill-topic {
   color: var(--ink-1);
-  line-height: var(--leading-body);
-  overflow-wrap: anywhere;
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.pill-text {
+.pill-detail {
   color: var(--ink-2);
-  overflow-wrap: anywhere;
-}
-.pill-selector {
-  color: var(--ink-2);
-  font-family: var(--font-mono);
-  letter-spacing: var(--tracking-mono);
-  overflow-wrap: anywhere;
-}
-.pill-selector code {
-  color: inherit;
-  font: inherit;
-  letter-spacing: inherit;
+  line-height: var(--leading-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .visually-hidden {
   position: absolute;
@@ -662,20 +666,35 @@ body {
 }
 
 /* Tooltip: dark fill, per the component table. */
+/* Closed, this is a text affordance rather than a card: a compact pill followed by an
+ * equally heavy "Details" box has the same visual weight as the pill it belongs to, and
+ * undoes the compaction. The surface only appears once it is open and there is something
+ * to hold. */
 .pill-target-details {
   width: 100%;
-  margin-top: 8px;
+  margin-top: 2px;
   border-radius: var(--radius-inner);
-  border: var(--stroke-hair) solid var(--hair);
-  background: var(--surface-2);
+  border: var(--stroke-hair) solid transparent;
   color: var(--ink-1);
   font-size: var(--text-label);
 }
+.pill-target-details[open] {
+  margin-top: 6px;
+  border-color: var(--hair);
+  background: var(--surface-2);
+}
 .pill-target-details summary {
   cursor: pointer;
+  padding: 2px 12px;
+  color: var(--ink-3);
+}
+.pill-target-details[open] summary {
   padding: 7px 10px;
   color: var(--ink-2);
   font-weight: var(--weight-medium);
+}
+.pill-target-details summary:hover {
+  color: var(--ink-2);
 }
 .pill-target-details dl {
   display: grid;

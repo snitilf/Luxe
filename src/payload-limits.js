@@ -4,6 +4,9 @@ export const CONTEXT_MAX_BYTES = 4 * 1024;
 export const SELECTOR_MAX_CHARS = 512;
 export const PROMPT_BATCH_MAX = 100;
 export const TARGET_IDENTIFIER_MAX_CHARS = 512;
+// A topic is a label, not content: it is one line in a pill and one line in the
+// conversation. The chrome trims to 60 for display; this is the transport bound.
+export const TOPIC_MAX_CHARS = 80;
 export const TEXT_RANGE_PATH_MAX_SEGMENTS = 64;
 export const WHITEBOARD_SERIALIZED_MAX_BYTES = 8 * 1024 * 1024;
 export const WHITEBOARD_PNG_MAX_BYTES = 8 * 1024 * 1024;
@@ -191,6 +194,15 @@ export function normalizePromptPayload(prompt) {
       sizeCode: "prompt_too_large",
     }),
   };
+  // A short human name for the question this answers. It reaches the conversation receipt
+  // and therefore the agent's chat history, so it is bounded like every other
+  // artifact-supplied string rather than trusted. Omitted when absent, like target, so a
+  // prompt without one keeps the shape the agent has always received.
+  const topic = requireCharacterBoundedString(prompt.topic, "prompt.topic", TOPIC_MAX_CHARS, {
+    allowMissing: true,
+    sizeCode: "prompt_too_large",
+  });
+  if (topic) normalized.topic = topic;
   if (prompt.target !== undefined) normalized.target = normalizeTarget(prompt.target);
   return normalized;
 }
