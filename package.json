@@ -23,6 +23,7 @@
     "lint": "eslint bin src test scripts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "kitchen-sink": "npm run build && node bin/luxe.js copy-code-assets examples/kitchen-sink.html && node bin/luxe.js examples/kitchen-sink.html",
     "naming": "node scripts/check-naming.js",
     "release-config": "node scripts/check-release-config.js",
     "prepack": "npm run build",

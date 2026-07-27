@@ -10,3 +10,8 @@ CHANGELOG.md
 # the check chain against its own generator. The skill has its own formatting
 # gate instead: scripts/check-design-adherence.js.
 .agents
+
+# The kitchen-sink artifact is a verified Luxe output kept byte-for-byte as the
+# agent wrote it, so it stays a faithful sample of what Luxe actually produces.
+# Reformatting it would edit the thing under test.
+examples/kitchen-sink.html

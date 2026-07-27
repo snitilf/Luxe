@@ -12,3 +12,8 @@ npm-debug.log*
 /.nyc_output
 *.tgz
 *.log
+
+# The code-review browser bundle copied beside the kitchen-sink artifact by
+# `npm run kitchen-sink`. It is 10 MB of build output, reproducible from
+# dist/design/ at any time, so it is never committed.
+examples/luxe-pierre-diffs-*.iife.js
