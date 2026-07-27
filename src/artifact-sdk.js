@@ -2109,11 +2109,67 @@ export function createArtifactSdk(
     head.insertBefore(style, head.firstChild);
   }
 
+  // The baseline can repair inline code and marks on a cocoa surface, but CSS cannot ask
+  // "is the thing behind me dark?" - the stylesheet can only match DaisyUI's semantic
+  // surface classes. An artifact that paints its own dark card leaves <mark> at the user
+  // agent's yellow-on-black, which is exactly the case that prompted the fix.
+  //
+  // So measure it. This is still a repair and not a restyle: it fires only where the
+  // surface really is dark, it only tags the ancestor so the existing rule applies, and it
+  // touches nothing else. Cheap because the candidate set is tiny - marks and inline code,
+  // not the document.
+  function tagDarkSurfaces() {
+    if (!artifactBaselineCss) return;
+    const candidates = document.querySelectorAll("mark, code, kbd, samp");
+    if (!candidates.length) return;
+    const decided = new Map();
+    for (const el of candidates) {
+      if (el.closest("[data-luxe-ui]") || el.closest("pre")) continue;
+      const surface = nearestPaintedAncestor(el);
+      if (!surface || decided.has(surface)) continue;
+      decided.set(surface, true);
+      if (isDarkSurface(surface)) surface.setAttribute("data-luxe-on-dark", "");
+    }
+  }
+
+  // The nearest ancestor that actually paints something. A transparent background means
+  // whatever is behind it shows through, so it is not the surface this text sits on.
+  function nearestPaintedAncestor(el) {
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      const background = getComputedStyle(node).backgroundColor;
+      const parts = String(background).match(/[\d.]+/g);
+      if (!parts) continue;
+      const alpha = parts.length > 3 ? Number(parts[3]) : 1;
+      if (alpha > 0.5) return node;
+    }
+    return null;
+  }
+
+  function isDarkSurface(node) {
+    const parts = String(getComputedStyle(node).backgroundColor).match(/[\d.]+/g);
+    if (!parts || parts.length < 3) return false;
+    const [r, g, b] = parts.slice(0, 3).map((value) => {
+      const channel = Number(value) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    // WCAG relative luminance. The threshold is where ivory text starts winning over ink
+    // text on the same surface, so "dark" means "a light foreground belongs here".
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.18;
+  }
+
   injectArtifactBaseline();
   setAnnotationMode(annotationMode);
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", startLayoutAudit, { once: true });
+    document.addEventListener(
+      "DOMContentLoaded",
+      () => {
+        tagDarkSurfaces();
+        startLayoutAudit();
+      },
+      { once: true },
+    );
   } else {
+    tagDarkSurfaces();
     startLayoutAudit();
   }
 

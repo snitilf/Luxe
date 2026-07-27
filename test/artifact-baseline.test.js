@@ -168,3 +168,23 @@ test("the export injects the baseline, which runtime injection cannot reach", as
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// CSS cannot ask "is the surface behind me dark?", so the stylesheet alone only repairs
+// code and marks inside DaisyUI's semantic surface classes. An artifact that paints its
+// own cocoa card left <mark> at the user agent's yellow-on-black - which is the exact case
+// that prompted the fix. The SDK measures the surface and tags it so the rule applies.
+test("the SDK tags genuinely dark surfaces so the on-dark repair can reach them", async () => {
+  const sdk = createSdkJs("abc", await readLuxeTokensCss(), await readArtifactBaselineCss());
+
+  assert.match(sdk, /function tagDarkSurfaces/);
+  assert.match(sdk, /querySelectorAll\("mark, code, kbd, samp"\)/);
+  assert.match(sdk, /setAttribute\("data-luxe-on-dark", ""\)/);
+  // A repair, not a restyle: it only fires where the surface really is dark.
+  assert.match(sdk, /0\.2126 \* r \+ 0\.7152 \* g \+ 0\.0722 \* b < 0\.18/);
+  // Luxe's own controls and highlighted code blocks are none of its business.
+  assert.match(sdk, /el\.closest\("\[data-luxe-ui\]"\) \|\| el\.closest\("pre"\)/);
+
+  // And the stylesheet honours the attribute the SDK sets.
+  const css = await readArtifactBaselineCss();
+  assert.match(css, /\[data-luxe-on-dark\]/);
+});
