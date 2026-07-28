@@ -81,6 +81,23 @@ test("every rule is inside the layer and carries no specificity", async () => {
   }
 });
 
+// The repair with the least visible test surface, and the one that already cost us: it
+// fixes `test/fixtures/layout-audit/control-broken-overflow.html`'s two-column grid before
+// the layout audit ever measures the page, which is how that fixture silently stopped
+// exhibiting the defect it was written for. No end-to-end assertion can stand in for this
+// one - deleting the rule leaves the audit reporting the same single warning on that
+// fixture (its nowrap badge, which no baseline rule can shrink), so the browser suite
+// would not notice. This is the only thing that notices.
+test("grid and flex children are given min-width:0, the classic overflow trap", async () => {
+  const css = await readArtifactBaselineCss();
+
+  assert.match(
+    css,
+    /:where\(\.grid, \.flex\) > \*,\s*:where\(\[class\*="grid-cols"\], \[class\*="flex-"\]\) > \*\s*\{[^}]*min-width:\s*0/,
+    "the baseline no longer gives grid/flex children min-width:0",
+  );
+});
+
 test("pierre diffs are exempt, because wrapping a split diff destroys its meaning", async () => {
   const css = await readArtifactBaselineCss();
   assert.match(css, /:where\(pre\):not\(:where\(\[data-diffs-container\]/);

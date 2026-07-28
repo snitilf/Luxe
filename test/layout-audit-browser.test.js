@@ -7,7 +7,12 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { shutdownBrowserSession } from "./helpers/browser-session.js";
+
 const runBrowserE2e = process.env.LUXE_BROWSER_E2E === "1";
+// A silent `skip: true` reads as coverage in the test output while asserting nothing, so
+// the reason names the command that actually runs these.
+const skipReason = runBrowserE2e ? false : "real-browser suite, needs Chrome - run `npm run check:browser`";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtures = path.join(repoRoot, "test/fixtures/layout-audit");
 
@@ -37,7 +42,9 @@ async function freePort() {
 
 test(
   "real browser layout audit stays silent on acceptable pages and reports one severe root per broken case",
-  { skip: !runBrowserE2e, timeout: 300_000 },
+  // ~200s on a fast laptop. A 2-core shared CI runner is materially slower, and a ceiling
+  // that trips on slowness rather than on a hang produces a bare, uninformative timeout.
+  { skip: skipReason, timeout: 720_000 },
   async () => {
     const temp = await mkdtemp(path.join(tmpdir(), "luxe-layout-browser-"));
     const port = await freePort();
@@ -116,6 +123,11 @@ test(
         audit(name, "390x844x1,mobile,touch", settleMs, 0);
       }
 
+      // Width-dependent by construction: the fixture's owner badge is an unbreakable
+      // nowrap run that ends inside the page at 1440 and ~168px past the right edge at
+      // 390. The fixture's grid also lacks min-width protection, but the artifact
+      // baseline repairs that one before the audit measures anything, so it is not what
+      // the mobile warning is about. See the comment in the fixture.
       audit("control-broken-overflow", "1440x1000x1", 3200, 0);
       audit("control-broken-overflow", "390x844x1,mobile,touch", 3200, 1);
       audit("control-broken-clipping", "1440x1000x1", 3200, 3);
@@ -160,8 +172,10 @@ test(
       assert.match(repaired, /gate.*false/);
       assert.match(repaired, /bannerHidden.*true/);
     } finally {
-      run(process.execPath, ["bin/luxe.js", "stop", "--port", String(port)], luxeEnv, 15_000);
-      run("chrome-devtools-axi", ["stop"], chromeEnv);
+      // Through the helper, not through `run`: `run` asserts on a non-zero exit, so a
+      // shutdown hiccup here would throw out of the `finally` and replace the assertion
+      // failure that brought us in.
+      shutdownBrowserSession({ repoRoot, port, luxeEnv, chromeEnv });
       await rm(temp, { recursive: true, force: true });
     }
   },
