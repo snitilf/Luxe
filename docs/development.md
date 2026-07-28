@@ -14,6 +14,7 @@ npm link
 
 ```sh
 npm run check          # Run all verification commands
+npm run check:browser  # Run the real-browser tests (needs a local Chrome)
 npm run build          # Bundle the publishable CLI, chrome, and design assets
 npm run build:skill    # Regenerate the installable luxe skill
 npm test               # Run node:test tests
@@ -25,6 +26,23 @@ npm run naming         # Check that no upstream identifiers leaked in
 
 `npm run check` is the gate.
 Run it green before every commit.
+
+## Real-browser tests
+
+Some assertions are only true of a rendered page - hit target sizes, control strip position, computed background and border - so they run against a real Chrome.
+They are gated on `LUXE_BROWSER_E2E=1` and stay out of `npm run check`, which would otherwise become slow and browser-dependent for every local run.
+`npm run check:browser` sets the gate and runs every test file that reads it, so a newly added gated suite is picked up automatically.
+It runs one suite per process, so two Chromes never compete for the same two cores, and it fails if a discovered suite reported SKIP or reported no result at all.
+Discovery on its own would still let the whole thing pass with zero coverage: rename the gate, compare it against a different value, or read it through a helper, and every suite silently skips while the script exits 0.
+When the gate is off, those tests report as skipped with the command that runs them, never as passed.
+
+It needs a local Chrome, plus two CLIs: `chrome-devtools-axi`, and the `chrome-devtools-mcp` its bridge spawns to speak CDP.
+Both are pinned `devDependencies`, so `npm ci` installs them and npm puts `chrome-devtools-axi` on `PATH` for the `check:browser` script - no global install, and the versions are locked like every other dependency.
+Declaring `chrome-devtools-mcp` is not enough by itself: the bridge resolves it from `CHROME_DEVTOOLS_AXI_MCP_PATH`, then a global install, then `npx -y chrome-devtools-mcp@latest`.
+That last fallback fetches an unpinned package over the network mid-test and runs it with full rights, so `check:browser` exports the env var at the installed copy and the whole chain stays locked.
+
+CI runs them as a separate `browser-tests` job on ubuntu-latest only, since rendered geometry is a fact about Chrome rather than about the host OS.
+Each suite carries a 12-minute `timeout` against ~200s for the slowest one locally, and the job cap is 30 minutes - sized so a hang trips the per-suite ceiling, which names the suite, rather than the job cap, which prints nothing.
 
 ## Kitchen sink
 

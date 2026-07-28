@@ -30,6 +30,65 @@ test("check script runs all verification commands", async () => {
   ]);
 });
 
+// The browser suites are gated on an env var, so nothing fails when they stop running -
+// they just report SKIP forever and read as coverage. `check:browser` is the only thing
+// that runs them, so it has to exist, stay out of the local gate (real Chrome, tens of
+// seconds), and stay wired into CI.
+test("browser tests have their own script, outside check, and run in CI", async () => {
+  const packageJson = await readPackageJson();
+  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+
+  assert.equal(packageJson.scripts["check:browser"], "node scripts/run-browser-tests.js");
+  assert.doesNotMatch(packageJson.scripts.check, /check:browser/);
+  assert.match(workflow, /run: npm run check:browser/);
+});
+
+// The CLI that drives Chrome used to be an undeclared prerequisite, present only because
+// of a global install, with CI pinning it by hand. It is a devDependency now, which is
+// what puts it on PATH for `check:browser` and locks it in package-lock.json. A range
+// would let a CLI release change what CI runs, and a reinstated global step would let the
+// declared version drift away from the one actually exercised.
+//
+// chrome-devtools-axi is only half the chain: its bridge spawns chrome-devtools-mcp,
+// which is the process that actually drives Chrome. Left alone it runs
+// `npx -y chrome-devtools-mcp@latest` - an unpinned package fetched over the network
+// mid-test and executed with full rights in CI. Pinning it as a devDependency only helps
+// if the runner points the bridge at that copy, so both halves are asserted here.
+const BROWSER_CLI_PACKAGES = ["chrome-devtools-axi", "chrome-devtools-mcp"];
+
+test("the browser-driving CLIs are pinned devDependencies, not global installs", async () => {
+  const packageJson = await readPackageJson();
+  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+
+  for (const name of BROWSER_CLI_PACKAGES) {
+    assert.match(packageJson.devDependencies[name] ?? "", /^\d+\.\d+\.\d+$/, `${name} must be pinned exactly`);
+  }
+
+  // Matched per line and per part, not as one fixed phrase: `npm i -g`, `npm add -g`,
+  // `npm install --global` and a trailing `-g` are the same reinstated global install,
+  // and a single literal regex waves all of them through.
+  const installsGlobally = /\bnpm\s+(?:install|i|add)\b/;
+  const globalFlag = /(?:^|\s)(?:-g|--global)(?:\s|$)/;
+  for (const line of workflow.split("\n")) {
+    if (!installsGlobally.test(line) || !globalFlag.test(line)) continue;
+    for (const name of BROWSER_CLI_PACKAGES) {
+      assert.ok(
+        !line.includes(name),
+        `CI installs ${name} globally, which lets the exercised version drift from the pinned one:\n${line.trim()}`,
+      );
+    }
+  }
+});
+
+// The pin above is worth nothing unless the bridge is told to use it: without
+// CHROME_DEVTOOLS_AXI_MCP_PATH it falls through to `npx -y chrome-devtools-mcp@latest`.
+test("the browser runner points the bridge at the pinned chrome-devtools-mcp", async () => {
+  const runner = await readFile(new URL("../scripts/run-browser-tests.js", import.meta.url), "utf8");
+
+  assert.match(runner, /CHROME_DEVTOOLS_AXI_MCP_PATH/);
+  assert.match(runner, /node_modules["'\s,]+.*chrome-devtools-mcp/);
+});
+
 test("installable skill stays in sync with the no-args home output", async () => {
   const { createSkillMarkdown } = await import("../src/skill.js");
   const committed = await readFile(new URL("../skills/luxe/SKILL.md", import.meta.url), "utf8");

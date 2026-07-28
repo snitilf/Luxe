@@ -25,3 +25,41 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+
+  # The real-browser suites are deliberately a separate job on one platform. They assert
+  # rendered geometry, which is a fact about Chrome rather than about the host OS, so the
+  # extra signal from a second and third run is near zero - while these are the flakiest
+  # tests in the repo, and running them three times per push would triple that flake
+  # surface. Platform-specific behaviour (paths, shell, line endings) stays covered by the
+  # matrix above. A separate job also means a browser failure shows up under its own name
+  # in the CI UI instead of being buried inside a step called "npm run check".
+  #
+  # The budget is sized so the per-test ceiling always fires before the job cap. Each
+  # suite gets 12 minutes (`timeout` in the suite itself), against ~200s for the slowest
+  # of them on a fast laptop - enough headroom for a 2-core shared runner. The suites run
+  # one at a time, so the worst case is checkout and install plus two ceilings, which is
+  # what 30 minutes covers. A job killed at the cap prints nothing useful; a test killed
+  # at its own ceiling prints which suite hung and where.
+  browser-tests:
+    name: browser-tests (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Both browser suites drive Chrome through the `chrome-devtools-axi` CLI, which in
+      # turn spawns `chrome-devtools-mcp` - the process that actually speaks CDP. Both are
+      # pinned devDependencies, so `npm ci` above installs them from the lockfile and npm
+      # puts node_modules/.bin on PATH for the script below; no separate global install.
+      # The second half of that chain is not pinned by declaring it: left alone the bridge
+      # runs `npx -y chrome-devtools-mcp@latest`, fetching an unpinned package over the
+      # network mid-test. scripts/run-browser-tests.js exports
+      # CHROME_DEVTOOLS_AXI_MCP_PATH at the installed copy, which is what makes a release
+      # of either CLI unable to change what this job runs.
+      - name: Run real-browser tests (npm run check:browser)
+        run: npm run check:browser

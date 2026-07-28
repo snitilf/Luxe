@@ -14,7 +14,12 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { shutdownBrowserSession } from "./helpers/browser-session.js";
+
 const runBrowserE2e = process.env.LUXE_BROWSER_E2E === "1";
+// A silent `skip: true` reads as coverage in the test output while asserting nothing, so
+// the reason names the command that actually runs these.
+const skipReason = runBrowserE2e ? false : "real-browser suite, needs Chrome - run `npm run check:browser`";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function run(command, args, env, timeout = 45_000) {
@@ -82,7 +87,9 @@ await mermaid.run({ nodes: [...document.querySelectorAll(".mermaid")] });
 
 test(
   "the diagram toolbar sits below the diagram and drives the viewport",
-  { skip: !runBrowserE2e, timeout: 300_000 },
+  // Same ceiling as the layout audit suite: sized for a slow shared runner, so it only
+  // trips on a genuine hang. See the browser-tests job budget in .github/workflows/ci.yml.
+  { skip: skipReason, timeout: 720_000 },
   async () => {
     const temp = await mkdtemp(path.join(tmpdir(), "luxe-toolbar-browser-"));
     const port = await freePort();
@@ -404,6 +411,11 @@ test(
       assert.equal(snapshot.carriesDiagram, true, "the snapshot should still carry the diagram");
       assert.equal(snapshot.leaksToolbar, false, "Luxe controls leaked into the agent's snapshot");
     } finally {
+      // The bridge and the Chrome it launched outlive this process, so they have to be
+      // stopped here rather than left to the temp-directory sweep. The helper reports its
+      // own trouble instead of throwing, so a shutdown hiccup cannot replace the
+      // assertion failure that brought us into this block.
+      shutdownBrowserSession({ repoRoot, port, luxeEnv, chromeEnv });
       await rm(temp, { recursive: true, force: true });
     }
   },
