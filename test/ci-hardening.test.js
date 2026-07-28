@@ -11,8 +11,11 @@ async function read(relativePath) {
 test("the hosted Chrome regression is force-killed after its deadline", async () => {
   const source = await read("test/whiteboard-render.browser.test.js");
 
-  assert.match(source, /timeout:\s*18_000/);
-  assert.match(source, /killSignal:\s*"SIGKILL"/);
+  // Chrome with --dump-dom never exits on its own, so the regression must always hold a finite
+  // deadline and always end the process itself, whether the dump arrived or the deadline did.
+  assert.match(source, /const chromeTimeoutMs = \d[\d_]*;/);
+  assert.match(source, /setTimeout\(\(\) => finish\(true\), chromeTimeoutMs\)/);
+  assert.match(source, /child\.kill\("SIGKILL"\)/);
 });
 
 test("every GitHub Actions job has a finite timeout", async () => {
