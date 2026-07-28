@@ -27,7 +27,7 @@ Both `tokens.css` and `adherence.json` are generated. Change `src/luxe-tokens.cs
 1. **Light only.** One theme. No dark palette, no `prefers-color-scheme`, no toggle. This is a decision, not an omission.
 2. **Colour is information.** Charts get colour. Status gets colour. The annotation stroke gets colour. Everything else is paper and ink.
 3. **One accent, one meaning.** The gold marks annotation and selected text, and nothing else. It is not the focus ring, not a chart colour, not a link, not a button.
-4. **Two families, four sizes, two weights.** Emphasis is weight 500 or a size already in the scale.
+4. **Two content families, four content sizes, two weights - plus one brand face and one brand size, legal on the wordmark and nowhere else.** Emphasis is weight 500 or a size already in the scale.
 5. **Never hard-code a value.** Every colour, radius and size resolves through `var(--token)`. The only exceptions are SVG artwork and anything handed to a third-party library as a literal, and both are pinned by tests.
 6. **Depth is planes and hairlines.** One shadow token exists and it belongs to the modal.
 7. **Status is icon plus label**, never colour alone. **Charts carry direct labels or printed values**, never a legend alone.
@@ -38,5 +38,5 @@ Both `tokens.css` and `adherence.json` are generated. Change `src/luxe-tokens.cs
 1. Copy `tokens.css` beside your file and `@import` it, or inline the `:root` block if the file has to stand alone.
 2. Set `font-family: var(--font-sans)` on the body and build with the semantic variables.
 3. Author diagrams in Mermaid with the shipped theme rather than drawing them from divs. `npx -y editeur-luxe design` prints the snippet.
-4. Reference `assets/luxe-wordmark.svg` for the brand mark. Do not redraw it and do not set the name in another face.
+4. Reference `assets/luxe-wordmark.svg` for the brand mark, and `assets/luxe-mark.svg` for the mark alone. Do not redraw either, and do not set the name in another face: it is Newsreader at medium, the one place the serif is allowed.
 5. Run the lint on what you produced: `node scripts/check-design-adherence.js <your-file>`.

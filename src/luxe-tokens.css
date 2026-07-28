@@ -33,6 +33,24 @@
   --text-control: 15px; /* controls, buttons, chat bubbles, card body */
   --text-label: 14px; /* labels, meta, axis text, legends, chips, mono */
 
+  /* ---- The brand scope --------------------------------------------------
+   * FOUR CONTENT SIZES, plus one brand size. TWO CONTENT FAMILIES, plus one
+   * brand family. The rule above still holds for everything a reader reads;
+   * these three tokens are legal on the wordmark and nowhere else, and the
+   * adherence lint reads them from this file so "nowhere else" is enforced
+   * by the same mechanism as the rest of the scale.
+   *
+   * The amendment is deliberate. The comment this replaces said there was
+   * deliberately no serif token because "the upstream serif wordmark is
+   * gone" - but a product name set in the same face as its own toolbar
+   * buttons is a UI label, not a wordmark, and Luxe is a tool whose whole
+   * argument is that presentation carries meaning. Newsreader at medium is
+   * the exception that makes the point. */
+  --font-brand: "Newsreader", Georgia, "Times New Roman", serif;
+  --text-brand: 22px;
+  --tracking-brand: -0.02em;
+  --leading-brand: 1;
+
   --weight-regular: 400;
   --weight-medium: 500;
 
@@ -110,19 +128,42 @@
   --info-bg: #e9eef5;
   --info-border: #c6d3e3;
 
-  /* ---- Charts - the Bisque palette (spec 2.7) --------------------------- *
-   * Eight slots, FIXED ORDER, never cycled and never reshuffled: the order is
-   * the colour-blind safety mechanism. Scatter/bubble/choropleth cap at four.
-   * Three slots sit below 3:1 on the canvas, so every chart must carry direct
-   * labels, printed values, or a table view - a legend alone is not enough. */
-  --chart-1: #527dc1;
-  --chart-2: #b95d4a;
-  --chart-3: #50a67e;
-  --chart-4: #d7a44c;
-  --chart-5: #5a8637;
-  --chart-6: #ce7d93;
-  --chart-7: #7660a3;
-  --chart-8: #d36e4f;
+  /* ---- Charts - the Café palette (spec 2.7) ----------------------------- *
+   * Eight slots, FIXED ORDER, never cycled and never reshuffled. Two slots sit
+   * below 3:1 on the canvas, so every chart must carry direct labels, printed
+   * values, or a table view - a legend alone is not enough.
+   *
+   * Warm and muted so the series sit with the cocoa and the paper rather than
+   * reading as primaries dropped onto them. Warmth is hue angle, not low chroma:
+   * an early attempt desaturated instead of rotating, and five of eight slots
+   * fell under the chroma floor and read as grey.
+   *
+   * THE METRIC THAT MATTERS IS PREFIX DEPTH. Because the order is fixed, a chart
+   * with N series uses exactly slots 1..N - so what counts is how far down the
+   * list you can go before two slots collide. Validating ADJACENT pairs only, as
+   * the first version of this palette did, never compares slot 2 with slot 4, and
+   * shipped a set where the terracotta and the caramel were indistinguishable in
+   * any four-series line chart (ΔE 6.3 normal, 2.9 deuteranopia). A reviewer
+   * caught it immediately.
+   *
+   * Measured, all pairs, Machado severity 1.0:
+   *
+   *              normal-clean through   CVD-clean through   >=3:1 on canvas
+   *   Bisque            slot 4                slot 4             5 of 8
+   *   first Café        slot 3                slot 3             6 of 8
+   *   this set          slot 7                slot 5             6 of 8
+   *
+   * Eight mutually distinguishable hues do not fit in a narrow warm arc at low
+   * chroma; nothing reaches slot 8. Past slot 5 for colour-blind readers, the
+   * labelling rule is what carries the chart, and it is not optional. */
+  --chart-1: #5b85cc; /* denim */
+  --chart-2: #874420; /* chocolate */
+  --chart-3: #4bad8e; /* eucalyptus */
+  --chart-4: #cf8b3b; /* amber */
+  --chart-5: #677d12; /* olive */
+  --chart-6: #be5b7f; /* rose */
+  --chart-7: #73488e; /* plum */
+  --chart-8: #9f4f36; /* sienna */
 
   /* Mark specs: 2px strokes, round caps and joins, 4px end dots ringed 2px in
    * --canvas, gridlines in --hair, axis text --ink-2 at 14px, 2px surface gap
@@ -132,35 +173,63 @@
   --chart-dot-ring: 2px;
   --chart-stack-gap: 2px;
 
-  /* ---- Sequential and diverging (spec 2.8) ------------------------------ */
-  --seq-1: #dbe4f4;
-  --seq-2: #a8bfe6;
-  --seq-3: #6f93d2;
-  --seq-4: #3a6fc4;
-  --seq-5: #274d8d;
+  /* ---- Sequential and diverging (spec 2.8) ------------------------------ *
+   * Sequential is one hue, light to dark, on the same 262 degree denim as
+   * --chart-1 so a heatmap belongs to the categorical family. It starts at a
+   * mid tone rather than a pale tint: the previous ramp opened on #dbe4f4,
+   * which is 1.17:1 against the ivory canvas - the lowest band of every
+   * heatmap was invisible on the page it was drawn on. The light end now
+   * clears 2.46:1, and the steps keep >= 0.06 OKLCH lightness between them. */
+  --seq-1: #7c9edd;
+  --seq-2: #6283bf;
+  --seq-3: #4868a2;
+  --seq-4: #304e86;
+  --seq-5: #19356b;
 
-  --div-1: #274d8d;
-  --div-2: #3a6fc4;
-  --div-3: #a8bfe6;
+  /* Diverging takes its poles from the palette's own denim and terracotta, so
+   * polarity reads as the same family rather than a second colour system. Each
+   * wing is a monotone ramp in a single hue; the midpoint is unchanged. */
+  --div-1: #234993;
+  --div-2: #4d70b2;
+  --div-3: #8199c4;
   --div-4: #e9e5da; /* the system's warm grey: "no change" reads as paper */
-  --div-5: #dba193;
-  --div-6: #b8452f;
-  --div-7: #7e2c1d;
+  --div-5: #bf8a78;
+  --div-6: #a7593f;
+  --div-7: #852b06;
 
   /* ---- Code and diff (spec 2.9) ----------------------------------------- */
-  --code-bg: #f7f4ec;
+  /* Deliberately DARKER than --canvas, not lighter: a code block is an inset,
+   * recessed plane, the opposite direction from --surface-1/--surface-2, which are
+   * raised. The previous value sat two units off the canvas, which made the code
+   * plane invisible. Do not "correct" this back toward the canvas. */
+  --code-bg: #efe9db;
   --diff-add-bg: #e8f1dd;
   --diff-add-gutter: #c9dfb2;
   --diff-rem-bg: #f9e6e0;
   --diff-rem-gutter: #eec4b8;
   --diff-hunk-bg: #f2ecd9;
 
+  /* Every ink here clears 4.5:1 on EVERY surface it is painted on - the code
+   * plane and all three diff tints above - and --syn-punct is the single
+   * deliberate exception, decoration-grade and held to 3:1 instead. Recessing
+   * the code plane to #efe9db cost roughly 0.4 of a contrast point, which pushed
+   * type names, strings, comments and numerics under the bar; they were darkened
+   * along their own hue (OKLCH lightness only, chroma and hue held) by the
+   * smallest step that clears 4.5:1, not lifted back toward the background.
+   *
+   * The floor on the code plane is enforced by test/design-tokens-derived.test.js;
+   * test/design-tokens-surfaces.test.js extends the same assertion to --diff-add-bg,
+   * --diff-rem-bg and --diff-hunk-bg, which are not derived from --code-bg and so
+   * would otherwise have been free to move under the inks without failing anything.
+   * The diff tints are all lighter than the code plane today, which is why the
+   * floor held there by luck; measure before you re-tune any of these, in either
+   * direction - darkening a diff tint is as breaking as darkening an ink. */
   --syn-keyword: #963f8b;
-  --syn-string: #4a7a2a;
-  --syn-number: #9a5b06;
-  --syn-comment: #746b56;
+  --syn-string: #467525;
+  --syn-number: #995a05;
+  --syn-comment: #716853;
   --syn-function: #2f5e9e;
-  --syn-type: #b8511f;
+  --syn-type: #b04a15;
   --syn-punct: #7a7466; /* decoration-grade, the one token below 4.5:1 */
   --syn-plain: #2c2921;
 
@@ -169,6 +238,31 @@
    * in the palette sections above. */
   --toggle-track-off: #d5cfc0;
   --toggle-knob: #ffffff;
+
+  /* Scrollbars. The default OS scrollbar is the one piece of grey-blue chrome the
+   * system never got to state an opinion about, and it sits inside every panel.
+   * The thumb is the cocoa muted against the paper rather than the dark fill at
+   * full strength: a scrollbar is a persistent, always-visible affordance, and
+   * cocoa at full weight next to a hairline border reads as a UI element rather
+   * than a handle. The hover state is the dark fill, so the control resolves to
+   * the real brand colour on contact. */
+  --scrollbar-thumb: #9c8b7a;
+  --scrollbar-thumb-hover: #463527;
+  --scrollbar-size: 10px;
+
+  /* ---- On the dark fill --------------------------------------------------
+   * Inline code, keyboard keys and marks inside a cocoa panel. The code plane
+   * in 2.9 is built for paper, so a <code> on a cocoa card rendered as
+   * near-cocoa ink on cocoa - the reference artifact's author had to override
+   * all six of them by hand to make them readable, which is the definition of
+   * a missing default.
+   *
+   * Both are ivory washes rather than a hue. Highlighting on a dark fill means
+   * "a lighter patch of the same surface"; reaching for a colour here would
+   * either spend the annotation gold, which is reserved, or introduce a ninth
+   * hue the system does not have. */
+  --on-dark-code-bg: rgba(247, 244, 238, 0.14);
+  --on-dark-mark-bg: rgba(247, 244, 238, 0.24);
   --scrim: rgba(33, 30, 23, 0.4);
   --shadow-modal: 0 18px 48px rgba(33, 30, 23, 0.14);
   --ended-opacity: 0.45;

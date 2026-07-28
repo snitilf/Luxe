@@ -259,11 +259,11 @@ test("design output prints copy-pasteable CDN URLs so agents can opt in to Daisy
   assert.match(output.design.cdn_snippet, /cdn\.jsdelivr\.net\/npm\/daisyui@/);
   assert.match(output.design.cdn_snippet, /cdn\.jsdelivr\.net\/npm\/daisyui@.*\/themes\.css/);
   assert.match(output.design.cdn_snippet, /cdn\.jsdelivr\.net\/npm\/@tailwindcss\/browser@/);
-  assert.match(output.design.layout_safety_snippet, /min-width: 0/);
-  assert.match(output.design.layout_safety_snippet, /overflow-wrap: anywhere/);
-  assert.match(output.design.layout_safety_snippet, /max-width: 100%/);
-  assert.match(output.design.layout_safety_note, /Optional copy-paste CSS/);
-  assert.match(output.design.layout_safety_note, /never auto-injects/);
+  // The three repairs that used to be an optional snippet are now injected by the
+  // baseline, so the note points there instead of offering a second copy to paste.
+  assert.equal(output.design.layout_safety_snippet, undefined);
+  assert.match(output.design.layout_safety_note, /artifact baseline/);
+  assert.match(output.design.layout_safety_note, /min-width on grid and flex children/);
   assert.match(
     output.design.cdn_urls.daisyui,
     /^https:\/\/cdn\.jsdelivr\.net\/npm\/daisyui@\d+\.\d+\.\d+\/daisyui\.css$/,
@@ -327,14 +327,14 @@ test("design output carries the chart palette and its labelling rule", () => {
   assert.match(output.charts.labelling_rule, /legend alone is not sufficient/i);
   assert.match(output.charts.labelling_rule, /below the 3:1 contrast floor/);
   assert.deepEqual(output.charts.palette, [
-    "#527dc1",
-    "#b95d4a",
-    "#50a67e",
-    "#d7a44c",
-    "#5a8637",
-    "#ce7d93",
-    "#7660a3",
-    "#d36e4f",
+    "#5b85cc",
+    "#874420",
+    "#4bad8e",
+    "#cf8b3b",
+    "#677d12",
+    "#be5b7f",
+    "#73488e",
+    "#9f4f36",
   ]);
   assert.ok(output.charts.palette_rules.some((rule) => /Fixed order, never cycled/.test(rule)));
   assert.ok(output.charts.palette_rules.some((rule) => /cap at four/.test(rule)));
@@ -350,16 +350,16 @@ test("design output ships the bespoke Luxe Shiki theme as usable JSON", () => {
 
   assert.equal(theme.name, "luxe");
   assert.equal(theme.type, "light");
-  assert.equal(theme.colors["editor.background"], "#f7f4ec");
+  assert.equal(theme.colors["editor.background"], "#efe9db");
   assert.equal(theme.colors["diffEditor.insertedTextBackground"], "#e8f1dd");
   assert.equal(theme.colors["diffEditor.removedTextBackground"], "#f9e6e0");
   const foreground = (scope) => theme.tokenColors.find((entry) => entry.scope.includes(scope))?.settings.foreground;
   assert.equal(foreground("keyword"), "#963f8b");
-  assert.equal(foreground("string"), "#4a7a2a");
-  assert.equal(foreground("constant.numeric"), "#9a5b06");
-  assert.equal(foreground("comment"), "#746b56");
+  assert.equal(foreground("string"), "#467525");
+  assert.equal(foreground("constant.numeric"), "#995a05");
+  assert.equal(foreground("comment"), "#716853");
   assert.equal(foreground("entity.name.function"), "#2f5e9e");
-  assert.equal(foreground("entity.name.type"), "#b8511f");
+  assert.equal(foreground("entity.name.type"), "#b04a15");
   assert.equal(foreground("punctuation"), "#7a7466");
   assert.match(output.code_theme.note, /bespoke Shiki theme/);
 });

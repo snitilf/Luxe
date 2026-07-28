@@ -54,7 +54,10 @@ export const PLAYBOOKS = [
     ],
     design_rules: [
       "Use semantic table markup when the data is tabular.",
-      "Protect long paths, code symbols, URLs, and prose from overflowing on narrow screens.",
+      "Protect long paths, code symbols, URLs, and prose from overflowing on narrow screens. Luxe's baseline already breaks unbreakable runs in cells, so this is about column count and content length, not about wrapping.",
+      "A table should fit its container. Wrapping cells carries you to a point; past it the honest fix is structural - fewer columns, a second table, or a card per record - not a wider page. Aim to fit at 768px.",
+      "If a table genuinely cannot fit, wrap it in a scroll container that is visibly a scroll container (`overflow-x-auto` plus a border or shadow edge), so the reader can see there is more. A silent overflow reads as a broken layout; an unmarked one reads as missing data.",
+      "Set table font size deliberately - 14px suits dense tables and keeps more columns legible without zooming. Luxe does not impose one.",
       "Use restrained color for status and severity so the table remains readable when printed or skimmed.",
     ],
     pitfalls: [
@@ -140,13 +143,19 @@ export const PLAYBOOKS = [
 <div id="diff"></div>
 <script src="./${PIERRE_DIFFS_ASSET_FILE}"></script>
 <script>
-  const { File, FileDiff } = window.${PIERRE_DIFFS_GLOBAL};
+  const { File, FileDiff, registerCustomTheme } = window.${PIERRE_DIFFS_GLOBAL};
 
   // Inline the JSON \`luxe design\` prints as code_theme.shiki_theme_json, or load it
   // from a sibling file - the artifact must stay portable, so do not fetch it remotely.
   const luxeShikiTheme = { /* ...code_theme.shiki_theme_json... */ };
 
-  const options = { theme: luxeShikiTheme, themeType: "light", overflow: "wrap" };
+  // The bundle resolves themes by NAME through a registry: it does not accept a theme
+  // object on \`options.theme\`. Passing the JSON directly fails at render time with
+  // \`No valid theme loader registered for "undefined"\` and every block comes out
+  // unhighlighted. Register the theme once, then name it.
+  registerCustomTheme("luxe", () => Promise.resolve(luxeShikiTheme));
+
+  const options = { theme: "luxe", themeType: "light", overflow: "wrap" };
   const oldFile = {
     name: "src/greeting.ts",
     contents: "export function greet(name: string) {\\n  return \\"Hello \\" + name;\\n}\\n\\nconsole.log(greet(\\"Luxe\\"));\\n",
@@ -169,12 +178,14 @@ export const PLAYBOOKS = [
 
 </script>
 \`\`\``,
-      "Register the bespoke Luxe Shiki theme printed by `luxe design` (`code_theme.shiki_theme_json`) and name it in the `theme` option, replacing the GitHub pair above. It is built against the Luxe code plane, and every one of its syntax tokens is deep enough to survive on the added and removed diff tints.",
-      'Use FileDiff diffStyle: "split" for side-by-side review and diffStyle: "unified" for stacked reading; keep overflow: "wrap" unless horizontal alignment is essential.',
+      'Register the bespoke Luxe Shiki theme printed by `luxe design` (`code_theme.shiki_theme_json`) with `registerCustomTheme("luxe", () => Promise.resolve(theme))`, then pass the NAME as `theme: "luxe"`, exactly as the snippet above shows. The bundle resolves themes through a name registry and never accepts a theme object, so `theme: themeJson` renders every block unhighlighted. The Luxe theme is built against the Luxe code plane, and every one of its syntax tokens is deep enough to survive on the added and removed diff tints.',
+      'Use FileDiff diffStyle: "split" for side-by-side review and diffStyle: "unified" for stacked reading; keep overflow: "wrap" unless horizontal alignment is essential. Below about 1024px a split diff stops being readable - choose unified, or let the artifact switch at that width.',
+      "Set code font size deliberately - 14px reads well and fits more columns before wrapping. Luxe's baseline wraps long lines in ordinary `<pre>` but leaves @pierre/diffs alone, because forcing a wrap onto a split diff destroys the line-for-line correspondence that is the point of a diff.",
       "Use @pierre/diffs line annotations, selections, and headers when calling out specific lines so notes stay attached to code.",
     ],
     pitfalls: [
       "Do not render code as static screenshots, plain <pre> blocks, or markdown pasted into HTML.",
+      "Do not pass a theme object to `options.theme`. It fails as an unhandled async rejection *after* `render()` has already returned, so nothing throws where you can see it and the block simply comes out empty or unhighlighted. Register by name instead, and check the console before shipping a code artifact.",
       "Do not choose an arbitrary stock Shiki theme. Its palette will not match the Luxe code plane, and its pale syntax tokens wash out on the diff tints.",
       "Do not show huge unrelated files when a focused render range, parsed patch file, or grouped summary would be clearer.",
       "Do not separate a claim from the code lines that prove it.",
@@ -196,6 +207,8 @@ export const PLAYBOOKS = [
     ],
     structure: [
       "Make each decision surface visible: what is being chosen, what the options mean, and what happens next.",
+      "Give the block a deliberate rhythm: the gap between a question and its own options must be SMALLER than the gap between one question and the next, and the submit control belongs with its question rather than floating equidistant between two. Even spacing everywhere is what makes a form read as a wall - the grouping is the information.",
+      "Keep a nested callout, note, or example close to the prose it belongs to. A callout with as much space above it as the section break before it looks like a new section.",
       "Keep reversible selection state local in the artifact until the user explicitly submits that question.",
       "Pair each question with a Submit or Queue answer control that queues exactly one prompt for the final answer.",
       "Show selected state separately from queued state so the user trusts what will be sent back.",
@@ -206,6 +219,7 @@ export const PLAYBOOKS = [
       "Use a per-question form submit or explicit Queue answer button to read the current values and call window.luxe.queuePrompt() exactly once for the final answer.",
       "Put data-luxe-action only on custom (non-native) elements that should act like a feedback control - typically a styled div or span you made clickable - so Luxe does not annotate it and shows a pointer cursor instead.",
       "Use data-luxe-question on a question wrapper or pass queueKey when multiple pre-send updates should replace the prior unsent answer for the same question.",
+      'Pass `topic` on every question: a short human name for what is being answered, like "Billing plan" or "Rollout date". It titles the queued pill and the "Queue answered - ..." line the reviewer sees in the conversation, so without it they read back a fragment of your prompt instead of their own question. `queueKey` is a dedupe key and is not a substitute - it is often an opaque id or a DOM path.',
       "Pass options such as tag, text, selector, target, data, queueKey, or element when they help the agent understand exactly what the user chose.",
       "Artifact controls may queue feedback only. The human must confirm transmission with Send to Agent or Send & End in the Luxe conversation chrome.",
       "Make queued prompts specific enough that the agent can act without asking a follow-up question.",
@@ -213,13 +227,14 @@ export const PLAYBOOKS = [
     ],
     pitfalls: [
       "Do not queue one prompt per radio change, checkbox toggle, dropdown change, or choice-button click when the user can still change their mind.",
+      "Do not toggle a DaisyUI `toast` with Tailwind's `hidden` class. `.toast` sets its own display, the two fight, and the toast silently never appears - it cost a live review session. Toggle inline `style.display` instead, and click the control once before shipping.",
       "Do not create controls whose queued prompt is unclear or too vague to execute.",
       "Do not hide the difference between selected locally and queued for the agent.",
       "Do not require interaction for content the user only needs to read.",
     ],
     luxe_notes: [
       "Luxe is strongest when the artifact becomes a focused review surface and not just a static page.",
-      'A native single-choice question should submit the final value: `<form data-luxe-question="plan" onsubmit="event.preventDefault(); const choice = new FormData(event.currentTarget).get(\'plan\'); if (choice) window.luxe.queuePrompt(\'Use the \' + choice + \' plan\', { tag: \'choice\', text: \'Plan: \' + choice, element: event.currentTarget, data: { question: \'plan\', answer: choice } });"><label><input type="radio" name="plan" value="Starter"> Starter</label><label><input type="radio" name="plan" value="Pro"> Pro</label><button type="submit">Queue this answer</button></form>`.',
+      'A native single-choice question should submit the final value: `<form data-luxe-question="plan" onsubmit="event.preventDefault(); const choice = new FormData(event.currentTarget).get(\'plan\'); if (choice) window.luxe.queuePrompt(\'Use the \' + choice + \' plan\', { tag: \'choice\', topic: \'Pricing plan\', text: \'Plan: \' + choice, element: event.currentTarget, data: { question: \'plan\', answer: choice } });"><label><input type="radio" name="plan" value="Starter"> Starter</label><label><input type="radio" name="plan" value="Pro"> Pro</label><button type="submit">Queue this answer</button></form>`.',
       "A custom choice UI should make option buttons update local state, then use a separate Queue answer button with data-luxe-action to queue the final selected value.",
       "Use window.luxe.queuePrompt for user intent, not internal analytics or UI-only state changes.",
       "End input paths by directing the user to confirm queued feedback from the Luxe conversation chrome.",

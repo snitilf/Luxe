@@ -1,0 +1,156 @@
+/* The artifact baseline: repairs Luxe applies to every artifact it shows.
+ *
+ * WHAT BELONGS HERE, AND WHAT DOES NOT
+ *
+ * Only repairs. Every rule below changes rendering exclusively when something is
+ * already broken - text that would be clipped, a token that would overflow its
+ * container, code that would be illegible on the surface behind it. None of them
+ * impose a look.
+ *
+ * Opinions live in the playbooks instead: code and table font sizes, table layout
+ * strategy, the rhythm between a question and its options, card spacing. Those are
+ * taste, they are what an author is entitled to disagree with, and injecting them
+ * would make Luxe restyle artifacts rather than repair them. `luxe playbook input`
+ * and `luxe playbook table` carry them.
+ *
+ * HOW IT LOSES TO THE ARTIFACT
+ *
+ * Three mechanisms, because the artifact must win by construction and not by luck:
+ *
+ *   1. `@layer luxe-baseline`, and the SDK inserts this stylesheet as the FIRST
+ *      child of <head>. Layer priority follows the order layers are first declared,
+ *      and that follows document position rather than insertion time - so declaring
+ *      it first makes it the lowest-priority layer even though the SDK runs last.
+ *      Appending it, which is the obvious thing to do, would make it the highest.
+ *   2. `:where()` around every selector, so nothing here has any specificity.
+ *   3. Unlayered author CSS already beats any layer, which covers the ordinary case.
+ *
+ * Opt out entirely with <html data-luxe-baseline="off">.
+ *
+ * TOKENS
+ *
+ * The `@luxe-baseline-tokens` marker below is replaced at build and serve time with
+ * namespaced `--luxe-bl-*` declarations carrying the values from src/luxe-tokens.css
+ * (see src/artifact-baseline.js). Namespaced because this lands inside a document
+ * Luxe does not own: defining `--canvas` or `--dark-fill` on an arbitrary artifact's
+ * :root would silently retheme any artifact that happens to use those names.
+ */
+
+@layer luxe-baseline {
+  :where(:root) {
+    /* @luxe-baseline-tokens */
+  }
+
+  /* ---- Overflow ---------------------------------------------------------
+   * A long path, URL, hash or identifier has no break opportunity in it, so it
+   * pushes its container wide and takes the page's horizontal scrollbar with it.
+   * Breaking anywhere is ugly exactly once, in the one place the alternative is
+   * a page that scrolls sideways. */
+  :where(p, li, dd, dt, blockquote, figcaption, h1, h2, h3, h4, h5, h6, td, th) {
+    overflow-wrap: anywhere;
+  }
+
+  /* Code keeps its indentation - `pre-wrap`, not `pre-line` - and breaks only where
+   * a line cannot fit. `break-word` rather than `anywhere` so ordinary code still
+   * breaks at sensible points and only genuinely unbreakable runs are split.
+   *
+   * Scoped away from @pierre/diffs: it wraps through its own `overflow: "wrap"`
+   * option, and forcing wrapping onto a split diff destroys the line-for-line
+   * correspondence that IS the meaning of a diff. */
+  :where(pre):not(:where([data-diffs-container], [data-diffs-container] *)) {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+
+  /* The classic overflow trap: a grid or flex child defaults to min-width:auto, so
+   * it refuses to shrink below its content and overflows its own track. */
+  :where(.grid, .flex) > *,
+  :where([class*="grid-cols"], [class*="flex-"]) > * {
+    min-width: 0;
+  }
+
+  :where(img, svg, video, canvas, iframe, table) {
+    max-width: 100%;
+  }
+
+  /* ---- Legible on the cocoa fill ----------------------------------------
+   * DaisyUI's dark surfaces set their own foreground, but inline code and marks
+   * keep the light-surface treatment and disappear. */
+  :where(.bg-primary, .bg-neutral, .bg-secondary, .bg-accent, [data-luxe-on-dark])
+    :where(code, kbd, samp):not(:where(pre *)) {
+    background: var(--luxe-bl-on-dark-code-bg);
+    color: var(--luxe-bl-on-dark-ink);
+  }
+  :where(.bg-primary, .bg-neutral, .bg-secondary, .bg-accent, [data-luxe-on-dark]) :where(mark) {
+    background: var(--luxe-bl-on-dark-mark-bg);
+    color: var(--luxe-bl-on-dark-ink);
+  }
+
+  /* DaisyUI's `.kbd` is the exception, and it is an instructive one: it is not a bare
+   * element taking the surface's colour, it is a component that already paints itself a
+   * light key. The rule above matches it, loses its `background` to `.kbd`'s own
+   * class-specificity `background-color` - correctly, this file is built to lose - and
+   * leaves the light on-dark ink standing on that light key. Measured at 1.04:1.
+   *
+   * The repair is NOT to outweigh `.kbd`. Raising specificity here would buy the fix by
+   * breaking the contract at the top of this file, and it is unnecessary: the key's
+   * background is not Luxe's to take from a component that brought one. What went wrong is
+   * that half a pair was applied - a foreground chosen for a dark plane, over a background
+   * somebody else chose. So state the pair together, still at zero specificity.
+   *
+   * Where DaisyUI is present its own `.kbd` background wins, and this rule names the same
+   * value, so nothing moves; the foreground is what this rule is here to set, and it beats
+   * only inheritance, which needs no specificity at all. (DaisyUI added a `color` to `.kbd`
+   * after 5.5.x; where that is loaded it wins, and it sets `--color-base-content` - the same
+   * value named below. Correct either way.) Where DaisyUI is absent - an artifact that wrote
+   * `class="kbd"` against its own CSS, or one Luxe tagged through `data-luxe-on-dark` - both
+   * declarations land from here and stay consistent with each other.
+   *
+   * The DaisyUI variables are READ, never defined: `--color-base-200`/`--color-base-content`
+   * are a contrasting pair by construction in any DaisyUI theme, which keeps this correct on
+   * a dark theme too, where a hardcoded light key would not be. The `--luxe-bl-*` fallbacks
+   * carry the no-DaisyUI case. */
+  :where(.bg-primary, .bg-neutral, .bg-secondary, .bg-accent, [data-luxe-on-dark]) :where(kbd.kbd) {
+    background: var(--color-base-200, var(--luxe-bl-key-bg));
+    color: var(--color-base-content, var(--luxe-bl-key-ink));
+  }
+
+  /* ---- Clipped controls in dense rows -----------------------------------
+   * DaisyUI's `btn` carries a fixed height that a compact table row is shorter
+   * than, so the label is cut off vertically. Luxe's own layout audit caught this
+   * on all eight rows of the reference artifact. */
+  :where(.table) :where(.btn) {
+    height: auto;
+    min-height: 1.5rem;
+  }
+
+  /* ---- Scrollbars -------------------------------------------------------
+   * The artifact is a third document, after the chrome and the whiteboard frame,
+   * and would otherwise be the one surface still showing the OS default. */
+  :where(*) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--luxe-bl-scroll-thumb) transparent;
+  }
+}
+
+/* -webkit- scrollbar pseudo-elements cannot be nested in @layer in every engine
+   that supports them, and they carry no specificity to compete with, so they sit
+   outside. An artifact styling its own ::-webkit-scrollbar-thumb still wins on
+   document order, because this stylesheet is the first thing in <head>. */
+::-webkit-scrollbar {
+  width: var(--luxe-bl-scroll-size);
+  height: var(--luxe-bl-scroll-size);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--luxe-bl-scroll-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: var(--luxe-bl-scroll-radius);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--luxe-bl-scroll-thumb-hover);
+  background-clip: padding-box;
+}

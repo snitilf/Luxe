@@ -54,14 +54,14 @@ export const LUXE_MERMAID_THEME_VARIABLES = Object.freeze({
   // reshuffled and never cycled. Mermaid asks for twelve; a chart needing more
   // than eight series is past what this palette can carry, and the spec's
   // answer to that is to redesign the chart, not to invent slot nine.
-  pie1: "#527dc1",
-  pie2: "#b95d4a",
-  pie3: "#50a67e",
-  pie4: "#d7a44c",
-  pie5: "#5a8637",
-  pie6: "#ce7d93",
-  pie7: "#7660a3",
-  pie8: "#d36e4f",
+  pie1: "#5b85cc",
+  pie2: "#874420",
+  pie3: "#4bad8e",
+  pie4: "#cf8b3b",
+  pie5: "#677d12",
+  pie6: "#be5b7f",
+  pie7: "#73488e",
+  pie8: "#9f4f36",
   // Mermaid draws slices at 0.7 opacity and separates them with black strokes.
   // Full opacity is what makes a slice the token value rather than a lightened
   // approximation of it, and the separator is the canvas, matching the 2px
@@ -92,12 +92,15 @@ export const LUXE_MERMAID_THEME_VARIABLES = Object.freeze({
   activeTaskBorderColor: "#3c5f8f",
   critBkgColor: "#f9e8e2",
   critBorderColor: "#b3341f",
-  // `--ink-2`, the same value as `lineColor`, not the error red Mermaid defaults to.
+  // `--ink-1`, not the error red Mermaid defaults to and no longer `--ink-2`.
   // The today marker is a temporal reference meaning "now", not a status meaning
-  // "wrong", and section 2.6 reserves status colour for status. Sharing the error
-  // red with `critBorderColor` also renders two different meanings in one colour on
-  // any chart that has a critical task.
-  todayLineColor: "#5c564a",
+  // "wrong", and section 2.6 reserves status colour for status - sharing the error
+  // red with `critBorderColor` renders two different meanings in one colour on any
+  // chart that has a critical task. But `--ink-2` was the same value as `lineColor`,
+  // so "now" was drawn in exactly the ink used for every axis and edge on the chart
+  // and read as one more rule. The first ink is the scale's emphasis weight: the
+  // strongest line on the diagram, carrying no hue and therefore no status.
+  todayLineColor: "#211e17",
 });
 
 /**

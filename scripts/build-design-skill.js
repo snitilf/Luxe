@@ -41,7 +41,9 @@ const GENERATED_BY = "scripts/build-design-skill.js";
  */
 function kindOf(value) {
   if (/^#[0-9a-f]{3,8}$/i.test(value) || /^rgba?\(/i.test(value)) return "color";
-  if (/^-?\d+(\.\d+)?px$/.test(value)) return "length";
+  // px, plus the relative units. --tracking-brand is em because a wordmark's tracking
+  // should scale with its size, unlike the px tracking on the fixed content scale.
+  if (/^-?\d+(\.\d+)?(px|em|rem)$/.test(value)) return "length";
   if (/^\d+ms$/.test(value)) return "duration";
   if (/^cubic-bezier\(/.test(value)) return "easing";
   if (/(^|,)\s*("|-apple-system|ui-monospace)/.test(value)) return "font-family";
@@ -130,6 +132,10 @@ function renderAdherenceJson(tokens) {
     families: {
       sans: bundledFamily(tokens, "--font-sans"),
       mono: bundledFamily(tokens, "--font-mono"),
+      // Scoped to the wordmark. Listed here so the lint knows the face exists at all;
+      // "only on the wordmark" is a rule the token comment states and review enforces,
+      // not something a regex over CSS declarations can check.
+      brand: bundledFamily(tokens, "--font-brand"),
     },
     fontSizes: subset(tokens, /^--text-/),
     fontWeights: subset(tokens, /^--weight-/),
@@ -141,11 +147,12 @@ function renderAdherenceJson(tokens) {
       },
       {
         id: "font-family",
-        message: "Font not provided by the design system. Two families only: the sans and the mono above.",
+        message:
+          "Font not provided by the design system. Two content families, the sans and the mono above, plus the brand face on the wordmark only.",
       },
       {
         id: "font-size",
-        message: "Font size outside the scale. Four sizes only, all listed in fontSizes.",
+        message: "Font size outside the scale. Four content sizes plus the brand size, all listed in fontSizes.",
       },
       {
         id: "font-weight",

@@ -410,6 +410,12 @@ export function createArtifactSdk(
   snapshotBuilder = buildDomSnapshot,
   selectorBuilder = buildStructuralSelector,
   annotationCardDismissPolicy = annotationCardCanDismiss,
+  // The artifact baseline, also passed in as CSS text by createSdkJs. See
+  // src/artifact-baseline.css for what it is allowed to contain and why it is only
+  // ever repairs.
+  artifactBaselineCss = "",
+  baselineStyleId = "luxe-baseline",
+  baselineOptOutAttribute = "data-luxe-baseline",
 ) {
   const { isMermaidSvg, mermaidNodeFrom, mermaidNodeElement } = mermaid;
   // The SDK has no mode state of its own to decide: the chrome owns annotate/explore and
@@ -419,6 +425,12 @@ export function createArtifactSdk(
   // `false` is not a wrong-mode bug - it is a flash of annotate cursors and frozen diagrams
   // on every load and reload.
   let annotationMode = false;
+  // Terminal. Set once by `luxe:setSessionEnded` and never cleared: an ended session cannot
+  // become live again without a page load, which rebuilds this module anyway. Kept apart from
+  // annotationMode because the chrome used to signal the end by turning annotation off, and
+  // "annotation is off" is precisely the condition under which the whiteboard affordance is
+  // ENABLED - so the end re-armed the control it meant to retire.
+  let sessionEnded = false;
   let hovered = null;
   let selected = null;
   let ignoreNextClick = false;
@@ -438,6 +450,49 @@ export function createArtifactSdk(
   function uid(el) {
     if (!ids.has(el)) ids.set(el, String(++counter));
     return ids.get(el);
+  }
+
+  // A reviewer is annotating a paragraph, not a <p>. The raw tag name was a developer
+  // wink that reads, at a glance, like an unrendered template variable - and this string
+  // is the title of the most-seen surface in the product. Anything unrecognised keeps the
+  // tag, which is still better than nothing for a custom element.
+  const FRIENDLY_ELEMENT_NAMES = {
+    p: "paragraph",
+    h1: "heading",
+    h2: "heading",
+    h3: "heading",
+    h4: "heading",
+    h5: "heading",
+    h6: "heading",
+    li: "list item",
+    ul: "list",
+    ol: "list",
+    table: "table",
+    tr: "table row",
+    td: "table cell",
+    th: "table heading",
+    img: "image",
+    svg: "graphic",
+    figure: "figure",
+    figcaption: "caption",
+    blockquote: "quote",
+    pre: "code block",
+    code: "code",
+    button: "button",
+    a: "link",
+    section: "section",
+    header: "header",
+    footer: "footer",
+    form: "form",
+    label: "label",
+    input: "field",
+    textarea: "field",
+    select: "field",
+  };
+
+  function friendlyElementName(tag) {
+    const name = String(tag || "").toLowerCase();
+    return FRIENDLY_ELEMENT_NAMES[name] || `&lt;${escapeAnnotationText(name)}&gt;`;
   }
 
   function escapeAnnotationText(value) {
@@ -507,12 +562,42 @@ export function createArtifactSdk(
     const view = { ...initial };
     let frozen = false;
     let panning = null;
+    const listeners = new Set();
 
+    // The clamp, named once. A smaller viewBox is a closer view, so MIN_W is maximum
+    // zoom in: 40x in, 8x out, which the toolbar reports as 4000% and 12.5% of fit.
+    const MIN_W = initial.w / 40;
+    const MAX_W = initial.w * 8;
+
+    function notify() {
+      for (const listener of listeners) listener();
+    }
     function apply() {
       svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+      notify();
     }
     function reset() {
       Object.assign(view, initial);
+      apply();
+    }
+    // Scale relative to fit, so 1 is "the whole diagram" and the toolbar can print a
+    // percentage a reader recognises.
+    function getScale() {
+      return initial.w / view.w;
+    }
+    function atMinZoom() {
+      return view.w >= MAX_W - 1e-9;
+    }
+    function atMaxZoom() {
+      return view.w <= MIN_W + 1e-9;
+    }
+    function zoomTo(fx, fy, factor) {
+      const next = Math.min(Math.max(view.w * factor, MIN_W), MAX_W);
+      const scale = next / view.w;
+      view.w = next;
+      view.h *= scale;
+      view.x = fx - (fx - view.x) * scale;
+      view.y = fy - (fy - view.y) * scale;
       apply();
     }
     function zoomAt(clientX, clientY, factor) {
@@ -520,15 +605,14 @@ export function createArtifactSdk(
       if (!rect.width || !rect.height) return;
       const px = (clientX - rect.left) / rect.width;
       const py = (clientY - rect.top) / rect.height;
-      const fx = view.x + view.w * px;
-      const fy = view.y + view.h * py;
-      const next = Math.min(Math.max(view.w * factor, initial.w / 40), initial.w * 8);
-      const scale = next / view.w;
-      view.w = next;
-      view.h *= scale;
-      view.x = fx - (fx - view.x) * scale;
-      view.y = fy - (fy - view.y) * scale;
-      apply();
+      zoomTo(view.x + view.w * px, view.y + view.h * py, factor);
+    }
+    // Button zoom works about the centre of the current view rather than a pointer
+    // position, so repeated clicks stay put instead of drifting toward a corner. It is
+    // deliberately not gated on `frozen`: freezing exists so a click on a diagram
+    // resolves to a node instead of a pan, and an explicit button press is not ambiguous.
+    function zoomBy(factor) {
+      zoomTo(view.x + view.w / 2, view.y + view.h / 2, factor);
     }
 
     function onWheel(event) {
@@ -574,7 +658,12 @@ export function createArtifactSdk(
     // and the only one no message ever corrects if a future caller forgets to.
     setFrozen(annotationMode);
 
-    return { reset, setFrozen };
+    function subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }
+
+    return { reset, setFrozen, zoomBy, getScale, atMinZoom, atMaxZoom, subscribe };
   }
 
   function safeBBox(svg) {
@@ -596,29 +685,80 @@ export function createArtifactSdk(
     return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
   }
 
-  // Whiteboard edit affordance. Luxe is fullscreen-first: the rendered diagram
-  // stays exactly what the artifact author wrote - themed Mermaid, visible,
-  // selectable, printable, and identical when the file is opened standalone or
-  // exported - and gets one quiet control that asks the chrome to open it in
-  // the full-viewport Excalidraw editor. Nothing is hidden, no nested editor is
-  // embedded, and the affordance itself is `data-luxe-ui`, so the annotation
-  // layer and the snapshot walker both skip it.
+  // Diagram toolbar. Luxe is fullscreen-first: the rendered diagram stays exactly what
+  // the artifact author wrote - themed Mermaid, visible, selectable, printable, and
+  // identical when the file is opened standalone or exported - and gets one quiet strip
+  // of controls beneath it.
+  //
+  // Beneath, not on top of. The edit affordance used to be absolutely positioned at
+  // top-right INSIDE the diagram container, so it covered whatever the diagram drew
+  // there - which on a wide flowchart is a node. The strip is laid out after the
+  // diagram in normal flow and cannot overlap it at any width.
+  //
+  // The zoom controls exist because the viewport has always supported wheel-zoom and
+  // drag-pan with nothing on screen saying so, which left "open the whole whiteboard"
+  // as the only discoverable way to look closer.
+  //
+  // Everything here is `data-luxe-ui`, so the annotation layer and the snapshot walker
+  // both skip it; the export reads the artifact from disk and never sees it at all.
   //
   // The index of the container among `.mermaid` elements in document order is
   // the diagram's identity; the server recovers the matching Mermaid source
   // from the artifact file on disk under that same index.
-  const whiteboardAffordances = new Map(); // container -> { button, index }
+  const whiteboardAffordances = new Map(); // container -> { button, index, bar, viewport, ... }
   let openWhiteboardIndex = null;
 
   function mermaidContainerIndex(container) {
     return [...document.querySelectorAll(".mermaid")].indexOf(container);
   }
 
+  // A disabled control that does not say why is a dead end. Each reason is also the
+  // accessible description, so it reaches a screen reader and not only a hover.
+  function affordanceReason(entry) {
+    if (sessionEnded) return "This session has ended.";
+    if (openWhiteboardIndex === entry.index) return "This diagram is open in the whiteboard.";
+    if (annotationMode) return "Turn off Annotate to edit this diagram as a whiteboard.";
+    return "Open this diagram as an editable whiteboard";
+  }
+
   function setAffordanceState(entry) {
     const busy = openWhiteboardIndex === entry.index;
-    entry.button.disabled = busy || annotationMode;
-    entry.button.textContent = busy ? "Open in whiteboard" : "Edit as whiteboard";
+    entry.button.disabled = busy || annotationMode || sessionEnded;
+    entry.button.textContent = busy ? "Editing in the whiteboard" : "Edit as whiteboard";
     entry.button.setAttribute("aria-disabled", String(entry.button.disabled));
+    entry.button.title = affordanceReason(entry);
+    // A disabled control has to LOOK disabled. Without this the button kept full opacity
+    // and cursor:pointer, so a reviewer with annotate mode on clicked a control that
+    // looked entirely live and nothing happened - which reads as a broken feature rather
+    // than an unavailable one. The zoom buttons beside it already dim; this is the same
+    // treatment, and the reason is on the tooltip either way.
+    setControlEnabled(entry.button, !entry.button.disabled);
+    entry.updateZoom?.();
+  }
+
+  // A readout is not just a control. The zoom percentage is information the reviewer needs
+  // whether or not pressing it would do anything, so it never dims - and it does not have to,
+  // because the value it displays IS the reason it is disabled: it reads "100%", which is
+  // precisely why resetting to fit is a no-op. Everything else in here dims.
+  const readoutControls = new WeakSet();
+
+  // One place decides what disabled looks like, so no control in this toolbar can be
+  // disabled-but-inviting again.
+  //
+  // This used to be `opacity: 0.45`, which was fine while every control was a filled,
+  // outlined pill - the whole pill faded together. Once the pills came off, that opacity
+  // composited --ink-2 down to about 2.04:1 against the surface behind it, and the control
+  // that is disabled on page load is the percentage readout. So dimming is a colour now:
+  // --ink-3 is the system's de-emphasis ink and lands at 3.43:1, still comfortably readable.
+  // Opacity would also have faded the segmented control's dividers and border along with the
+  // glyph, dissolving the boundary that makes these read as controls at all.
+  function setControlEnabled(button, enabled) {
+    button.style.cursor = enabled ? "pointer" : "default";
+    // An inline custom property beats the stylesheet's, which is exactly right here: a
+    // disabled control must not take the hover ink. The hover rule is gated on
+    // `:not(:disabled)` as well, so the two agree rather than race.
+    if (enabled || readoutControls.has(button)) button.style.removeProperty("--luxe-diagram-btn-ink");
+    else button.style.setProperty("--luxe-diagram-btn-ink", luxeToken("ink-3", "GrayText"));
   }
 
   function refreshAffordances() {
@@ -627,13 +767,166 @@ export function createArtifactSdk(
     }
   }
 
-  function addWhiteboardAffordance(svg) {
+  // Injection 3 of 5 outside the shadow DOM. Like the other two, every colour and metric
+  // is read out of the design-token text rather than written as a literal, and every
+  // fallback is a keyword rather than a hex so a missing token degrades to the artifact's
+  // own palette instead of a foreign one.
+  //
+  // Four filled, outlined pills under a 64px diagram outweighed the diagram. Stripping every
+  // pill fixed the weight and broke the affordance: with no border and no fill, nothing said
+  // "control", and no hover fill could say it either - every surface token in this system
+  // sits within 1.05:1 of the canvas, so a fill can never BE the affordance here. Measured:
+  // --surface-1 against --canvas is 1.04:1, against --surface-2 it is 1.05:1 and darker than
+  // the surface, and on --surface-1 itself it is 1.00:1. Invisible in every direction.
+  //
+  // So the boundary comes back, once instead of four times. The three zoom controls sit in a
+  // single hairline-bordered segmented control with --hair dividers between them, and the
+  // whiteboard button carries the same hairline. Two quiet objects, not four loud ones, and
+  // the object count is what "too big compared to the diagram" was really measuring.
+  //
+  // The affordance a person can see is the glyph and the fill together, and it only appears
+  // on hover and focus: --dark-fill at 10.63:1 against --canvas, with --dark-fill-text on it
+  // at 10.63:1. That is the system's own ghost-button pattern and the only pairing in the
+  // palette with enough separation to register as a state change.
+  //
+  // Both the fill and the ink route through custom properties rather than literals: an inline
+  // declaration carries no :hover and no :focus-visible, and would out-specify any stylesheet
+  // rule that tried to add one. The indirection lets the injected stylesheet below light the
+  // control up without a single `!important`, and leaves the control correctly sized, quiet
+  // and legible even if that stylesheet never lands.
+  function toolbarButtonCss({ square = false, bordered = false } = {}) {
+    return (
+      // Every control in here is a 32px box. That clears the 24px WCAG 2.5.8 target floor
+      // with room to spare and is a recorded decision rather than a default. `min-height` as
+      // well as `height` so an artifact's own `button { height: auto }` cannot shrink the
+      // target, and an explicit `box-sizing` so a border eats into the box instead of growing
+      // it by an amount that depends on which box model the artifact happens to have set.
+      "box-sizing:border-box;min-width:32px;height:32px;min-height:32px;padding:" +
+      (square ? "0" : "0 10px") +
+      ";cursor:pointer;display:inline-flex;align-items:center;justify-content:center;" +
+      "border-radius:0;border:0" +
+      // A bordered control grows by exactly its own border, so the 32px of interior survives
+      // the hairline instead of being eaten by it. That also lands it at the same 34px as the
+      // segmented group beside it, which is 32px of segment plus its own border.
+      (bordered
+        ? ";height:34px;min-height:34px;border-radius:" +
+          luxeToken("radius-nav", "8px") +
+          ";border:" +
+          luxeToken("stroke-hair", "1px") +
+          " solid " +
+          luxeToken("strong", "currentColor")
+        : "") +
+      ";background:var(--luxe-diagram-btn-bg, transparent);color:var(--luxe-diagram-btn-ink, " +
+      luxeToken("ink-2", "currentColor") +
+      ");font-family:" +
+      luxeToken("font-sans", "inherit") +
+      ";font-size:" +
+      luxeToken("text-label", "inherit") +
+      ";font-weight:" +
+      luxeToken("weight-medium", "500") +
+      ";letter-spacing:" +
+      luxeToken("tracking-sans", "normal") +
+      ";line-height:1"
+    );
+  }
+
+  // Injection 5 of 5 outside the shadow DOM, and the only one an inline style could not do:
+  // a declaration on an element carries no :hover and no :focus-visible.
+  //
+  // A control that does not change when you point at it is not discoverable, and zoom was
+  // surfaced in the first place because nobody could find it. The lit state is therefore the
+  // part of this that is not optional, and it is measured rather than eyeballed: --dark-fill
+  // over the resting surface is 10.63:1 against --canvas and 11.67:1 against --surface-2.
+  // The previous attempt used --surface-1 and came in at 1.04:1 - a state change nobody could
+  // see, on a control with no border to see either.
+  //
+  // Everything here is either scoped to a `data-luxe-ui` element the artifact did not write
+  // and cannot be styling, or wrapped in `:where()` so it has zero specificity and any
+  // author rule beats it. No `!important` - the artifact still owns its own document.
+  const diagramToolbarStyleId = "luxe-diagram-toolbar";
+  const toolbarButtonSelectors = ['button[data-luxe-ui="diagram-toolbar"]', 'button[data-luxe-ui="whiteboard-edit"]'];
+  // Set on a Mermaid container once Luxe has actually enhanced it into a diagram. It is the
+  // difference between "a picture" and "a block of Mermaid source that never rendered" - and
+  // the code-block framing below is only wrong for the first of those.
+  const diagramContainerAttribute = "data-luxe-diagram";
+  const enhancedDiagram = ".mermaid[" + diagramContainerAttribute + "]";
+
+  function injectDiagramToolbarCss() {
+    if (!document.head || document.getElementById(diagramToolbarStyleId)) return;
+    // `:not(:disabled)` so a control at the clamp end, or the whiteboard button during
+    // annotation, does not light up as if it were still live. A disabled button cannot take
+    // focus, so :focus-visible needs no such guard.
+    const lit = toolbarButtonSelectors
+      .flatMap((base) => [base + ":hover:not(:disabled)", base + ":focus-visible"])
+      .join(",");
+    const focused = toolbarButtonSelectors.map((base) => base + ":focus-visible").join(",");
+    const style = document.createElement("style");
+    style.id = diagramToolbarStyleId;
+    style.textContent =
+      // A Mermaid diagram is very often a <pre>, and every code-block stylesheet in the world
+      // ends in a bare `pre { background; border; border-radius }`. Luxe's own theme snippet
+      // did, which means every artifact authored before this was drawing a picture inside a
+      // code block's frame. It went unnoticed because the fill sat about two units off the
+      // canvas; adding padding inside that frame is what made it obvious, by inflating it.
+      //
+      // Undoing it is a repair rather than a restyle: the frame says "this is source text"
+      // about something that is not source text. It is scoped to containers Luxe actually
+      // enhanced, so a diagram whose Mermaid never rendered - which really is showing source -
+      // keeps the code-block treatment that correctly describes it.
+      //
+      // Specificity is the whole trick here. `:where()` would be zero and lose to the bare
+      // `pre` this exists to beat, so the reset is written at two classes' worth: `.mermaid`
+      // plus the attribute. That clears any element selector without reaching for
+      // `!important`. An author who genuinely wants a framed diagram still wins by carrying
+      // more weight than two classes, e.g. `.mermaid.mermaid[data-luxe-diagram] { border: … }`
+      // or anything with an id in it.
+      enhancedDiagram +
+      "{background:transparent;border:0;border-radius:0;box-shadow:none}" +
+      // Breathing room around the diagram itself. A Mermaid container sized to its SVG
+      // plus a control strip has the diagram touching its own border on three sides.
+      // Left at zero specificity, unlike the reset above: spacing is taste, and an author
+      // who has an opinion about it should not have to out-specify anything to keep it.
+      ":where(" +
+      enhancedDiagram +
+      "){padding:20px 16px}" +
+      lit +
+      "{--luxe-diagram-btn-bg:" +
+      luxeToken("dark-fill", "Highlight") +
+      ";--luxe-diagram-btn-ink:" +
+      luxeToken("dark-fill-text", "HighlightText") +
+      "}" +
+      focused +
+      "{outline:" +
+      luxeToken("focus-ring-width", "2px") +
+      " solid " +
+      luxeToken("focus-ring", "currentColor") +
+      ";outline-offset:" +
+      luxeToken("focus-ring-offset", "2px") +
+      "}";
+    document.head.appendChild(style);
+  }
+
+  function makeToolbarButton(label, text, options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("data-luxe-ui", "diagram-toolbar");
+    // The visible glyph is decorative; the accessible name is the label. A screen reader
+    // should hear "Zoom in", not "plus".
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.textContent = text;
+    button.style.cssText = toolbarButtonCss(options);
+    return button;
+  }
+
+  function addWhiteboardAffordance(svg, viewport) {
     const container = svg.closest(".mermaid");
     if (!container) return;
     const existing = whiteboardAffordances.get(container);
     if (existing && existing.button.isConnected) {
       existing.index = mermaidContainerIndex(container);
       setAffordanceState(existing);
+      alignBarToDiagram(existing);
       return;
     }
     const index = mermaidContainerIndex(container);
@@ -646,68 +939,201 @@ export function createArtifactSdk(
       window.setTimeout(scheduleMermaidEnhance, 150);
       return;
     }
+    injectDiagramToolbarCss();
+    // Marks this container as a rendered diagram rather than a block of Mermaid source, which
+    // is what scopes the code-block reset in the stylesheet above. Deliberately not
+    // `data-luxe-ui`: that attribute means "Luxe owns this element, keep it away from the
+    // agent", and the diagram is the artifact's own content that the agent must still see.
+    container.setAttribute(diagramContainerAttribute, "");
+
+    const bar = document.createElement("div");
+    bar.setAttribute("data-luxe-ui", "diagram-toolbar");
+    bar.setAttribute("role", "toolbar");
+    bar.setAttribute("aria-label", "Diagram controls");
+    // Normal flow under the diagram, wrapping when the artifact is narrow. Nothing here
+    // is positioned, so there is no width at which it can land on top of the diagram.
+    //
+    // Right-aligned rather than full width: stretched across the container the strip read
+    // as a button row that belonged to the page, not as controls that belong to the
+    // diagram. The alignment is to the DIAGRAM's right edge, not the container's - see
+    // alignBarToDiagram. A container-relative flex-end looks right under a full-width
+    // flowchart and lands entirely beside a narrow one.
+    bar.style.cssText =
+      "display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;" +
+      "margin-top:10px;font-family:" +
+      luxeToken("font-sans", "inherit");
+
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("data-luxe-ui", "whiteboard-edit");
-    button.title = "Open this diagram as an editable whiteboard";
-    // Injection 3 of 3 outside the shadow DOM. Like the other two, every colour
-    // and metric is read out of the design-token text rather than written as a
-    // literal, and every fallback is a keyword rather than a hex so a missing
-    // token degrades to the artifact's own palette instead of a foreign one.
-    button.style.cssText =
-      "position:absolute;top:8px;right:8px;z-index:2;padding:4px 10px;cursor:pointer;" +
-      "opacity:.55;transition:opacity var(--luxe-wb-dur,120ms);" +
-      "border-radius:" +
-      luxeToken("radius-pill", "999px") +
-      ";" +
-      "border:" +
-      luxeToken("stroke-hair", "1px") +
-      " solid " +
-      luxeToken("strong", "currentColor") +
-      ";" +
-      "background:" +
-      luxeToken("surface-2", "transparent") +
-      ";" +
-      "color:" +
-      luxeToken("ink-2", "currentColor") +
-      ";" +
-      "font-family:" +
-      luxeToken("font-sans", "inherit") +
-      ";" +
-      "font-size:" +
-      luxeToken("text-label", "inherit") +
-      ";" +
-      "font-weight:" +
-      luxeToken("weight-medium", "500") +
-      ";" +
-      "letter-spacing:" +
-      luxeToken("tracking-sans", "normal") +
-      ";line-height:1.3";
-    button.addEventListener("mouseenter", () => {
-      button.style.opacity = "1";
-    });
-    button.addEventListener("mouseleave", () => {
-      button.style.opacity = ".55";
-    });
-    button.addEventListener("focus", () => {
-      button.style.opacity = "1";
-    });
-    button.addEventListener("blur", () => {
-      button.style.opacity = ".55";
-    });
-    const entry = { button, index };
+    button.style.cssText = toolbarButtonCss({ bordered: true });
+
+    const entry = { button, index, bar, viewport, svg, container };
     button.onclick = (event) => {
       event.preventDefault();
       event.stopPropagation();
       if (button.disabled) return;
       parent.postMessage({ type: "luxe:openWhiteboard", diagramIndex: entry.index }, "*");
     };
-    // The affordance is absolutely positioned inside the diagram's own
-    // container, so it travels with the diagram and never needs re-measuring.
-    if (getComputedStyle(container).position === "static") container.style.position = "relative";
-    container.appendChild(button);
+
+    // A diagram with no viewBox and no measurable bbox gets no viewport, and therefore no
+    // zoom controls - but it still gets the whiteboard button, which does not depend on one.
+    if (viewport) {
+      const zoomOut = makeToolbarButton("Zoom out", "−", { square: true });
+      const zoomIn = makeToolbarButton("Zoom in", "+", { square: true });
+      const reset = makeToolbarButton("Reset zoom to fit", "100%");
+      reset.style.cssText += ";min-width:48px;font-variant-numeric:tabular-nums";
+      // The percentage is a readout as much as a control, so it keeps --ink-2 even when
+      // resetting is a no-op.
+      readoutControls.add(reset);
+
+      // One segmented control instead of three loose buttons. The border is what says
+      // "these are controls" now that nothing is filled, and drawing it once around the
+      // group rather than three times around three pills is the whole point: same
+      // affordance, a third of the object count. Dividers are --hair, the token for
+      // internal rules, against a --strong outer edge, so the group reads as one object
+      // with parts rather than three objects touching.
+      //
+      // No `overflow:hidden` to clip the segment corners: it would also clip the focus
+      // ring, which outline-offset draws outside the group.
+      const group = document.createElement("div");
+      group.setAttribute("data-luxe-ui", "diagram-toolbar");
+      group.setAttribute("role", "group");
+      group.setAttribute("aria-label", "Diagram zoom");
+      group.style.cssText =
+        "box-sizing:border-box;display:inline-flex;align-items:center;background:transparent;border:" +
+        luxeToken("stroke-hair", "1px") +
+        " solid " +
+        luxeToken("strong", "currentColor") +
+        ";border-radius:" +
+        luxeToken("radius-nav", "8px");
+      for (const segment of [reset, zoomIn]) {
+        segment.style.cssText +=
+          ";border-left:" + luxeToken("stroke-hair", "1px") + " solid " + luxeToken("hair", "currentColor");
+      }
+
+      // Announce the level politely rather than on every wheel tick, so continuous
+      // zooming does not flood a screen reader.
+      const status = document.createElement("span");
+      status.setAttribute("data-luxe-ui", "diagram-toolbar");
+      status.setAttribute("aria-live", "polite");
+      status.setAttribute("role", "status");
+      status.style.cssText =
+        "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
+
+      let announceTimer;
+      entry.updateZoom = () => {
+        const percent = Math.round(viewport.getScale() * 100);
+        reset.textContent = `${percent}%`;
+        // The ends of the clamp disable rather than silently doing nothing.
+        zoomIn.disabled = viewport.atMaxZoom();
+        zoomOut.disabled = viewport.atMinZoom();
+        reset.disabled = percent === 100;
+        for (const control of [zoomIn, zoomOut, reset]) {
+          control.setAttribute("aria-disabled", String(control.disabled));
+          setControlEnabled(control, !control.disabled);
+        }
+        window.clearTimeout(announceTimer);
+        announceTimer = window.setTimeout(() => {
+          status.textContent = `Diagram zoom ${percent} percent`;
+        }, 400);
+      };
+
+      zoomOut.onclick = () => viewport.zoomBy(1.25);
+      zoomIn.onclick = () => viewport.zoomBy(1 / 1.25);
+      reset.onclick = () => viewport.reset();
+      viewport.subscribe(() => entry.updateZoom());
+
+      // Scoped to the toolbar and the diagram, never document-global: the artifact owns
+      // its own keyboard, and hijacking "+" across the page would break its controls.
+      const onKeydown = (event) => {
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        if (event.key === "+" || event.key === "=") viewport.zoomBy(1 / 1.25);
+        else if (event.key === "-" || event.key === "_") viewport.zoomBy(1.25);
+        else if (event.key === "0") viewport.reset();
+        else return;
+        event.preventDefault();
+      };
+      bar.addEventListener("keydown", onKeydown);
+      container.addEventListener("keydown", onKeydown);
+
+      group.append(zoomOut, reset, zoomIn);
+      bar.append(group, status);
+      entry.updateZoom();
+    }
+
+    bar.appendChild(button);
+    // After the diagram in document order, so tab order runs diagram then controls.
+    container.appendChild(bar);
     whiteboardAffordances.set(container, entry);
     setAffordanceState(entry);
+    alignBarToDiagram(entry);
+    observeDiagramGeometry(entry);
+  }
+
+  // The strip's natural single-line width, measured from the controls rather than from the
+  // bar - the bar wraps, so its own rect is not the answer. The live region is skipped
+  // because it is absolutely positioned and 1px wide.
+  function barNaturalWidth(bar) {
+    const gap = parseFloat(getComputedStyle(bar).columnGap) || 0;
+    let total = 0;
+    let count = 0;
+    for (const child of bar.children) {
+      if (getComputedStyle(child).position === "absolute") continue;
+      total += child.getBoundingClientRect().width;
+      count += 1;
+    }
+    return count ? total + gap * (count - 1) : 0;
+  }
+
+  // Align the strip to the DIAGRAM, not to the container.
+  //
+  // `justify-content: flex-end` alone aligns to the container, which is only the same thing
+  // when the SVG fills it. Under a narrow diagram the strip ended up entirely to the right
+  // of the thing it controls - measured at one point as a diagram spanning x 360-805 with
+  // its own controls sitting at x 815-1075, touching nothing.
+  //
+  // Which edge it hugs depends on whether it can fit under the diagram at all. A strip
+  // narrower than the diagram hugs the diagram's right edge, which is where the eye leaves
+  // the diagram. A strip WIDER than the diagram cannot be contained by it, so it hugs the
+  // left edge instead and runs rightwards into the free space - anchored to the diagram
+  // either way, and never squeezed into a column narrower than itself, which is what made
+  // it wrap onto two rows and spill past the container's padding.
+  function alignBarToDiagram(entry) {
+    const { bar, svg, container } = entry;
+    if (!bar?.isConnected || !svg?.isConnected || !container) return;
+    const svgRect = svg.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    if (svgRect.width <= 0 || containerRect.width <= 0) return;
+    const style = getComputedStyle(container);
+    const contentLeft =
+      containerRect.left + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.paddingLeft) || 0);
+    const contentRight =
+      containerRect.right - (parseFloat(style.borderRightWidth) || 0) - (parseFloat(style.paddingRight) || 0);
+    const fitsUnderDiagram = barNaturalWidth(bar) <= svgRect.width + 1;
+    const next = fitsUnderDiagram
+      ? { justifyContent: "flex-end", marginLeft: "0px", marginRight: px(contentRight - svgRect.right) }
+      : { justifyContent: "flex-start", marginLeft: px(svgRect.left - contentLeft), marginRight: "0px" };
+    // Write only on a real change. The container is under a ResizeObserver and its height
+    // moves when the strip rewraps, so an unconditional write is a feedback loop.
+    for (const [property, value] of Object.entries(next)) {
+      if (bar.style[property] !== value) bar.style[property] = value;
+    }
+  }
+
+  function px(value) {
+    return Math.max(0, Math.round(value)) + "px";
+  }
+
+  // The diagram's rendered width is not fixed: fonts land late, the artifact reflows, the
+  // window resizes. Re-align whenever the box the strip is aligned to actually changes,
+  // rather than measuring once at build time and drifting.
+  function observeDiagramGeometry(entry) {
+    if (typeof ResizeObserver === "undefined" || entry.geometryObserver) return;
+    const observer = new ResizeObserver(() => alignBarToDiagram(entry));
+    observer.observe(entry.svg);
+    observer.observe(entry.container);
+    entry.geometryObserver = observer;
   }
 
   window.addEventListener("message", (event) => {
@@ -721,13 +1147,17 @@ export function createArtifactSdk(
 
   function enhanceMermaid() {
     for (const svg of findMermaidSvgs()) {
-      addWhiteboardAffordance(svg);
-      if (mermaidViewports.has(svg)) continue;
-      const viewport = createViewport(svg);
-      if (viewport) {
-        viewport.setFrozen(annotationMode);
-        mermaidViewports.set(svg, viewport);
+      // The viewport is built first: the toolbar's zoom controls drive it, so it has to
+      // exist before the toolbar that reads from it. Previously the affordance was built
+      // first, which was harmless only because it had nothing to read.
+      if (!mermaidViewports.has(svg)) {
+        const created = createViewport(svg);
+        if (created) {
+          created.setFrozen(annotationMode);
+          mermaidViewports.set(svg, created);
+        }
       }
+      addWhiteboardAffordance(svg, mermaidViewports.get(svg) || null);
     }
   }
 
@@ -823,7 +1253,7 @@ export function createArtifactSdk(
     return isNativeInteractive(el);
   }
 
-  // Injection 1 of 3 that reaches outside the shadow DOM: an inline style on the
+  // Injection 1 of 5 that reaches outside the shadow DOM: an inline style on the
   // artifact's own element. Both custom properties are defined by injection 2
   // (the :root block in setAnnotationMode), which always runs first because the
   // chrome enables annotate mode before any element can be hovered.
@@ -857,13 +1287,24 @@ export function createArtifactSdk(
     }
   }
 
+  // The session is over. Tear the annotation layer down the way turning annotation off would,
+  // then retire every Luxe-owned control in the artifact for good. The artifact itself stays
+  // readable and interactive - ending a review does not take the document away.
+  function setSessionEnded() {
+    if (sessionEnded) return;
+    sessionEnded = true;
+    setAnnotationMode(false);
+    refreshAffordances();
+  }
+
   function setAnnotationMode(enabled) {
+    if (sessionEnded) enabled = false;
     annotationMode = !!enabled;
     let style = document.getElementById("luxe-cursor-style");
     if (annotationMode && !style) {
       style = document.createElement("style");
       style.id = "luxe-cursor-style";
-      // Injection 2 of 3 outside the shadow DOM: this writes into the artifact
+      // Injection 2 of 5 outside the shadow DOM: this writes into the artifact
       // page's own :root. Only the annotation accent crosses over, and its value
       // comes from the design tokens rather than a literal. currentColor is the
       // no-colour fallback for the case where the token text never arrived.
@@ -886,7 +1327,7 @@ export function createArtifactSdk(
 
   function queuePrompt(prompt, options = {}) {
     const originElement = options.element || document.activeElement || document.body;
-    /** @type {{ uid: string, prompt: string, selector: string, tag: string, text: string, target?: unknown, _luxeQueueKey?: string }} */
+    /** @type {{ uid: string, prompt: string, selector: string, tag: string, text: string, topic?: string, target?: unknown, _luxeQueueKey?: string }} */
     const item = {
       ...context(originElement),
       prompt: String(prompt || ""),
@@ -898,6 +1339,12 @@ export function createArtifactSdk(
     if (options.selector) item.selector = String(options.selector);
     if (options.tag) item.tag = String(options.tag);
     if (options.text) item.text = String(options.text);
+    // A short human name for what this prompt is about - "Billing plan", "Rollout date".
+    // It is what the queued pill and the conversation receipt are titled with, so the
+    // reviewer reads their own question back rather than a dedupe key or a prompt
+    // fragment. Optional: without it Luxe derives something from the queue key and then
+    // from the prompt, which is always worse than a name the author chose.
+    if (options.topic) item.topic = String(options.topic).slice(0, 80);
     if (options.target) item.target = options.target;
     if (options.data) item.prompt += "\n\nContext data:\n" + JSON.stringify(options.data, null, 2);
 
@@ -1682,7 +2129,7 @@ export function createArtifactSdk(
     // rule after it references a token; no colour is written here.
     style.textContent =
       luxeTokensCss.replace(/:root(\s*\{)/, ":host$1") +
-      `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;font-family:var(--font-sans);letter-spacing:var(--tracking-sans)}*{box-sizing:border-box}:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ring);outline-offset:var(--focus-ring-offset)}.luxe-text-highlight{position:fixed;pointer-events:none;background:var(--gold-wash);border-radius:2px}.luxe-annotation-badge{position:fixed;display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:var(--radius-pill);background:var(--gold);color:var(--ink-1);border:2px solid var(--canvas);font-size:var(--text-label);font-weight:var(--weight-medium);line-height:1;pointer-events:none}.luxe-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:16px;border-radius:var(--radius-card);background:var(--surface-2);color:var(--ink-1);border:var(--stroke-hair) solid var(--hair);box-shadow:var(--shadow-modal);font-size:var(--text-control);line-height:var(--leading-body)}.luxe-heading{font-weight:var(--weight-medium);margin-bottom:8px}.luxe-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-nav);border:var(--stroke-hair) solid var(--hair);background:var(--surface-2);color:var(--ink-1);padding:10px 12px;font-family:var(--font-sans);font-size:var(--text-control);line-height:var(--leading-body);letter-spacing:var(--tracking-sans)}.luxe-annotation-card textarea::placeholder{color:var(--ink-3)}.luxe-annotation-card .luxe-hint{margin-top:8px;font-size:var(--text-label);color:var(--ink-2)}.luxe-annotation-card .luxe-row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}.luxe-annotation-card button{border:var(--stroke-hair) solid transparent;border-radius:var(--radius-pill);padding:8px 16px;font-family:var(--font-sans);font-size:var(--text-control);font-weight:var(--weight-medium);letter-spacing:var(--tracking-sans);cursor:pointer}.luxe-annotation-card .luxe-send{background:var(--dark-fill);color:var(--dark-fill-text)}.luxe-annotation-card .luxe-send:hover{background:var(--dark-fill-hover)}.luxe-annotation-card .luxe-cancel{background:var(--surface-2);border-color:var(--strong);color:var(--ink-1)}.luxe-annotation-card .luxe-cancel:hover{background:var(--canvas)}`;
+      `:host{all:initial;position:fixed;z-index:2147483647;left:0;top:0;font-family:var(--font-sans);letter-spacing:var(--tracking-sans)}*{box-sizing:border-box}:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ring);outline-offset:var(--focus-ring-offset)}.luxe-text-highlight{position:fixed;pointer-events:none;background:var(--gold-wash);border-radius:2px}.luxe-annotation-badge{position:fixed;display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:var(--radius-pill);background:var(--gold);color:var(--ink-1);border:2px solid var(--canvas);font-size:var(--text-label);font-weight:var(--weight-medium);line-height:1;pointer-events:none}.luxe-annotation-card{position:fixed;width:min(320px,calc(100vw - 24px));padding:16px;border-radius:var(--radius-card);background:var(--surface-2);color:var(--ink-1);border:var(--stroke-hair) solid var(--strong);box-shadow:0 2px 6px rgba(33,30,23,.10),var(--shadow-modal);font-size:var(--text-control);line-height:var(--leading-body)}.luxe-heading{font-weight:var(--weight-medium);margin-bottom:8px}.luxe-annotation-card textarea{width:100%;min-height:86px;resize:vertical;border-radius:var(--radius-nav);border:var(--stroke-hair) solid var(--hair);background:var(--surface-2);color:var(--ink-1);padding:10px 12px;font-family:var(--font-sans);font-size:var(--text-control);line-height:var(--leading-body);letter-spacing:var(--tracking-sans)}.luxe-annotation-card textarea::placeholder{color:var(--ink-3)}.luxe-annotation-card .luxe-hint{margin-top:8px;font-size:var(--text-label);color:var(--ink-2)}.luxe-annotation-card .luxe-row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}.luxe-annotation-card button{border:var(--stroke-hair) solid transparent;border-radius:var(--radius-pill);padding:8px 16px;font-family:var(--font-sans);font-size:var(--text-control);font-weight:var(--weight-medium);letter-spacing:var(--tracking-sans);cursor:pointer}.luxe-annotation-card .luxe-send{background:var(--dark-fill);color:var(--dark-fill-text)}.luxe-annotation-card .luxe-send:hover{background:var(--dark-fill-hover)}.luxe-annotation-card .luxe-cancel{background:var(--surface-2);border-color:var(--strong);color:var(--ink-1)}.luxe-annotation-card .luxe-cancel:hover{background:var(--canvas)}`;
     shadow.appendChild(style);
     return shadow;
   }
@@ -1765,7 +2212,7 @@ export function createArtifactSdk(
         ? "Annotate text"
         : c.tag === "mermaid-node"
           ? "Annotate node" + (nodeLabel ? ": " + escapeAnnotationText(nodeLabel) : "")
-          : "Annotate &lt;" + c.tag + "&gt;";
+          : "Annotate " + friendlyElementName(c.tag);
     const placeholder =
       c.tag === "text"
         ? "Tell the agent what to change about this text..."
@@ -1815,7 +2262,8 @@ export function createArtifactSdk(
 
   window.addEventListener("message", (event) => {
     const msg = event.data || {};
-    if (msg.type === "luxe:setAnnotationMode") setAnnotationMode(msg.enabled);
+    if (msg.type === "luxe:setSessionEnded") setSessionEnded();
+    else if (msg.type === "luxe:setAnnotationMode") setAnnotationMode(msg.enabled);
     // The chrome and this document cannot see each other's clicks (the iframe is
     // sandboxed without same-origin), so the chrome forwards clicks that land on
     // itself and we treat them the same as clicking the page backdrop.
@@ -1915,22 +2363,115 @@ export function createArtifactSdk(
         ignoreNextClick = false;
         return;
       }
-      // The page backdrop is not an annotation target: a click that lands on <html>
-      // or <body> itself hit empty space, not content. Treat it as "dismiss", which
-      // is what a reviewer means by clicking away from an open card.
-      if (isPageBackdrop(event.target)) {
+      // Clicking away from an OPEN card dismisses it. Full stop - it does not matter
+      // what the click landed on.
+      //
+      // This used to be gated on `isPageBackdrop`, which only accepts <html> and <body>
+      // themselves. In any artifact with a centred column - which is most of them - the
+      // visually empty margins, the gaps between sections and the whole tail below the
+      // content all hit-test to <main>, not <body>. So clicking obviously-empty space
+      // opened a second card titled "Annotate <main>" instead of closing the first, and
+      // worse, `showAnnotationCard` closes unconditionally and therefore threw away an
+      // unsent draft that `dismissCard`'s guard exists to protect.
+      //
+      // `dismissCard` keeps that draft guard, so a card holding typed text still refuses
+      // to go, and the click is simply spent.
+      if (cardIsOpen()) {
         dismissCard();
         return;
       }
+      // No card open: the backdrop is still not an annotation target, since a click on
+      // <html> or <body> hit empty space rather than content.
+      if (isPageBackdrop(event.target)) return;
       showAnnotationCard(event.target);
     },
     true,
   );
 
+  // Injection 4 of 5 outside the shadow DOM, and the only one that is not about
+  // annotation. Placed as the FIRST child of <head>, which is what makes the artifact
+  // win: CSS layer priority follows the order layers are first DECLARED, and that
+  // follows document position rather than the moment the node was inserted. The SDK
+  // script sits before </body> and therefore runs after every artifact stylesheet has
+  // been parsed, so appending this - the obvious thing to do, and what the other three
+  // injections do - would make `luxe-baseline` the LAST declared layer and give it
+  // priority over the artifact's own layers. Inserting first makes it the lowest.
+  function injectArtifactBaseline() {
+    if (!artifactBaselineCss) return;
+    const root = document.documentElement;
+    if (root?.getAttribute?.(baselineOptOutAttribute) === "off") return;
+    // Already present because the author pasted the snippet `luxe design` prints. One
+    // copy is the point; a second would be harmless but is still a second.
+    if (document.getElementById(baselineStyleId)) return;
+    const head = document.head;
+    if (!head) return;
+    const style = document.createElement("style");
+    style.id = baselineStyleId;
+    style.textContent = artifactBaselineCss;
+    head.insertBefore(style, head.firstChild);
+  }
+
+  // The baseline can repair inline code and marks on a cocoa surface, but CSS cannot ask
+  // "is the thing behind me dark?" - the stylesheet can only match DaisyUI's semantic
+  // surface classes. An artifact that paints its own dark card leaves <mark> at the user
+  // agent's yellow-on-black, which is exactly the case that prompted the fix.
+  //
+  // So measure it. This is still a repair and not a restyle: it fires only where the
+  // surface really is dark, it only tags the ancestor so the existing rule applies, and it
+  // touches nothing else. Cheap because the candidate set is tiny - marks and inline code,
+  // not the document.
+  function tagDarkSurfaces() {
+    if (!artifactBaselineCss) return;
+    const candidates = document.querySelectorAll("mark, code, kbd, samp");
+    if (!candidates.length) return;
+    const decided = new Map();
+    for (const el of candidates) {
+      if (el.closest("[data-luxe-ui]") || el.closest("pre")) continue;
+      const surface = nearestPaintedAncestor(el);
+      if (!surface || decided.has(surface)) continue;
+      decided.set(surface, true);
+      if (isDarkSurface(surface)) surface.setAttribute("data-luxe-on-dark", "");
+    }
+  }
+
+  // The nearest ancestor that actually paints something. A transparent background means
+  // whatever is behind it shows through, so it is not the surface this text sits on.
+  function nearestPaintedAncestor(el) {
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      const background = getComputedStyle(node).backgroundColor;
+      const parts = String(background).match(/[\d.]+/g);
+      if (!parts) continue;
+      const alpha = parts.length > 3 ? Number(parts[3]) : 1;
+      if (alpha > 0.5) return node;
+    }
+    return null;
+  }
+
+  function isDarkSurface(node) {
+    const parts = String(getComputedStyle(node).backgroundColor).match(/[\d.]+/g);
+    if (!parts || parts.length < 3) return false;
+    const [r, g, b] = parts.slice(0, 3).map((value) => {
+      const channel = Number(value) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    // WCAG relative luminance. The threshold is where ivory text starts winning over ink
+    // text on the same surface, so "dark" means "a light foreground belongs here".
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.18;
+  }
+
+  injectArtifactBaseline();
   setAnnotationMode(annotationMode);
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", startLayoutAudit, { once: true });
+    document.addEventListener(
+      "DOMContentLoaded",
+      () => {
+        tagDarkSurfaces();
+        startLayoutAudit();
+      },
+      { once: true },
+    );
   } else {
+    tagDarkSurfaces();
     startLayoutAudit();
   }
 

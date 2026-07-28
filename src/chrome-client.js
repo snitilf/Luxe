@@ -45,6 +45,8 @@ const whiteboardOverlay = /** @type {HTMLDivElement} */ (document.getElementById
 const whiteboardFrame = /** @type {HTMLIFrameElement} */ (document.getElementById("whiteboardFrame"));
 const whiteboardCloseButton = /** @type {HTMLButtonElement} */ (document.getElementById("whiteboardClose"));
 const whiteboardError = /** @type {HTMLDivElement} */ (document.getElementById("whiteboardError"));
+const farewell = /** @type {HTMLDivElement} */ (document.getElementById("farewell"));
+const farewellCopy = /** @type {HTMLParagraphElement} */ (document.getElementById("farewellCopy"));
 const artifactSrc = frame.dataset.artifactSrc || frame.getAttribute?.("data-artifact-src") || frame.src || "";
 
 const queued = loadQueuedPrompts();
@@ -54,6 +56,10 @@ const queued = loadQueuedPrompts();
 // switch and the state can never disagree at load. Missing or malformed bootstrap falls back
 // to explore mode, matching ANNOTATION_DEFAULT in server.js.
 let annotation = sessionData.annotationDefault === true;
+// Whether this session was already over when the page loaded. Kept separate from `ended`
+// because the two mean different things at boot: `initialEnded` decides whether to stand the
+// live machinery up at all, while `ended` tracks the running state from there on.
+const initialEnded = sessionData.ended === true;
 let ended = false;
 let agentPresence = "waiting";
 let pendingSnapshot = "";
@@ -75,6 +81,16 @@ let layoutGateCycle = 0;
 let layoutGateTimer;
 const snapshotRequests = [];
 let endAfterSubmit = false;
+// Whether an end initiated FROM THIS TAB is in flight, and therefore whether the session
+// ending should be answered with a farewell.
+//
+// This exists because of an ordering that cannot be worked around at the call site: the
+// server emits its `ended` SSE frame BEFORE it answers the POST that caused it
+// (src/server.js, the prompts handler emits and then responds). So the stream listener
+// always reaches markSessionEnded first, and the farewell-bearing call that follows the
+// fetch response hits `if (ended) return` and does nothing. Recording the intent before
+// the request goes out is what makes the two paths agree.
+let farewellPending = false;
 let workingBubble = null;
 let submitQueuedPromise = null;
 let submitQueuedAgain = false;
@@ -83,6 +99,15 @@ let lastScroll = { x: 0, y: 0 };
 let copyHintTimer;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let sendHintTimer;
+// Who last wrote the send hint. Three writers share that one line - the empty-composer
+// nudge, send status/errors, and the "agent is working" reason - and they have different
+// priorities, so the line records its owner instead of being guessed at from its text.
+/** @type {"nudge" | "status" | "working" | null} */
+let sendHintOwner = null;
+// The live event stream, held here rather than only in the const at the bottom of the
+// file so `markSessionEnded` can close it without reaching into the boot section.
+/** @type {EventSource | null} */
+let eventStream = null;
 
 function escapeHtml(value) {
   return String(value).replace(
@@ -123,39 +148,85 @@ function persistQueuedPrompts() {
   }
 }
 
-// Queued prompts are dashed with a clock glyph; while a send is in flight the
-// same pills go solid, which is the "sent" treatment in the component table.
-const PILL_CLOCK_ICON =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>';
-const PILL_SENT_ICON =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+// Queued and sending are told apart by the border treatment the component table
+// specifies - dashed while queued, solid once in flight. There is deliberately no state
+// glyph: a 24px outlined circle beside two lines of text competes with them for
+// attention, and it is the "big circle" half of the reported noise.
+
+// What to call a queued item, in three tiers.
+//
+// 1. The topic the artifact declared. Always the best answer, because the author knows
+//    what the question was.
+// 2. A `question:` queue key, de-prefixed and humanised. `deriveQueueKey` is a DEDUPE
+//    key, not a label - its other branches produce `form:signup|radio:name` composites
+//    and raw `div > form > fieldset` element paths, and printing either of those would
+//    be worse than showing nothing. Only the branch that carries a real question name
+//    is accepted.
+// 3. The prompt itself, trimmed to a phrase. Never the bare tag: "Queue answered -
+//    choice" is technically true and tells the reader nothing.
+const TOPIC_MAX = 60;
+
+function humanizeTopic(value) {
+  const words = String(value).replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!words) return "";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function promptTopic(prompt) {
+  const declared = typeof prompt?.topic === "string" ? prompt.topic.trim() : "";
+  if (declared) return truncateTopic(declared);
+
+  const key = promptQueueKey(prompt);
+  // Composites and element paths are structure, not names.
+  if (key.startsWith("question:") && !key.includes("|") && !key.includes(">")) {
+    const humanized = humanizeTopic(key.slice("question:".length));
+    if (humanized) return truncateTopic(humanized);
+  }
+
+  const body = String(prompt?.prompt || "").trim();
+  if (body) return truncateTopic(body.split("\n")[0]);
+  return "Feedback";
+}
+
+function truncateTopic(value) {
+  const text = String(value).replace(/\s+/g, " ").trim();
+  return text.length > TOPIC_MAX ? text.slice(0, TOPIC_MAX - 1).trimEnd() + "…" : text;
+}
+
+// A queued pill names what is queued and gets out of the way.
+//
+// Upstream showed one ellipsized line and put the selector and the full prompt behind a
+// hover tooltip. The port replaced that with a clock glyph, the raw CSS selector in mono,
+// a tag chip and an expandable table of node paths and offsets, all on screen at once -
+// which is the "big circle and all the code" Filip reported. This restores the restraint
+// and keeps the disclosure, because hover-only content is unreachable by touch and by
+// keyboard.
+function promptDetail(body, topic) {
+  if (!body || body === topic) return "";
+  const lower = body.toLowerCase();
+  const prefix = topic.replace(/…$/, "").toLowerCase();
+  // A truncated topic IS this prompt, cut short - so there is no second line to show.
+  // Checked before the prefix strip below, which would otherwise hand back the tail of a
+  // word: topic "…keep w…" over body "…keep writes up." leaves "rites up."
+  if (topic.endsWith("…") && lower.startsWith(prefix)) return "";
+  if (prefix && lower.startsWith(prefix)) {
+    return body.slice(prefix.length).replace(/^\s*[:\-\u2013\u2014]?\s*/, "");
+  }
+  return body;
+}
 
 function promptInlineHtml(prompt) {
-  const context = [];
-  if (prompt.text) {
-    context.push(
-      '<span class="pill-text" aria-label="Text: ' +
-        escapeHtml(prompt.text) +
-        '">“' +
-        escapeHtml(prompt.text) +
-        "”</span>",
-    );
-  }
-  if (prompt.selector) {
-    context.push(
-      '<span class="pill-selector"><span class="visually-hidden">Selector: </span><code>' +
-        escapeHtml(prompt.selector) +
-        "</code></span>",
-    );
-  }
-  if (prompt.tag) {
-    context.push(
-      '<span class="pill-tag" aria-label="Tag: ' + escapeHtml(prompt.tag) + '">' + escapeHtml(prompt.tag) + "</span>",
-    );
-  }
+  const topic = promptTopic(prompt);
+  // Only worth a second line when it says something the topic did not. An artifact that
+  // sets topic "Rollback window" and prompt "Rollback window: 30 days" was printing the
+  // topic twice, which reads like debug output - so the redundant prefix is stripped and
+  // what remains is the answer alone.
+  const detail = promptDetail(String(prompt.prompt || "").trim(), topic);
   return (
-    (prompt.prompt ? '<div class="pill-preview">' + escapeHtml(prompt.prompt) + "</div>" : "") +
-    (context.length ? '<div class="pill-context">' + context.join("") + "</div>" : "")
+    '<div class="pill-topic">' +
+    escapeHtml(topic) +
+    "</div>" +
+    (detail ? '<div class="pill-detail">' + escapeHtml(detail) + "</div>" : "")
   );
 }
 
@@ -163,8 +234,25 @@ function targetFieldHtml(label, value) {
   return "<div><dt>" + escapeHtml(label) + "</dt><dd>" + escapeHtml(value === "" ? "(empty)" : value) + "</dd></div>";
 }
 
-function targetDisclosureHtml(target) {
-  if (!target) return "";
+// Everything the pill face no longer shows. The selector, the quoted source text and the
+// tag are here rather than on screen: they are how an agent locates the target, not how a
+// reviewer recognises their own question, and they were the bulk of the noise.
+function promptDisclosureHtml(prompt) {
+  const rows = [];
+  if (prompt.tag) rows.push(["Kind", prompt.tag]);
+  if (prompt.text) rows.push(["Text", prompt.text]);
+  if (prompt.selector) rows.push(["Selector", prompt.selector]);
+  const target = prompt.target;
+  if (target) rows.push(...targetRows(target));
+  if (!rows.length) return "";
+  return (
+    '<details class="pill-target-details"><summary>Details</summary><dl>' +
+    rows.map(([label, value]) => targetFieldHtml(label, value)).join("") +
+    "</dl></details>"
+  );
+}
+
+function targetRows(target) {
   const rows = [["Type", target.type]];
   if (target.type === "mermaid-node") {
     rows.push(
@@ -199,11 +287,7 @@ function targetDisclosureHtml(target) {
       ["Drawn", target.stats.drawn],
     );
   }
-  return (
-    '<details class="pill-target-details"><summary>Target details</summary><dl>' +
-    rows.map(([label, value]) => targetFieldHtml(label, value)).join("") +
-    "</dl></details>"
-  );
+  return rows;
 }
 
 function render() {
@@ -213,14 +297,12 @@ function render() {
       (prompt, index) =>
         '<div class="pill-wrap"><div class="pill' +
         (sending ? " sent" : "") +
-        '"><span class="pill-state">' +
-        (sending ? PILL_SENT_ICON : PILL_CLOCK_ICON) +
-        '</span><div class="pill-fields">' +
+        '"><div class="pill-fields">' +
         promptInlineHtml(prompt) +
         '</div><button class="pill-close" type="button" aria-label="Remove queued prompt" data-index="' +
         index +
         '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button></div>' +
-        targetDisclosureHtml(prompt.target) +
+        promptDisclosureHtml(prompt) +
         (prompt._luxeQueueError ? '<div class="pill-error">' + escapeHtml(prompt._luxeQueueError) + "</div>" : "") +
         "</div>",
     )
@@ -234,17 +316,48 @@ function render() {
   scrollPanelToBottom();
 }
 
+const WORKING_SEND_REASON = "Waiting for the agent to finish before sending.";
+
+// Both send buttons are disabled while the agent is working, which is deliberate - but it
+// used to give no reason at all, so the UI simply stopped responding and the reviewer was
+// left to guess. The reason goes on `title` for a pointer, on `aria-describedby` (wired in
+// the markup) for a screen reader, and into the existing live region so it is visible
+// without hovering anything.
 function updateSendState() {
-  sendButton.disabled = ended || agentPresence === "working";
+  const waitingOnAgent = !ended && agentPresence === "working";
+  sendButton.disabled = ended || waitingOnAgent;
   sendAndEndButton.disabled = sendButton.disabled;
+
+  const reason = waitingOnAgent ? WORKING_SEND_REASON : "";
+  for (const button of [sendButton, sendAndEndButton]) {
+    if (reason) button.title = reason;
+    else button.removeAttribute("title");
+  }
+
+  // The hint is shared with the empty-composer nudge and with send errors, and those
+  // matter more than explaining a greyed button. Ownership is tracked explicitly rather
+  // than inferred from `hidden` or from the current text: both are things another writer
+  // can change, which would let this quietly stop showing - or, worse, let it overwrite
+  // a failure the reviewer still needs to read.
+  if (waitingOnAgent && (sendHintOwner === null || sendHintOwner === "working")) {
+    clearTimeout(sendHintTimer);
+    sendHint.textContent = WORKING_SEND_REASON;
+    sendHint.hidden = false;
+    sendHintOwner = "working";
+  } else if (!waitingOnAgent && sendHintOwner === "working") {
+    sendHint.hidden = true;
+    sendHintOwner = null;
+  }
 }
 
 function showSendHint() {
   sendHint.textContent = defaultSendHintText;
   sendHint.hidden = false;
+  sendHintOwner = "nudge";
   clearTimeout(sendHintTimer);
   sendHintTimer = setTimeout(() => {
     sendHint.hidden = true;
+    sendHintOwner = null;
   }, 2600);
   chatInput.focus();
 }
@@ -253,11 +366,13 @@ function showSendStatus(text) {
   clearTimeout(sendHintTimer);
   sendHint.textContent = text;
   sendHint.hidden = false;
+  sendHintOwner = "status";
 }
 
 function hideSendHint() {
   clearTimeout(sendHintTimer);
   sendHint.hidden = true;
+  sendHintOwner = null;
 }
 
 function setMenuOpen(button, menu, open) {
@@ -295,24 +410,32 @@ async function copyText(text) {
   return true;
 }
 
-function addChat(role, text, shouldScroll = true) {
+// A receipt is not a message. It records that a queued item was delivered, so it gets a
+// quiet one-line treatment rather than a speech bubble with a "YOU" label - the reviewer
+// did not say "Queue answered - Billing plan", Luxe did.
+function addChat(role, text, shouldScroll = true, kind = "") {
   if (!text) return;
 
   const el = document.createElement("div");
-  el.className = "bubble " + role;
-  el.innerHTML = "<small>" + (role === "agent" ? "Agent" : "You") + "</small><div>" + escapeHtml(text) + "</div>";
+  if (kind === "receipt") {
+    el.className = "chat-receipt";
+    el.innerHTML = '<span class="chat-receipt-mark" aria-hidden="true"></span><span>' + escapeHtml(text) + "</span>";
+  } else {
+    el.className = "bubble " + role;
+    el.innerHTML = "<small>" + (role === "agent" ? "Agent" : "You") + "</small><div>" + escapeHtml(text) + "</div>";
+  }
   chatLog.appendChild(el);
   if (shouldScroll) scrollElementIntoView(el);
   return el;
 }
 
 function syncChat(chat) {
-  for (const el of [...chatLog.querySelectorAll(".bubble.user,.bubble.agent:not(.agent-working)")]) {
+  for (const el of [...chatLog.querySelectorAll(".bubble.user,.bubble.agent:not(.agent-working),.chat-receipt")]) {
     el.remove();
   }
 
   let lastChatBubble = null;
-  for (const item of chat) lastChatBubble = addChat(item.role, item.text, false) || lastChatBubble;
+  for (const item of chat) lastChatBubble = addChat(item.role, item.text, false, item.kind) || lastChatBubble;
   if (workingBubble) {
     chatLog.appendChild(workingBubble);
     scrollElementIntoView(workingBubble);
@@ -321,7 +444,12 @@ function syncChat(chat) {
   }
 }
 
+// Presence is a live-session concept. Once the session ends there is no agent to be
+// listening or working, so an ended session refuses every further presence update: the
+// SSE stream is closed on end, but a message already in flight would otherwise resurrect
+// the working spinner on a dead session, which is what the old code did.
 function setAgentPresence(state) {
+  if (ended) return;
   agentPresence = state === "listening" || state === "working" ? state : "waiting";
   updateSendState();
   if (presenceBanner) presenceBanner.hidden = ended || agentPresence !== "waiting";
@@ -425,6 +553,11 @@ function normalizeQueuedPrompt(prompt, { preserveBrowserMetadata = false } = {})
     selector: String(prompt?.selector || ""),
     tag: String(prompt?.tag || ""),
   };
+  // Bounded here as well as in the SDK: this path also loads prompts back out of
+  // sessionStorage, which anything running in the page could have written to. Omitted
+  // when absent so a prompt without a topic keeps the shape it has always had.
+  const topic = String(prompt?.topic || "").slice(0, 80);
+  if (topic) normalized.topic = topic;
   const target = normalizeQueueTarget(prompt?.target);
   if (target) normalized.target = target;
   const queueKey = promptQueueKey(prompt);
@@ -463,6 +596,9 @@ function stripInternalPromptFields(prompt) {
     selector: normalized.selector,
     tag: normalized.tag,
   };
+  // Omitted rather than sent empty, like target: every field on the wire is one the
+  // reviewer confirmed, and an always-present "" is noise in the payload the agent reads.
+  if (normalized.topic) clean.topic = normalized.topic;
   if (normalized.target) clean.target = normalized.target;
   return clean;
 }
@@ -544,6 +680,7 @@ function requestSnapshot(prompts, endAfter) {
 function sendQueued(endAfter) {
   if (ended || agentPresence === "working") return;
   closeMenus();
+  if (endAfter) farewellPending = true;
 
   const frozen = consumeSendFreeze(endAfter);
   const text = frozen.composerText;
@@ -597,7 +734,7 @@ async function submitQueued() {
         submitQueued();
       } else if (endAfterSubmit) {
         endAfterSubmit = false;
-        endSession();
+        endSession({ farewell: true });
       }
     }
   }
@@ -678,7 +815,7 @@ async function submitQueuedOnce() {
   }
   if (shouldEndSession && result.session_ended === true) {
     endAfterSubmit = false;
-    markSessionEnded();
+    markSessionEnded({ farewell: true });
     return;
   }
   if (acceptedIndices.size > 0 && agentPresence === "listening") setAgentPresence("working");
@@ -839,14 +976,80 @@ async function submitLayoutWarnings(layoutWarnings) {
   if (!response.ok) throw new Error("failed to submit layout warnings");
 }
 
-async function endSession() {
+async function endSession({ farewell: showGoodbye = false } = {}) {
   if (ended) return;
+  if (showGoodbye) farewellPending = true;
   const response = await fetch("/api/" + key + "/end", { method: "POST" });
   if (!response.ok) throw new Error("failed to end session");
-  markSessionEnded();
+  markSessionEnded({ farewell: showGoodbye });
 }
 
-function markSessionEnded() {
+// Remove the "Working..." bubble directly. Routing this through setAgentPresence("waiting")
+// would work by side effect, but "waiting" means "your agent is not listening" - a live-session
+// state with its own banner - so an ended session would pass through a status it can never be in.
+function clearWorkingIndicator() {
+  if (workingBubble) workingBubble.remove();
+  workingBubble = null;
+  agentPresence = "waiting";
+}
+
+function closeEventStream() {
+  if (!eventStream) return;
+  eventStream.close();
+  eventStream = null;
+}
+
+// Every timer that can still fire after the session is over. None of them are harmful on
+// their own; together they are the difference between a page that has stopped and a page
+// that merely looks stopped.
+function clearSessionTimers() {
+  clearTimeout(sendHintTimer);
+  sendHintTimer = undefined;
+  clearTimeout(copyHintTimer);
+  copyHintTimer = undefined;
+  clearLayoutGateTimer();
+  clearPointerdownSendFreeze();
+}
+
+// The goodbye, and the honest half of "close the page".
+//
+// The card never offers to close the tab, because it cannot. window.close() only works on
+// a tab that script opened, and Luxe hands the URL to the `open` package, so in every
+// ordinary session the tab is user-opened and the call is refused silently. A button that
+// is refused every time is worse than no button, so the card tells the reviewer the
+// keystroke that does work and stops there.
+//
+// Shown when the reviewer ends the session from this tab - Send & End, or End session in
+// the overflow menu - and not when it ended some other way: the agent running `luxe end`,
+// or a reload of a session that was already over. A farewell answers a goodbye; popping
+// one over a page nobody just said goodbye on is a jump scare.
+
+function showFarewell() {
+  if (!farewell) return;
+  // The server renders this markup with no idea what the reviewer is on, so the final copy
+  // is settled here - before the card is unhidden, so the wrong shortcut never paints.
+  if (farewellCopy) farewellCopy.textContent = farewellCopyText();
+  farewell.hidden = false;
+  // The card is `aria-modal`, and with the button gone it holds nothing focusable. Focusing
+  // the card itself moves focus into the dialog so its accessible name is announced,
+  // instead of stranding keyboard and screen-reader users on the chrome behind the scrim.
+  farewell.focus?.();
+}
+
+function farewellCopyText() {
+  return isApplePlatform()
+    ? "Your feedback is on its way. Press \u2318W to close this tab."
+    : "Your feedback is on its way. Press Ctrl+W to close this tab.";
+}
+
+function isApplePlatform() {
+  // userAgentData is the modern source and is not in the DOM lib typings, hence the cast.
+  const data = /** @type {any} */ (navigator).userAgentData;
+  const platform = String(data?.platform || navigator.platform || navigator.userAgent || "");
+  return /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+function markSessionEnded({ farewell: showGoodbye = farewellPending } = {}) {
   if (ended) return;
   ended = true;
   closeMenus();
@@ -856,14 +1059,27 @@ function markSessionEnded() {
   chatInput.disabled = true;
   updateSendState();
   if (presenceBanner) presenceBanner.hidden = true;
+
+  // Tear the live-session machinery down rather than merely hiding it. Leaving any of
+  // this running is what made an ended session keep claiming to be working: the spinner
+  // is owned by presence, presence is fed by the stream, and the stream outlived the
+  // session. Order matters only in that the stream closes before the last repaint.
+  clearWorkingIndicator();
+  closeEventStream();
+  clearSessionTimers();
   layoutGateManuallyBypassed = true;
   revealLayoutGate();
-  postToFrame({ type: "luxe:setAnnotationMode", enabled: false });
+  // Not `luxe:setAnnotationMode`. The SDK computes the whiteboard affordance's disabled state
+  // as `busy || annotationMode`, so telling the artifact that annotation is off would ENABLE
+  // "Edit as whiteboard" on a session that is over. Ending is its own terminal state, and the
+  // SDK cannot leave it.
+  postToFrame({ type: "luxe:setSessionEnded" });
   // The ended state is a change of interaction model, not a curtain: the chrome
   // recedes to 45%, drops the annotation hue (body.session-ended maps --gold to
   // --strong) and stops accepting input, while the artifact stays readable.
   document.body?.classList?.add("session-ended");
   endedChip.hidden = false;
+  if (showGoodbye) showFarewell();
 }
 
 function copyFilePath() {
@@ -1506,7 +1722,7 @@ reloadArtifactButton.onclick = reloadArtifact;
 exportArtifactButton.onclick = exportArtifact;
 endButton.onclick = () => {
   closeMenus();
-  endSession();
+  endSession({ farewell: true });
 };
 document.addEventListener("mousedown", (event) => {
   const target = /** @type {Node} */ (event.target);
@@ -1545,17 +1761,26 @@ frame.addEventListener("load", () => {
 
 initializeLayoutGate();
 
-const events = new EventSource("/events/" + key);
-events.addEventListener("reload", () => {
-  resetFrame().then((reloaded) => {
-    if (reloaded) refreshWhiteboardSource();
+// Do not open a stream for a session that is already over. An `ended` listener alone would
+// only catch a session ending *while* this page is open; a reloaded ended tab would still
+// connect and then sit on a dead stream. The server refuses these too, so neither side is
+// load-bearing on its own.
+if (!initialEnded) {
+  const events = new EventSource("/events/" + key);
+  eventStream = events;
+  events.addEventListener("reload", () => {
+    resetFrame().then((reloaded) => {
+      if (reloaded) refreshWhiteboardSource();
+    });
   });
-});
-events.addEventListener("chrome-reload", () => reloadAfterServerRestart());
-events.addEventListener("agent-reply", (event) => addChat("agent", JSON.parse(event.data).text));
-events.addEventListener("chat-sync", (event) => syncChat(JSON.parse(event.data).chat || []));
-events.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
+  events.addEventListener("chrome-reload", () => reloadAfterServerRestart());
+  events.addEventListener("agent-reply", (event) => addChat("agent", JSON.parse(event.data).text));
+  events.addEventListener("chat-sync", (event) => syncChat(JSON.parse(event.data).chat || []));
+  events.addEventListener("agent-presence", (event) => setAgentPresence(JSON.parse(event.data).state));
+  events.addEventListener("ended", () => markSessionEnded());
+}
 
 render();
-initialChat.forEach((item) => addChat(item.role, item.text));
-setAgentPresence("waiting");
+initialChat.forEach((item) => addChat(item.role, item.text, true, item.kind));
+if (initialEnded) markSessionEnded();
+else setAgentPresence("waiting");

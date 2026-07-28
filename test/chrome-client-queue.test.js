@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const sourceUrl = new URL("../src/chrome-client.js", import.meta.url);
 
-/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, annotationDefault?: boolean }} HarnessSessionData */
+/** @typedef {{ key: string, file: string, layoutGateEnabled?: boolean, layoutGateMaxHoldMs?: number, modeToggleHotkeyKey?: string, annotationDefault?: boolean, ended?: boolean }} HarnessSessionData */
 /** @type {HarnessSessionData} */
 const defaultSessionData = { key: "abc", file: "/tmp/artifact.html", modeToggleHotkeyKey: "i" };
 
@@ -13,6 +13,9 @@ async function createChromeHarness({
   fetchImpl = async () => ({ ok: true }),
   sessionData = defaultSessionData,
   artifactSrc = "",
+  // Luxe ships on macOS, Linux and Windows, so anything that reads the platform has to be
+  // exercised on more than the machine the suite happens to run on.
+  navigator = { platform: "MacIntel", userAgent: "test" },
 } = {}) {
   const source = await readFile(sourceUrl, "utf8");
   const storage = new Map();
@@ -25,6 +28,7 @@ async function createChromeHarness({
   const elements = new Map();
   const timers = new Map();
   const srcLoads = [];
+  const closeAttempts = [];
   let nextTimerId = 1;
   let reloadCount = 0;
 
@@ -91,11 +95,39 @@ async function createChromeHarness({
       setAttribute(name, value) {
         this[name] = String(value);
       },
+      removeAttribute(name) {
+        delete this[name];
+      },
       addEventListener(type, handler) {
         listeners.set(type, handler);
       },
-      querySelectorAll() {
-        return [];
+      children: [],
+      // Enough of a matcher for the selectors the chrome actually uses:
+      // comma-separated class chains with an optional :not(.class). The fake returned []
+      // before, which made syncChat's "remove the old bubbles" step a silent no-op - so a
+      // second sync would have appended duplicates and no test could have noticed.
+      querySelectorAll(selector) {
+        if (!selector) return [];
+        const groups = String(selector)
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean);
+        const matches = (el, group) => {
+          const not = /:not\(([^)]*)\)/.exec(group);
+          const excluded = not ? not[1].split(".").filter(Boolean) : [];
+          const required = group
+            .replace(/:not\([^)]*\)/, "")
+            .split(".")
+            .filter(Boolean);
+          const classes = String(el.className || "")
+            .split(/\s+/)
+            .filter(Boolean);
+          return required.every((name) => classes.includes(name)) && !excluded.some((name) => classes.includes(name));
+        };
+        return this.children.filter((child) => groups.some((group) => matches(child, group)));
+      },
+      renderedChildren() {
+        return [...this.children];
       },
       querySelector(selector) {
         if (selector !== "span") return null;
@@ -104,7 +136,9 @@ async function createChromeHarness({
         return elements.get(childId);
       },
       appendChild(child) {
+        if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((c) => c !== child);
         child.parentElement = this;
+        this.children = [...this.children, child];
         this.lastAppendedChild = child;
         return child;
       },
@@ -113,7 +147,13 @@ async function createChromeHarness({
         if (typeof this.onclick === "function") return this.onclick(event);
         return undefined;
       },
-      remove() {},
+      remove() {
+        this.removed = true;
+        if (this.parentElement) {
+          this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+        }
+        this.parentElement = null;
+      },
       focus() {
         this.focused = true;
       },
@@ -127,6 +167,12 @@ async function createChromeHarness({
     return el;
   }
 
+  // These four ship with the `hidden` attribute in createChromeHtml. The fake defaulted
+  // every element to visible, which let a bug hide: code gated on `sendHint.hidden` never
+  // ran under test because the hint looked visible from boot.
+  for (const id of ["sendHint", "presenceBanner", "endedChip", "layoutIssueBanner", "farewell"]) {
+    element(id).hidden = true;
+  }
   element("luxe-session").textContent = JSON.stringify(sessionData);
   const frame = element("artifact");
   frame.dataset.artifactSrc = artifactSrc;
@@ -160,7 +206,7 @@ async function createChromeHarness({
         reloadCount += 1;
       },
     },
-    navigator: {},
+    navigator,
     setTimeout: fakeSetTimeout,
     URL: {
       createObjectURL() {
@@ -177,6 +223,10 @@ async function createChromeHarness({
 
       addEventListener(type, handler) {
         this.listeners.set(type, handler);
+      }
+
+      close() {
+        this.closed = true;
       }
     },
     document: {
@@ -213,6 +263,11 @@ async function createChromeHarness({
         if (!windowListeners.has(type)) windowListeners.set(type, []);
         windowListeners.get(type).push(handler);
       },
+      // Records the attempt without pretending it succeeded, which is the real browser
+      // behaviour for a tab the page did not open: silent refusal, window still here.
+      close() {
+        closeAttempts.push(true);
+      },
     },
   };
 
@@ -221,6 +276,7 @@ async function createChromeHarness({
   return {
     element,
     frame,
+    closeAttempts,
     postedToFrame,
     postedToWhiteboard,
     createInlineWhiteboard() {
@@ -237,6 +293,9 @@ async function createChromeHarness({
     eventSource() {
       assert.equal(eventSources.length, 1);
       return eventSources[0];
+    },
+    eventSourceCount() {
+      return eventSources.length;
     },
     sendFrameMessage(data) {
       const handlers = windowListeners.get("message") || [];
@@ -369,10 +428,18 @@ test("queue storage drops uid and unknown metadata while confirmation shows ever
   assert.match(rendered, /Quarterly results/);
   assert.match(rendered, /main &gt; h1#results/);
   assert.match(rendered, /annotation/);
-  assert.match(rendered, /aria-label="Text: Quarterly results"/);
-  assert.match(rendered, /<span class="visually-hidden">Selector: <\/span><code>main &gt; h1#results<\/code>/);
-  assert.match(rendered, /aria-label="Tag: annotation"/);
+  // The pill face carries the topic and nothing else; the selector, the quoted source
+  // text and the tag moved behind the disclosure, which is the whole point of the
+  // redesign - they are how an agent locates a target, not how a reviewer recognises
+  // their own question.
+  assert.match(rendered, /<div class="pill-topic">Tighten the heading<\/div>/);
+  const face = rendered.slice(0, rendered.indexOf("<details"));
+  assert.doesNotMatch(face, /Quarterly results/, "quoted text is not on the pill face");
+  assert.doesNotMatch(face, /h1#results/, "the selector is not on the pill face");
+  assert.doesNotMatch(face, /annotation/, "the tag chip is not on the pill face");
   assert.match(rendered, /<details[^>]*class="pill-target-details"/);
+  assert.match(rendered, /<dt>Selector<\/dt><dd>main &gt; h1#results<\/dd>/);
+  assert.match(rendered, /<dt>Kind<\/dt><dd>annotation<\/dd>/);
   assert.match(rendered, /Diagram ID/);
   assert.match(rendered, /approve/);
   assert.doesNotMatch(
@@ -1997,4 +2064,298 @@ test("the dismiss request is advisory: the chrome never assumes the card closed"
   // unsent draft. The chrome must not mirror card state or act on the outcome.
   const event = chrome.dispatchDocumentEvent("pointerdown", {});
   assert.equal(event.defaultPrevented, false);
+});
+
+// Ending a session has to stop the machinery, not just grey it out. The spinner is owned by
+// presence, presence is fed by the event stream, and the stream used to outlive the session -
+// so an ended session sat there claiming to be working forever.
+test("ending a session clears the working indicator and closes the event stream", async () => {
+  const chrome = await createChromeHarness();
+  const presence = chrome.eventSource().listeners.get("agent-presence");
+
+  presence({ data: JSON.stringify({ state: "working" }) });
+  const spinner = chrome.element("chatLog").lastAppendedChild;
+  assert.ok(spinner, "a working bubble was appended");
+  assert.equal(spinner.removed, undefined);
+  assert.equal(chrome.eventSource().closed, undefined);
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  assert.equal(spinner.removed, true, "the working bubble is removed on end");
+  assert.equal(chrome.eventSource().closed, true, "the event stream is closed on end");
+});
+
+test("a presence event arriving after the end cannot restore the spinner", async () => {
+  const chrome = await createChromeHarness();
+  const presence = chrome.eventSource().listeners.get("agent-presence");
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  const before = chrome.element("chatLog").lastAppendedChild;
+  // The stream is closed, but a message already dispatched must not resurrect the spinner
+  // on a session that is over.
+  presence({ data: JSON.stringify({ state: "working" }) });
+
+  assert.equal(chrome.element("chatLog").lastAppendedChild, before, "no new bubble was appended");
+});
+
+// The other half of P11: a reloaded ended tab must not stand the live machinery up at all.
+// An "ended" stream event alone would not cover this - there is no stream to carry it.
+test("a session that loads already ended never opens an event stream", async () => {
+  const chrome = await createChromeHarness({
+    sessionData: { ...defaultSessionData, ended: true },
+  });
+
+  assert.equal(chrome.eventSourceCount(), 0, "no stream is opened for an ended session");
+  assert.equal(chrome.element("chatInput").disabled, true);
+  assert.equal(chrome.element("endedChip").hidden, false);
+  assert.ok(chrome.element("body").classList.contains("session-ended"));
+});
+
+test("ending tells the artifact the session is over, not that annotation is off", async () => {
+  const chrome = await createChromeHarness();
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  const sent = chrome.postedToFrame.filter((m) => m.type === "luxe:setSessionEnded");
+  assert.equal(sent.length, 1, "the frame is told the session ended");
+  // luxe:setAnnotationMode{enabled:false} would re-enable "Edit as whiteboard", because the
+  // SDK disables it while annotation mode is ON.
+  const annotationOff = chrome.postedToFrame.filter((m) => m.type === "luxe:setAnnotationMode" && m.enabled === false);
+  assert.equal(annotationOff.length, 0, "the end is not signalled by turning annotation off");
+});
+
+// P6: the send buttons are disabled while the agent works, which is intended - but the
+// disabled state used to give no reason at all, so the panel just stopped responding.
+test("the disabled send buttons say why while the agent is working", async () => {
+  const chrome = await createChromeHarness();
+  const presence = chrome.eventSource().listeners.get("agent-presence");
+  const send = chrome.element("send");
+  const sendAndEnd = chrome.element("sendAndEnd");
+  const hint = chrome.element("sendHint");
+
+  presence({ data: JSON.stringify({ state: "listening" }) });
+  assert.equal(send.disabled, false);
+  assert.equal(send.title, undefined, "no reason is offered while sending is possible");
+
+  presence({ data: JSON.stringify({ state: "working" }) });
+  assert.equal(send.disabled, true);
+  assert.equal(sendAndEnd.disabled, true);
+  assert.match(send.title, /Waiting for the agent/);
+  assert.match(sendAndEnd.title, /Waiting for the agent/);
+  assert.equal(hint.hidden, false, "the reason is visible without hovering");
+
+  presence({ data: JSON.stringify({ state: "listening" }) });
+  assert.equal(send.disabled, false);
+  assert.equal(send.title, undefined, "the reason is withdrawn once sending works again");
+  assert.equal(hint.hidden, true);
+});
+
+test("the working reason never overwrites a send error", async () => {
+  const chrome = await createChromeHarness({ fetchImpl: async () => ({ ok: false, status: 413 }) });
+  const presence = chrome.eventSource().listeners.get("agent-presence");
+  presence({ data: JSON.stringify({ state: "listening" }) });
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Keep this queued", selector: "h1", tag: "annotation" },
+  });
+  chrome.element("send").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+  await flushPromises();
+
+  const hint = chrome.element("sendHint");
+  assert.match(hint.textContent, /not sent/i);
+
+  // The agent going back to work must not replace the failure the reviewer needs to read.
+  presence({ data: JSON.stringify({ state: "working" }) });
+  assert.match(hint.textContent, /not sent/i, "the send error survived the presence change");
+});
+
+// The farewell answers a gesture. Popping one over a page the reviewer did not just say
+// goodbye on - an agent-side `luxe end`, the overflow menu, a reload of a finished
+// session - would be a jump scare, so the routes are kept apart deliberately.
+test("Send and End says goodbye", async () => {
+  const chrome = await createChromeHarness({
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { status: "queued", accepted_prompt_indices: [0], rejected_prompts: [], session_ended: true };
+      },
+    }),
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Ship it", selector: "h1", tag: "annotation" },
+  });
+
+  assert.equal(chrome.element("farewell").hidden, true);
+
+  chrome.element("sendAndEnd").onclick();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "body" });
+  await flushPromises();
+
+  assert.equal(chrome.element("farewell").hidden, false, "the farewell appears on Send & End");
+  assert.equal(chrome.element("chatInput").disabled, true);
+});
+
+test("ending from the overflow menu also says goodbye", async () => {
+  const chrome = await createChromeHarness();
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  assert.equal(chrome.element("chatInput").disabled, true);
+  assert.equal(chrome.element("farewell").hidden, false, "End session is a goodbye too");
+});
+
+test("a session ended by the agent does not say goodbye", async () => {
+  const chrome = await createChromeHarness();
+  // `luxe end` from the agent side arrives over the stream. Nobody in this tab asked for
+  // it, so the page goes quiet without a farewell addressed to a gesture that never happened.
+  chrome.eventSource().listeners.get("ended")({ data: "{}" });
+  await flushPromises();
+
+  assert.equal(chrome.element("chatInput").disabled, true, "the session still ended");
+  assert.equal(chrome.element("farewell").hidden, true, "no farewell when the agent ended it");
+});
+
+test("reloading a finished session does not say goodbye", async () => {
+  const chrome = await createChromeHarness({ sessionData: { ...defaultSessionData, ended: true } });
+
+  assert.equal(chrome.element("chatInput").disabled, true);
+  assert.equal(chrome.element("farewell").hidden, true, "a reload is not a goodbye");
+});
+
+// A receipt is Luxe's note that something was delivered, not something the reviewer said,
+// so it must not wear a speech bubble - and it must survive the chat-sync that rebuilds
+// the conversation, which is why it is a server-side chat entry rather than a DOM node.
+test("receipts render as notes, not messages, and survive a chat sync", async () => {
+  const chrome = await createChromeHarness();
+  const syncChat = chrome.eventSource().listeners.get("chat-sync");
+
+  syncChat({
+    data: JSON.stringify({
+      chat: [
+        { role: "user", kind: "receipt", text: "Queue answered - Billing plan" },
+        { role: "user", text: "Typed by hand" },
+        { role: "agent", text: "On it" },
+      ],
+    }),
+  });
+
+  const rendered = chrome.element("chatLog").renderedChildren();
+  assert.deepEqual(
+    rendered.map((el) => el.className),
+    ["chat-receipt", "bubble user", "bubble agent"],
+  );
+  // No "YOU" label on the receipt: nobody said it.
+  assert.doesNotMatch(rendered[0].innerHTML, /<small>/);
+  assert.match(rendered[0].innerHTML, /Queue answered - Billing plan/);
+
+  // A second sync must replace the receipt, not stack another copy beside it.
+  syncChat({
+    data: JSON.stringify({ chat: [{ role: "user", kind: "receipt", text: "Queue answered - Billing plan" }] }),
+  });
+  assert.equal(chrome.element("chatLog").renderedChildren().length, 1);
+});
+
+test("the topic falls back through declared, question key, then prompt", async () => {
+  const chrome = await createChromeHarness();
+  const queue = (prompt) => chrome.sendFrameMessage({ type: "luxe:queuePrompt", prompt });
+
+  queue({ prompt: "Use the Pro plan", tag: "choice", topic: "Billing plan" });
+  queue({ prompt: "Ship on Friday", tag: "choice", _luxeQueueKey: "question:rollout-date" });
+  queue({ prompt: "Tighten this heading", tag: "annotation" });
+  // A composite dedupe key and an element path are structure, not names - printing
+  // either would be worse than falling through to the prompt.
+  queue({ prompt: "Pick the blue one", tag: "choice", _luxeQueueKey: "form:signup|radio:colour" });
+  queue({ prompt: "Fix the spacing", tag: "annotation", _luxeQueueKey: "div > form > fieldset" });
+
+  const topics = [...chrome.element("annotationPills").innerHTML.matchAll(/class="pill-topic">([^<]*)</g)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(topics, [
+    "Billing plan",
+    "Rollout date",
+    "Tighten this heading",
+    "Pick the blue one",
+    "Fix the spacing",
+  ]);
+});
+
+// A pill's second line exists to say what the topic did not. Two ways it can fail: an
+// artifact that sets topic "Rollback window" and prompt "Rollback window: 30 days" prints
+// the topic twice, and a prompt with no topic at all gets a topic truncated FROM that
+// prompt - stripping that prefix hands back the tail of a word.
+test("a queued pill never repeats its own topic, or a fragment of it", async () => {
+  const chrome = await createChromeHarness();
+  const queue = (prompt) => chrome.sendFrameMessage({ type: "luxe:queuePrompt", prompt });
+
+  queue({ prompt: "Rollback window: 30 days", tag: "choice", topic: "Rollback window" });
+  queue({ prompt: "Forty minutes is too long for a Sunday. Split it and keep writes up.", tag: "annotation" });
+  queue({ prompt: "Use the Pro plan", tag: "choice", topic: "Billing plan" });
+
+  const html = chrome.element("annotationPills").innerHTML;
+  const details = [...html.matchAll(/class="pill-detail">([^<]*)</g)].map((m) => m[1]);
+
+  // The redundant "Rollback window: " prefix is gone, the answer remains.
+  assert.ok(details.includes("30 days"), `expected the answer alone, got ${JSON.stringify(details)}`);
+  // The long annotation is its own topic, so it gets no second line - and certainly not
+  // the string "rites up.".
+  assert.ok(
+    !details.some((d) => /^rites/.test(d)),
+    `a truncated topic leaked a word fragment: ${JSON.stringify(details)}`,
+  );
+  // A topic that says something different keeps its detail line.
+  assert.ok(details.includes("Use the Pro plan"));
+});
+
+// window.close() only closes a tab that script opened, and Luxe hands the URL to the `open`
+// package, so the tab is always user-opened and the call is always refused. The card must
+// never attempt it - not on a timer, not behind a button - and must name the keystroke that
+// does work instead.
+test("the farewell never tries to close the tab", async () => {
+  const chrome = await createChromeHarness();
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  assert.equal(chrome.element("farewell").hidden, false, "the card is up");
+  chrome.runTimers(10000);
+  assert.deepEqual(chrome.closeAttempts, [], "no timer fires a close the browser will refuse");
+});
+
+test("the farewell names the close keystroke for the reader's platform", async () => {
+  const apple = await createChromeHarness();
+  apple.element("end").onclick();
+  await flushPromises();
+  assert.equal(apple.element("farewellCopy").textContent, "Your feedback is on its way. Press ⌘W to close this tab.");
+
+  // Not the Apple string off a Mac: CI runs ubuntu and windows too.
+  const windows = await createChromeHarness({
+    navigator: { platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+  });
+  windows.element("end").onclick();
+  await flushPromises();
+  assert.equal(
+    windows.element("farewellCopy").textContent,
+    "Your feedback is on its way. Press Ctrl+W to close this tab.",
+  );
+});
+
+// The card is `role="dialog" aria-modal="true"` and holds nothing focusable, so focus has to
+// land on the card itself. Without that, ending a session leaves keyboard and screen-reader
+// users parked on chrome that is now behind a scrim and inert.
+test("the farewell takes focus so its dialog is announced", async () => {
+  const chrome = await createChromeHarness();
+
+  chrome.element("end").onclick();
+  await flushPromises();
+
+  assert.equal(chrome.element("farewell").focused, true, "focus moved into the dialog");
 });

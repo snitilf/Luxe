@@ -127,30 +127,81 @@ export const LUXE_DAISYUI_THEME_CSS = `<style>
     letter-spacing: -0.15px;
   }
 
+  /* The heading face. Served from Luxe's own /fonts route, which is same-origin for an
+     artifact under review and is inlined into a standalone export by resolveExportAssetPath.
+     An artifact opened straight off disk with no Luxe around simply falls back to Georgia -
+     font-display: swap means that costs nothing and shows nothing broken. */
+  @font-face {
+    font-family: "Newsreader";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/fonts/newsreader-latin-500-normal.woff2") format("woff2");
+  }
+
+  h1, h2, h3 {
+    font-family: "Newsreader", Georgia, "Times New Roman", serif;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+
   code, pre, kbd, samp {
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     letter-spacing: 0;
   }
 
-  pre, .mockup-code {
-    background: #f7f4ec;
-    border: 1px solid #e7e2d6;
-    border-radius: 12px;
-  }
-</style>`;
+  /* The code plane is inset: --code-bg is darker than the canvas, and --strong draws the
+     border so the block reads as its own surface rather than as more paper. 12px is
+     --radius-inner, the radius the spec gives code and diff blocks. 14px is --text-label,
+     the scale's mono size - code sets smaller than body copy, not at body size.
 
-export const LAYOUT_SAFETY_CSS_SNIPPET = `<style>
-  *, *::before, *::after { box-sizing: border-box; }
-  :where(.grid, .flex, .layout-grid, .layout-flex) > *,
-  :where([style*="display: grid"], [style*="display:grid"], [style*="display: flex"], [style*="display:flex"]) > * {
-    min-width: 0;
+     .mermaid is excluded deliberately. Mermaid takes its source from a <pre class="mermaid">
+     and replaces the text with an <svg>, so a bare pre selector paints every diagram on the
+     page as a code block - a border and an inset fill around a picture. That was already true
+     when this plane sat two units off the canvas; it was simply invisible. Making the plane
+     visible made the bug visible with it.
+
+     The plane brings its own ink as well as its own fill, and it has to: DaisyUI's
+     .mockup-code is built for an inverted terminal and keeps its foreground at
+     --color-neutral-content, which this theme maps to the near-white paper tone. Painting
+     the plane light without saying anything about the text left .mockup-code at roughly
+     1.06:1 - light ink on a light plane, effectively invisible - from the day this rule was
+     written, back when the fill was the older, lighter --code-bg. --syn-plain is the code
+     plane's own ink: it is what the Shiki theme paints unhighlighted code with
+     (editor.foreground, and the variable/source/text scopes), so highlighted and
+     unhighlighted code on this surface are the same colour rather than two near-blacks. */
+  pre:not(.mermaid), .mockup-code {
+    background: #efe9db;
+    color: #2c2921;
+    border: 1px solid #cbc4b2;
+    border-radius: 12px;
+    padding: 14px 16px;
+    font-size: 14px;
+    line-height: 1.6;
   }
-  :where(p, h1, h2, h3, h4, h5, h6, li, dd, blockquote, figcaption, td, th, .badge, .label) {
-    overflow-wrap: anywhere;
+
+  /* A <code> inside a <pre> is the same plane, not a second one stacked on it. */
+  pre:not(.mermaid) code, .mockup-code code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
   }
-  :where(img, svg, video, canvas, iframe) {
-    max-width: 100%;
-    height: auto;
+
+  /* Nor is a <pre> inside a .mockup-code. DaisyUI builds the terminal mockup as a container
+     with one <pre> per line, and every one of those lines is matched by the pre:not(.mermaid)
+     half of the rule above - so each line came out as its own bordered, rounded, padded plate
+     instead of the block reading as one terminal. The outer .mockup-code stays the plane; the
+     lines inside it are just lines. Equal specificity to pre:not(.mermaid) (one class, one
+     element on both sides) and it comes later, which is what settles it - an author's own
+     rule still wins on top of both. */
+  .mockup-code pre {
+    background: none;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    font-size: inherit;
+    line-height: inherit;
   }
 </style>`;
 
@@ -172,20 +223,27 @@ export const DESIGN_SYSTEM_HINT =
 // slots sit below 3:1 on the Luxe canvas, so an unlabelled series is genuinely hard to read.
 export const LUXE_CHART_GUIDANCE = Object.freeze({
   labelling_rule:
-    "Every chart MUST carry direct labels, printed values, or an accompanying table view. A legend alone is not sufficient. Three of the eight palette slots sit below the 3:1 contrast floor on the Luxe canvas, so a legend-only chart makes those series unreadable rather than merely inelegant.",
-  palette: ["#527dc1", "#b95d4a", "#50a67e", "#d7a44c", "#5a8637", "#ce7d93", "#7660a3", "#d36e4f"],
+    "Every chart MUST carry direct labels, printed values, or an accompanying table view. A legend alone is not sufficient. Two of the eight palette slots (the eucalyptus and the amber) sit below the 3:1 contrast floor on the Luxe canvas, so a legend-only chart makes those series unreadable rather than merely inelegant.",
+  palette: ["#5b85cc", "#874420", "#4bad8e", "#cf8b3b", "#677d12", "#be5b7f", "#73488e", "#9f4f36"],
   palette_rules: [
-    "Fixed order, never cycled and never reshuffled: the order is the colour-blind safety mechanism, not decoration.",
+    "Fixed order, never cycled and never reshuffled: the order is the colour-blind safety mechanism, not decoration. It also means an N-series chart uses exactly slots 1..N, so take them from the top - never pick slot 6 for a two-series chart.",
+    "The set stays mutually distinguishable through slot 7 for full-colour vision and slot 5 for colour-blind readers. Past that, the labelling rule below is what carries the chart, and it stops being optional.",
     "Lines, stacked bars, and grouped bars may use all eight slots. Scatter, bubble, choropleth, and small multiples cap at four.",
     "A series that itself means good or bad wears the status colours, not a categorical slot.",
+    "The palette is measured against the paper canvas, so draw charts on the canvas, on a white card, or on their own light plane. Do not draw one directly onto a cocoa fill: the slots are mid-tones chosen to hold contrast against a light surface, and no eight-hue palette can clear 3:1 against both the paper and the cocoa at once. A chart inside a cocoa panel gets its own paper-coloured plate.",
   ],
   marks:
     "2px strokes, round caps and joins, 4px end dots ringed 2px in the canvas colour, gridlines in #e7e2d6, axis text #5c564a at 14px, 2px surface gap between stacked segments.",
-  sequential: ["#dbe4f4", "#a8bfe6", "#6f93d2", "#3a6fc4", "#274d8d"],
-  diverging: ["#274d8d", "#3a6fc4", "#a8bfe6", "#e9e5da", "#dba193", "#b8452f", "#7e2c1d"],
+  sequential: ["#7c9edd", "#6283bf", "#4868a2", "#304e86", "#19356b"],
+  diverging: ["#234993", "#4d70b2", "#8199c4", "#e9e5da", "#bf8a78", "#a7593f", "#852b06"],
 });
 
-export function createDesignOutput() {
+/**
+ * @param {{ artifactBaselineSnippet?: string }} [options] the baseline stylesheet as a
+ * `<style>` block. Passed in rather than read here so this module stays synchronous and
+ * free of file access, and so there is still exactly one copy of the rules.
+ */
+export function createDesignOutput({ artifactBaselineSnippet = "" } = {}) {
   return {
     playbook_router: {
       instruction: PLAYBOOK_ROUTER_INSTRUCTION,
@@ -202,9 +260,8 @@ export function createDesignOutput() {
       latest_docs: "https://daisyui.com/components/",
       docs_note:
         "Use this command for common syntax. Read the latest DaisyUI docs for full details when using advanced or unfamiliar components.",
-      layout_safety_snippet: LAYOUT_SAFETY_CSS_SNIPPET,
       layout_safety_note:
-        "Optional copy-paste CSS for artifacts with dense nested grid/flex layouts, badges, wide monospace or pixel fonts, or local media. Paste it into the artifact yourself when useful. Luxe never auto-injects it, so direct-open portability stays intact.",
+        "The layout-safety CSS that used to be offered here is now the artifact baseline below: min-width on grid and flex children, overflow-wrap on prose and cells, and max-width on media. Luxe injects those into every artifact it shows, so there is nothing to remember. Paste `artifact_baseline.snippet` as well if you want the artifact to keep them when opened directly with no Luxe running.",
       other_design_systems:
         "If the user asks for a different design system (Bootstrap, custom CSS, plain HTML, etc.), use that instead - Luxe does not require DaisyUI.",
     },
@@ -217,6 +274,7 @@ export function createDesignOutput() {
     },
     theme_usage: [
       "Luxe ships exactly one theme and it is light. Paste `luxe_theme_snippet` right after the CDN snippet; it maps DaisyUI's semantic variables onto the Luxe tokens, so every DaisyUI component comes out in the system with no per-element colour work.",
+      "Headings are set in Newsreader, a serif, at medium. Body and UI stay in the sans. This is the one place the system uses a second voice, and it is what stops an artifact reading like a settings page - so do not override the heading face, and do not reach for the serif on body copy, labels or controls.",
       "Do not set `data-theme` to one of DaisyUI's stock themes and do not give a section a theme of its own. The stock themes carry their own palettes and would drop a foreign object into the page.",
       "Prefer semantic colors such as `bg-base-100`, `bg-base-200`, `text-base-content`, `bg-primary`, `text-primary-content`, `alert-warning`, and `btn-primary` so the theme block does the work.",
       "Spend colour on data, on status, and on nothing else. Surfaces and type are warm neutrals; `primary` is the cocoa fill; there is no second brand hue to reach for.",
@@ -225,6 +283,10 @@ export function createDesignOutput() {
       'Never `@apply` DaisyUI classes (such as `text-base-content/40`, `bg-base-200`, or `btn`) inside `<style type="text/tailwindcss">` - the Tailwind browser runtime does not know them, and one unknown utility aborts the entire compile, leaving the page with no Tailwind styles at all. Put DaisyUI classes directly on elements, or write plain CSS with theme variables such as `var(--color-base-200)`.',
     ],
     luxe_theme_snippet: LUXE_DAISYUI_THEME_CSS,
+    artifact_baseline: {
+      note: 'Repairs, not styling. Luxe injects these rules into every artifact it shows, so pasting this is optional - but an artifact that carries them keeps them when opened directly or exported, with no Luxe running. They only change rendering where something would otherwise be clipped, overflow, or be unreadable on the surface behind it, they are wrapped in a zero-specificity `@layer luxe-baseline`, and your own CSS beats them. Paste it first in the `<head>`. Opt out entirely with `<html data-luxe-baseline="off">`.',
+      snippet: artifactBaselineSnippet,
+    },
     charts: LUXE_CHART_GUIDANCE,
     code_theme: {
       note: "Luxe ships a bespoke Shiki theme. Register it and use it by name wherever the artifact highlights code; the Shiki defaults clash with the Luxe code plane.",

@@ -10,3 +10,9 @@ CHANGELOG.md
 # the check chain against its own generator. The skill has its own formatting
 # gate instead: scripts/check-design-adherence.js.
 .agents
+
+# The example artifacts are verified Luxe output kept byte-for-byte as the agent
+# wrote them, so they stay faithful samples of what Luxe actually produces.
+# Reformatting them would edit the thing under test.
+examples/kitchen-sink.html
+examples/showcase.html

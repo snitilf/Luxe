@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
-import { LUXE_FAVICON_SVG, MARK_FIELD, MARK_INK } from "../src/luxe-brand.js";
+import { LUXE_FAVICON_SVG, MARK_PAPER, MARK_COCOA } from "../src/luxe-brand.js";
 
 const SKILL = new URL("../.agents/skills/luxe-design/", import.meta.url);
 
@@ -45,6 +45,7 @@ test("the adherence rules are derived from the tokens, not hardcoded", async () 
     "--text-body": await token("text-body"),
     "--text-control": await token("text-control"),
     "--text-label": await token("text-label"),
+    "--text-brand": await token("text-brand"),
   });
   assert.deepEqual(manifest.fontWeights, {
     "--weight-regular": await token("weight-regular"),
@@ -52,9 +53,22 @@ test("the adherence rules are derived from the tokens, not hardcoded", async () 
   });
   assert.equal(Object.keys(manifest.radii).length, 6);
 
-  // Four sizes and two weights is the rule, not an accident of the current file.
-  assert.equal(Object.keys(manifest.fontSizes).length, 4);
+  // Four CONTENT sizes and two weights is the rule, not an accident of the current file.
+  // The scale was widened in July 2026 by exactly one brand-scoped size for the wordmark;
+  // this asserts that shape rather than a bare count, so a fifth content size still fails.
+  const sizeNames = Object.keys(manifest.fontSizes);
+  assert.deepEqual(
+    sizeNames.filter((name) => !name.includes("brand")).sort(),
+    ["--text-body", "--text-control", "--text-heading", "--text-label"],
+    "the four content sizes are exactly the spec's four",
+  );
+  assert.deepEqual(
+    sizeNames.filter((name) => name.includes("brand")),
+    ["--text-brand"],
+    "exactly one brand-scoped size, for the wordmark",
+  );
   assert.equal(Object.keys(manifest.fontWeights).length, 2);
+  assert.deepEqual(Object.keys(manifest.families).sort(), ["brand", "mono", "sans"]);
 
   // Every token in the file is inventoried, each with a value and a kind.
   const declared = (await tokensSource).match(/^\s*--[a-z0-9-]+\s*:/gim) ?? [];
@@ -80,14 +94,16 @@ test("the brand mark is the favicon artwork", async () => {
     ["wordmark", wordmark],
   ]) {
     assert.ok(artwork.includes(path), `${name} does not carry the favicon's letterform`);
-    assert.ok(artwork.includes(MARK_FIELD), `${name} does not use the favicon's field colour`);
-    assert.ok(artwork.includes(MARK_INK), `${name} does not use the favicon's ink colour`);
+    assert.ok(artwork.includes(MARK_PAPER), `${name} does not use the favicon's field colour`);
+    assert.ok(artwork.includes(MARK_COCOA), `${name} does not use the favicon's ink colour`);
   }
 
   // And those two literals are still token values, which is what the favicon
   // mirrors in the first place.
-  assert.equal(MARK_FIELD, await token("dark-fill"));
-  assert.equal(MARK_INK, await token("canvas"));
+  // The mark inverted in July 2026: the field is the ivory canvas, the ink and keyline
+  // are the cocoa dark fill.
+  assert.equal(MARK_PAPER, await token("canvas"));
+  assert.equal(MARK_COCOA, await token("dark-fill"));
 
   // Upstream's wordmark carried CSS classes with no stylesheet behind them, so
   // it rendered as flat black text wherever it was used.

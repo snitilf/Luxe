@@ -896,3 +896,68 @@ test("freeform user prompts are stored in session chat history", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// Before this, an accepted prompt was spliced out of the queue and vanished: a reviewer
+// who queued three answers and sent them watched the panel empty itself with no record.
+// The receipt is written server-side because the conversation is rebuilt from
+// session.chat on every chat-sync and reload - a receipt added only to the DOM would
+// survive until the next sync and then disappear.
+test("a delivered queued answer leaves a receipt in the conversation", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
+  try {
+    const artifact = path.join(dir, "artifact.html");
+    await writeFile(artifact, "<h1>Hello</h1>");
+    const store = new SessionStore(path.join(dir, "state.json"));
+    const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
+
+    await store.queuePrompts(session.key, {
+      domSnapshot: "body",
+      prompts: [
+        { prompt: "Use the Pro plan", tag: "choice", topic: "Billing plan" },
+        { prompt: "This heading is weak", tag: "annotation", selector: "h1" },
+        { prompt: "Typed by hand", tag: "message" },
+      ],
+    });
+
+    const saved = await store.findByKey(session.key);
+    assert.deepEqual(
+      saved.chat.map((entry) => [entry.kind || "message", entry.text]),
+      [
+        ["receipt", "Queue answered - Billing plan"],
+        // No declared topic: the prompt itself, never the bare tag. "Queue answered -
+        // annotation" would be true and tell the reader nothing.
+        ["receipt", "Queue answered - This heading is weak"],
+        // A freeform message reads as itself, not as a receipt.
+        ["message", "Typed by hand"],
+      ],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a receipt topic is bounded and never leaks a multi-line prompt", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
+  try {
+    const artifact = path.join(dir, "artifact.html");
+    await writeFile(artifact, "<h1>Hello</h1>");
+    const store = new SessionStore(path.join(dir, "state.json"));
+    const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
+
+    await store.queuePrompts(session.key, {
+      domSnapshot: "body",
+      prompts: [
+        { prompt: "First line of a long answer\nsecond line the reader must not see", tag: "choice" },
+        { prompt: "x".repeat(200), tag: "choice" },
+      ],
+    });
+
+    const saved = await store.findByKey(session.key);
+    const [multiline, long] = saved.chat.map((entry) => entry.text);
+    assert.equal(multiline, "Queue answered - First line of a long answer");
+    assert.ok(long.length < 90, `receipt should be trimmed, got ${long.length} chars`);
+    assert.match(long, /\u2026$/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

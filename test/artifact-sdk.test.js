@@ -16,6 +16,7 @@ import {
   isNativeInteractiveControl,
   isNearTotalOcclusion,
 } from "../src/artifact-sdk.js";
+import { token, wcagContrast } from "./helpers/design-tokens.js";
 
 function node(tag, attrs = {}, children = []) {
   const el = {
@@ -492,7 +493,206 @@ test("the affordance steps aside for annotation and for the diagram it already o
 test("the affordance reads its colours from the tokens, never from literals", () => {
   // The same rule the rest of the SDK follows: hex belongs in luxe-tokens.css.
   assert.deepEqual(sdkSource.match(/#[0-9a-fA-F]{3,8}\b/g), null);
-  for (const token of ["radius-pill", "strong", "surface-2", "ink-2", "font-sans", "text-label"]) {
-    assert.match(sdkSource, new RegExp(`luxeToken\\("${token}"`), `the affordance hardcodes ${token}`);
+  for (const name of [
+    "radius-nav",
+    "stroke-hair",
+    "strong",
+    "hair",
+    "ink-2",
+    "ink-3",
+    "dark-fill",
+    "dark-fill-text",
+    "font-sans",
+    "text-label",
+    "focus-ring",
+    "focus-ring-width",
+    "focus-ring-offset",
+  ]) {
+    assert.match(sdkSource, new RegExp(`luxeToken\\("${name}"`), `the affordance hardcodes ${name}`);
   }
+});
+
+// ---- The contrast the toolbar's design depends on ---------------------------
+//
+// These are the assertions that matter, and they are the ones that were missing.
+// A first pass at quieting this toolbar chose --surface-1 as the hover fill; it
+// measured 1.04:1 against --canvas and 1.00:1 against --surface-1 itself, so the
+// "lit" state was invisible and the ghost controls had no affordance at all. Every
+// source-text assertion in this file passed on that build, because a regex matching
+// a style string cannot tell you whether a human can see the result.
+//
+// So the colour decisions are checked as colour, against the real token values, in
+// plain Node. This runs in `npm run check`; the browser E2E does not.
+
+// `token` and `wcagContrast` come from test/helpers/design-tokens.js rather than being
+// restated here: a second copy of the maths is the drift that helper exists to prevent.
+//
+// The surfaces a diagram can actually sit on. A control inside a Mermaid container
+// is over one of these, and the toolbar has no way to know which.
+const RESTING_SURFACES = ["canvas", "surface-1", "surface-2"];
+
+test("the toolbar's lit state is a change a person can see, on every surface", async () => {
+  // WCAG 1.4.11's 3:1 floor for a non-text state change. The point of the number is
+  // that it rules out every surface token in this palette, which is why the lit state
+  // is --dark-fill and not a tint.
+  const lit = await token("dark-fill");
+  for (const name of RESTING_SURFACES) {
+    const ratio = wcagContrast(lit, await token(name));
+    assert.ok(ratio >= 3, `the hover/focus fill is ${ratio.toFixed(2)}:1 against --${name}, which nobody can see`);
+  }
+  assert.match(sdkSource, /--luxe-diagram-btn-bg:" \+\s*luxeToken\("dark-fill"/, "the lit fill is not --dark-fill");
+});
+
+test("the lit control's own glyph stays readable on the lit fill", async () => {
+  const ratio = wcagContrast(await token("dark-fill-text"), await token("dark-fill"));
+  assert.ok(ratio >= 4.5, `the hovered glyph is ${ratio.toFixed(2)}:1 on its own fill`);
+});
+
+test("the resting glyph and the disabled glyph are both legible", async () => {
+  // The resting ink carries the control on its own now that nothing is filled.
+  for (const name of RESTING_SURFACES) {
+    const rest = wcagContrast(await token("ink-2"), await token(name));
+    assert.ok(rest >= 4.5, `the resting glyph is ${rest.toFixed(2)}:1 against --${name}`);
+  }
+  // Disabled is not exempt: the control disabled on page load is the zoom percentage,
+  // and a percentage is information whether or not pressing it does anything. The
+  // treatment this replaced composited --ink-2 at opacity .45 down to 2.04:1.
+  for (const name of RESTING_SURFACES) {
+    const dim = wcagContrast(await token("ink-3"), await token(name));
+    assert.ok(dim >= 3, `the disabled glyph is ${dim.toFixed(2)}:1 against --${name}`);
+  }
+  assert.doesNotMatch(
+    sdkSource,
+    /style\.opacity = enabled/,
+    "disabled is an opacity again, which fades the border too",
+  );
+  assert.match(sdkSource, /--luxe-diagram-btn-ink", luxeToken\("ink-3"/);
+});
+
+test("the readout never dims, because its value is the reason it is disabled", () => {
+  // "100%" is both the state and the explanation for why resetting is a no-op.
+  assert.match(sdkSource, /readoutControls\.add\(reset\)/);
+  assert.match(sdkSource, /enabled \|\| readoutControls\.has\(button\)/);
+  // Still genuinely disabled, though - the clamp must not silently no-op.
+  assert.match(sdkSource, /reset\.disabled = percent === 100/);
+});
+
+test("the zoom controls are one segmented object, not three loose buttons", () => {
+  // The complaint was that the controls outweighed the diagram. Halving the object
+  // count is what buys the boundary back without buying four pills back with it.
+  assert.match(sdkSource, /group\.append\(zoomOut, reset, zoomIn\)/);
+  assert.match(sdkSource, /setAttribute\("role", "group"\)/);
+  assert.match(sdkSource, /setAttribute\("aria-label", "Diagram zoom"\)/);
+  assert.match(sdkSource, /border-left:/, "the segments have no dividers");
+  assert.doesNotMatch(sdkSource, /overflow:hidden;.*border-radius/, "clipping the group would clip the focus ring");
+});
+
+test("the strip aligns to the diagram's edge, not the container's", () => {
+  // flex-end against the container only looks right when the SVG fills it; under a
+  // narrow diagram it puts the controls beside the thing they control.
+  assert.match(sdkSource, /function alignBarToDiagram/);
+  assert.match(sdkSource, /contentRight - svgRect\.right/);
+  assert.match(sdkSource, /svgRect\.left - contentLeft/);
+  // Which edge it hugs depends on whether the strip can fit under the diagram at all.
+  // Squeezing it into a column narrower than itself is what made it wrap and spill.
+  assert.match(sdkSource, /barNaturalWidth\(bar\) <= svgRect\.width \+ 1/);
+  // The container is observed, and its height moves when the strip rewraps, so an
+  // unconditional write would be a resize feedback loop.
+  assert.match(sdkSource, /if \(bar\.style\[property\] !== value\) bar\.style\[property\] = value/);
+  assert.match(sdkSource, /new ResizeObserver\(\(\) => alignBarToDiagram\(entry\)\)/);
+});
+
+test("the toolbar repairs the artifact rather than imposing on it", () => {
+  assert.match(sdkSource, /:hover:not\(:disabled\)/, "a disabled control can light up as if it were live");
+  assert.match(sdkSource, /outline-offset:/, "the focus ring lost its offset");
+  // Spacing is taste, so it stays at zero specificity and any author rule beats it.
+  assert.match(sdkSource, /":where\(" \+\s*enhancedDiagram \+\s*"\)\{padding:20px 16px\}"/);
+  // The emitted CSS, not the prose around it - the comments in there discuss `!important`
+  // precisely because the rules must not use it.
+  const toolbarCss = sdkSource
+    .slice(sdkSource.indexOf("function injectDiagramToolbarCss"), sdkSource.indexOf("function makeToolbarButton"))
+    .replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(toolbarCss.length > 0);
+  assert.match(toolbarCss, /background:transparent/, "the slice no longer covers the emitted rules");
+  assert.doesNotMatch(toolbarCss, /!important/);
+});
+
+// ---- The code-block frame around a picture ----------------------------------
+//
+// A Mermaid diagram is usually a <pre>, and every code-block stylesheet ends in a
+// bare `pre { background; border; border-radius }` - Luxe's own theme snippet did.
+// So every artifact authored before this drew its diagrams inside a code block's
+// frame. Nobody noticed while the fill sat ~2 units off the canvas; adding padding
+// inside that frame inflated it by 40px and made it plain.
+//
+// The repair is only a repair if it actually wins the cascade, and `:where()` -
+// which is what the padding correctly uses - is zero specificity and loses to a
+// bare element selector. That is the trap this test exists for.
+
+/** CSS specificity of a selector, as [id, class, element]. */
+function specificity(selector) {
+  // `:where()` contributes nothing, contents included. That is the entire reason it is
+  // wrong for the reset and right for the padding, so the model has to know it.
+  const counted = selector.replace(/:where\([^()]*(\([^()]*\))?[^()]*\)/g, " ");
+  const ids = counted.match(/#[\w-]+/g)?.length ?? 0;
+  // Classes, attribute selectors and pseudo-classes all weigh the same.
+  const classes = counted.match(/\.[\w-]+|\[[^\]]+\]|:[\w-]+(?!\()/g)?.length ?? 0;
+  const elements = counted.match(/(^|[\s>+~])[a-z][\w-]*/g)?.length ?? 0;
+  return [ids, classes, elements];
+}
+
+function outweighs(a, b) {
+  const [x, y] = [specificity(a), specificity(b)];
+  for (let i = 0; i < 3; i += 1) {
+    if (x[i] !== y[i]) return x[i] > y[i];
+  }
+  return false;
+}
+
+test("the diagram's code-block frame is reset, and the reset outweighs a bare `pre` rule", () => {
+  // The selector the SDK builds, reconstructed from its own parts rather than restated.
+  const attribute = /const diagramContainerAttribute = "([^"]+)"/.exec(sdkSource)?.[1];
+  assert.equal(attribute, "data-luxe-diagram", "the diagram marker attribute moved");
+  const selector = `.mermaid[${attribute}]`;
+  assert.ok(
+    sdkSource.includes(`".mermaid[" + diagramContainerAttribute + "]"`),
+    "the reset selector is no longer built from .mermaid plus the marker attribute",
+  );
+
+  // The whole point: it has to beat `pre`, and `:where()` would not.
+  assert.ok(outweighs(selector, "pre"), `${selector} does not outweigh a bare pre rule`);
+  assert.ok(outweighs(selector, ".mockup-code"), `${selector} does not outweigh a single-class rule`);
+  assert.deepEqual(specificity(`:where(${selector})`), [0, 0, 0], "the specificity model is wrong about :where()");
+
+  // And it must not be wrapped in :where(), which is the mistake that would silently
+  // reintroduce the frame while still looking like a fix in the diff.
+  assert.match(
+    sdkSource,
+    /enhancedDiagram \+\s*"\{background:transparent;border:0;border-radius:0;box-shadow:none\}"/,
+    "the code-block reset is missing or has been weakened",
+  );
+
+  // An author who wants a framed diagram must still be able to win. Two classes plus
+  // anything at all outweighs the reset, with no !important involved.
+  assert.ok(outweighs(`.mermaid.mermaid[${attribute}]`, selector), "an author can no longer override the reset");
+  assert.ok(outweighs(`#article .mermaid[${attribute}]`, selector), "an id selector can no longer override the reset");
+});
+
+test("the code-block reset only touches diagrams Luxe actually rendered", () => {
+  // A .mermaid whose source never rendered IS showing source, and the code-block
+  // framing describes it correctly. The marker goes on only after the SVG has laid out.
+  const enhance = sdkSource.slice(
+    sdkSource.indexOf("function addWhiteboardAffordance"),
+    sdkSource.indexOf("// Align the strip"),
+  );
+  assert.ok(enhance.length > 0);
+  const guard = enhance.indexOf("getBoundingClientRect().height < 40");
+  const marker = enhance.indexOf("container.setAttribute(diagramContainerAttribute");
+  assert.ok(guard > 0 && marker > guard, "the marker is set before the diagram is known to have rendered");
+  // It is content, not chrome: the agent must still see the diagram in the snapshot.
+  assert.doesNotMatch(
+    sdkSource,
+    /setAttribute\("data-luxe-ui", "diagram"\)/,
+    "the diagram container was marked as Luxe UI, which would hide it from the agent",
+  );
 });

@@ -14,6 +14,24 @@ import { isValidDiagramIndex, whiteboardFeedbackPaths } from "./whiteboard-store
 
 const mutationTails = new Map();
 
+// What a receipt is titled with. Mirrors the chrome's own three tiers, and deliberately
+// never falls back to the bare tag: "Queue answered - choice" is true and useless.
+// Duplicated rather than shared because this runs in Node and that runs in the browser
+// as a classic script with no module loader; the pair is small and covered by tests on
+// both sides.
+function receiptTopic(prompt) {
+  const declared = typeof prompt?.topic === "string" ? prompt.topic.trim() : "";
+  if (declared) return trimTopic(declared);
+  const body = String(prompt?.prompt || "").trim();
+  if (body) return trimTopic(body.split("\n")[0]);
+  return prompt?.tag === "whiteboard" ? "Whiteboard edit" : "Feedback";
+}
+
+function trimTopic(value) {
+  const text = String(value).replace(/\s+/g, " ").trim();
+  return text.length > 60 ? `${text.slice(0, 59).trimEnd()}\u2026` : text;
+}
+
 export class SessionStore {
   constructor(file) {
     this.file = file;
@@ -97,14 +115,30 @@ export class SessionStore {
           ),
         };
       }
-      const userMessages = normalizedPrompts
-        .filter((prompt) => prompt.tag === "message" && prompt.prompt)
-        .map((prompt) => ({ role: "user", text: prompt.prompt, at: new Date().toISOString() }));
+      // Two kinds of chat entry come out of a send.
+      //
+      // A freeform composer message is what the reviewer typed, and reads as itself.
+      //
+      // Everything else - an answered question, an annotation, whiteboard feedback - used
+      // to leave no trace at all: the pill was spliced out of the queue on acceptance and
+      // simply vanished, so a reviewer who queued three answers and sent them saw the
+      // panel empty itself. The receipt is the record that it happened.
+      //
+      // Written HERE, server-side, rather than in the browser, because the conversation is
+      // rebuilt from session.chat on every chat-sync and on every reload. A receipt added
+      // only to the DOM would survive until the next sync and then disappear, which is a
+      // worse bug than the one it fixes.
+      const now = new Date().toISOString();
+      const newChatEntries = normalizedPrompts.flatMap((prompt) => {
+        if (prompt.tag === "message") return prompt.prompt ? [{ role: "user", text: prompt.prompt, at: now }] : [];
+        const topic = receiptTopic(prompt);
+        return [{ role: "user", kind: "receipt", text: `Queue answered - ${topic}`, at: now }];
+      });
       session.prompts = [...(session.prompts || []), ...normalizedPrompts];
       const hasWhiteboardFeedback = session.prompts.some(
         (prompt) => prompt.target?.type === EXCALIDRAW_SCENE_TARGET_TYPE,
       );
-      session.chat = [...(session.chat || []), ...userMessages];
+      session.chat = [...(session.chat || []), ...newChatEntries];
       session.pending_prompts = session.prompts.length;
       session.dom_snapshot = batch.domSnapshot;
       session.status = sessionEnded ? "ended" : "feedback";

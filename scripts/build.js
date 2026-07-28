@@ -48,12 +48,16 @@ const chromeFonts = [
   ["@fontsource/inter", "inter-latin-500-normal.woff2"],
   ["@fontsource/jetbrains-mono", "jetbrains-mono-latin-400-normal.woff2"],
   ["@fontsource/jetbrains-mono", "jetbrains-mono-latin-500-normal.woff2"],
+  // One weight only: Newsreader is scoped to the wordmark, which is four characters
+  // at a single size and never renders in another weight.
+  ["@fontsource/newsreader", "newsreader-latin-500-normal.woff2"],
 ];
 for (const [pkg, file] of chromeFonts) {
   await copyFile(`node_modules/${pkg}/files/${file}`, `dist/fonts/${file}`);
 }
 await copyFile("node_modules/@fontsource/inter/LICENSE", "dist/fonts/OFL-Inter.txt");
 await copyFile("node_modules/@fontsource/jetbrains-mono/LICENSE", "dist/fonts/OFL-JetBrainsMono.txt");
+await copyFile("node_modules/@fontsource/newsreader/LICENSE", "dist/fonts/OFL-Newsreader.txt");
 
 await mkdir("dist/design", { recursive: true });
 await copyFile("node_modules/daisyui/daisyui.css", "dist/design/daisyui.css");

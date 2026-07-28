@@ -18,7 +18,6 @@ import {
   displayPathParts,
   emitRemoteBindingWarning,
   exportContentDisposition,
-  extractArtifactHead,
   hasLiveReloadRootOptIn,
   hostnameFromHostHeader,
   isAllowedHostHeader,
@@ -359,10 +358,16 @@ test("turning annotation mode off clears selection and floating card", () => {
   assert.match(js, /if \(!annotationMode\) closeCard\(\)/);
 });
 
-test("annotation card title renders selected tag as an html element name", () => {
+test("the annotation card names the element in words, not as a tag", () => {
   const js = createSdkJs("abc");
 
-  assert.match(js, /"Annotate &lt;" \+ c\.tag \+ "&gt;"/);
+  // "Annotate <p>" was a developer wink that reads like an unrendered template variable,
+  // and this is the title of the most-seen surface in the product.
+  assert.match(js, /"Annotate " \+ friendlyElementName\(c\.tag\)/);
+  assert.match(js, /p: "paragraph"/);
+  assert.match(js, /pre: "code block"/);
+  // An unrecognised or custom element still says something rather than nothing.
+  assert.match(js, /FRIENDLY_ELEMENT_NAMES\[name\] \|\| `&lt;\$\{escapeAnnotationText\(name\)\}&gt;`/);
 });
 
 test("annotation card shadow styles use the Luxe design tokens", async () => {
@@ -497,7 +502,7 @@ test("chrome top bar follows the design mock wordmark and overflow menu treatmen
 
   assert.match(html, /class="brand-mark">Luxe/);
   assert.doesNotMatch(html, /class="brand-support"/);
-  assert.match(css, /\.brand-mark\{[^}]*color:var\(--ink-1\)/);
+  assert.match(css, /\.brand-mark\{[^}]*color:var\(--dark-fill\)/);
   assert.match(html, /class="more-button" id="moreButton"/);
   assert.match(html, /class="menu more-menu" id="moreMenu" hidden/);
   assert.doesNotMatch(html, /class="file-input"/);
@@ -623,22 +628,6 @@ test("clipboard copy falls back when navigator clipboard rejects", async () => {
   assert.doesNotMatch(js, /navigator\.clipboard\.writeText\(text\)\.catch/);
 });
 
-test("chrome top bar is a wordmark, a hairline divider and the file name in mono", async () => {
-  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact/index.html" });
-  const css = await chromeCssSource();
-
-  assert.match(css, /\.bar\{[^}]*align-items:center/);
-  assert.match(css, /\.bar\{[^}]*background:var\(--surface-1\)/);
-  assert.match(html, /class="brand-mark">Luxe</);
-  assert.match(html, /class="bar-divider" aria-hidden="true"></);
-  assert.match(html, /class="bar-file" title="\/tmp\/artifact\/index\.html">index\.html</);
-  assert.match(css, /\.brand-mark\{[^}]*font-size:var\(--text-control\)/);
-  assert.match(css, /\.brand-mark\{[^}]*font-weight:var\(--weight-medium\)/);
-  assert.match(css, /\.bar-divider\{[^}]*background:var\(--hair\)/);
-  assert.match(css, /\.bar-file\{[^}]*font-family:var\(--font-mono\)/);
-  assert.match(css, /\.bar-file\{[^}]*color:var\(--ink-2\)/);
-});
-
 // Agent and user are told apart by surface and alignment, not by two hues:
 // upstream's sage/amber pair is dropped.
 test("chrome chat bubbles differ by surface and alignment", async () => {
@@ -666,9 +655,15 @@ test("queued pills are dashed and sent pills are solid", async () => {
   assert.match(css, /\.pill\.sent\{[^}]*border-color:var\(--hair\)/);
   assert.match(css, /\.pill\.sent\{[^}]*background:var\(--surface-2\)/);
   assert.match(css, /\.pill\.sent\{[^}]*color:var\(--ink-2\)/);
-  // The queued pill carries a clock glyph, the sent pill a check.
-  assert.match(js, /PILL_CLOCK_ICON/);
-  assert.match(js, /PILL_SENT_ICON/);
+  // The border treatment is the ONLY thing distinguishing queued from sending. There is
+  // deliberately no state glyph: a 24px outlined circle beside two lines of text competes
+  // with them, and it was half of the reported noise.
+  assert.doesNotMatch(js, /PILL_CLOCK_ICON|PILL_SENT_ICON|pill-state/);
+  // The face carries the topic; everything an agent needs to locate the target is behind
+  // the disclosure.
+  assert.match(js, /<div class="pill-topic">/);
+  assert.match(js, /<summary>Details<\/summary>/);
+  assert.doesNotMatch(css, /\.pill-selector\{/);
 });
 
 test("chrome includes a chat-like prompt composer and agent reply listener", async () => {
@@ -720,9 +715,20 @@ test("chrome disables sending only while working or ended", async () => {
 
   assert.match(js, /let agentPresence = "waiting"/);
   assert.match(js, /function updateSendState\(\)/);
-  assert.match(js, /sendButton\.disabled = ended \|\| agentPresence === "working"/);
+  assert.match(js, /const waitingOnAgent = !ended && agentPresence === "working"/);
+  assert.match(js, /sendButton\.disabled = ended \|\| waitingOnAgent/);
   assert.match(js, /sendAndEndButton\.disabled = sendButton\.disabled/);
   assert.doesNotMatch(js, /hasContent/);
+
+  // P6: the gate is deliberate, but it used to be silent. A disabled control that gives
+  // no reason reads as a broken one.
+  assert.match(js, /Waiting for the agent to finish before sending\./);
+  assert.match(js, /button\.title = reason/);
+  // The reason must never overwrite a send error or the empty-composer nudge. Ownership
+  // of the shared hint line is tracked, not guessed from its text or its hidden state.
+  assert.match(js, /let sendHintOwner = null/);
+  assert.match(js, /sendHintOwner === null \|\| sendHintOwner === "working"/);
+  assert.match(js, /sendHintOwner = "status"/);
 });
 
 test("sending with an empty composer nudges instead of blocking", async () => {
@@ -744,14 +750,19 @@ test("composer offers two always-visible top-level send actions", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const css = await chromeCssSource();
 
-  assert.match(html, /class="button" id="send">Send to agent</);
+  assert.match(html, /class="button" id="send" aria-describedby="sendHint">Send to agent</);
   assert.match(html, /class="button button-ghost" id="sendAndEnd"[^<]*>.*Send &amp; End</);
+  // The hint and the caption sit ABOVE the button row, so the buttons are the last thing
+  // in the panel and do not shift down when the hint appears.
   assert.match(
     html,
-    /<div class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first\.<\/div><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button">.*<button class="button" id="send">Send to agent<\/button><\/div>/,
+    /<div class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first\.<\/div><p class="send-caption" id="sendCaption">.*<\/p><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button" aria-describedby="sendCaption sendHint">.*<button class="button" id="send" aria-describedby="sendHint">Send to agent<\/button><\/div>/,
   );
   // Send & End is a ghost button and carries the 14px caption the spec requires.
-  assert.match(html, /<p class="send-caption">Send &amp; End delivers the feedback and closes the session\.<\/p>/);
+  assert.match(
+    html,
+    /<p class="send-caption" id="sendCaption">Send &amp; End delivers the feedback and closes the session\.<\/p>/,
+  );
   assert.match(css, /\.send-caption\{[^}]*font-size:var\(--text-label\)/);
   assert.match(css, /\.send-caption\{[^}]*color:var\(--ink-2\)/);
   assert.match(css, /\.button\{[^}]*background:var\(--dark-fill\)/);
@@ -775,10 +786,10 @@ test("send and end submits queued prompts before ending the session", async () =
   assert.match(js, /if \(shouldEndSession\) body\.endSession = true/);
   assert.match(
     js,
-    /if \(shouldEndSession && result\.session_ended === true\) \{\n {4}endAfterSubmit = false;\n {4}markSessionEnded\(\)/,
+    /if \(shouldEndSession && result\.session_ended === true\) \{\n {4}endAfterSubmit = false;\n {4}markSessionEnded\(\{ farewell: true \}\)/,
   );
   assert.match(js, /if \(!succeeded\) \{\n {6}endAfterSubmit = false/);
-  assert.doesNotMatch(js, /await endSession\(\)/);
+  assert.doesNotMatch(js, /await endSession\(/);
 });
 
 test("chrome only marks session ended after the end request succeeds", async () => {
@@ -786,7 +797,10 @@ test("chrome only marks session ended after the end request succeeds", async () 
 
   assert.match(js, /const response = await fetch\("\/api\/" \+ key \+ "\/end", \{ method: "POST" \}\)/);
   assert.match(js, /if \(!response\.ok\) throw new Error\("failed to end session"\)/);
-  assert.match(js, /if \(!response\.ok\) throw new Error\("failed to end session"\);\n {2}markSessionEnded\(\)/);
+  assert.match(
+    js,
+    /if \(!response\.ok\) throw new Error\("failed to end session"\);\n {2}markSessionEnded\(\{ farewell: showGoodbye \}\)/,
+  );
 });
 
 test("chrome shows a waiting banner when no agent has attached", async () => {
@@ -838,9 +852,8 @@ test("chrome puts queued annotations above the chat composer as preview pills", 
     /<div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"><\/div><div class="annotation-pills" id="annotationPills"><\/div><\/div><div class="composer">/,
   );
   assert.match(js, /class="pill/);
-  assert.match(js, /pill-preview/);
+  assert.match(js, /pill-topic/);
   assert.match(js, /removeQueuedPrompt/);
-  assert.match(js, /pill-context/);
   assert.match(css, /\.pill-fields\{[^}]*flex-direction:column/);
   assert.doesNotMatch(js, /togglePill/);
   assert.doesNotMatch(html, /<h2>Queued Annotations<\/h2>/);
@@ -871,14 +884,16 @@ test("annotation pills show human fields inline and disclose structured target f
   const js = await chromeClientSource();
   const css = await chromeCssSource();
 
-  assert.match(js, /prompt\.prompt \? '<div class="pill-preview">/);
-  assert.match(js, /prompt\.text/);
-  assert.match(js, /prompt\.selector/);
-  assert.match(js, /prompt\.tag/);
-  assert.match(js, /aria-label="Text: /);
-  assert.match(js, /class="visually-hidden">Selector: <\/span><code>/);
-  assert.match(js, /aria-label="Tag: /);
-  assert.match(js, /<details class="pill-target-details"><summary>Target details<\/summary><dl>/);
+  // The face names the item. The selector, the quoted source text and the tag are how an
+  // agent locates a target rather than how a reviewer recognises their own question, so
+  // they sit behind the disclosure with the structured target fields.
+  assert.match(js, /'<div class="pill-topic">'/);
+  assert.match(js, /<details class="pill-target-details"><summary>Details<\/summary><dl>/);
+  assert.match(js, /rows\.push\(\["Kind", prompt\.tag\]\)/);
+  assert.match(js, /rows\.push\(\["Text", prompt\.text\]\)/);
+  assert.match(js, /rows\.push\(\["Selector", prompt\.selector\]\)/);
+  // Kept accessible rather than hover-only: upstream used a hover tooltip, which is
+  // unreachable by touch and by keyboard.
   assert.match(css, /\.pill-wrap\{[^}]*width:100%/);
   assert.match(css, /\.pill-target-details\{[^}]*width:100%/);
   assert.match(css, /\.pill-target-details summary\{[^}]*cursor:pointer/);
@@ -1038,7 +1053,10 @@ test("chrome submits prompts queued during an in-flight submit", async () => {
   assert.match(js, /submitQueuedAgain = true/);
   assert.match(js, /const shouldSubmitAgain = submitQueuedAgain/);
   assert.match(js, /else if \(!ended && shouldSubmitAgain\) \{\n {6}if \(queued\.length\) \{\n {8}submitQueued\(\)/);
-  assert.match(js, /else if \(endAfterSubmit\) \{\n {8}endAfterSubmit = false;\n {8}endSession\(\)/);
+  assert.match(
+    js,
+    /else if \(endAfterSubmit\) \{\n {8}endAfterSubmit = false;\n {8}endSession\(\{ farewell: true \}\)/,
+  );
 });
 
 test("/health reports the server version so clients can detect upgrades", async () => {
@@ -3005,6 +3023,27 @@ test("ended session recedes the chrome behind a toolbar chip", async () => {
   assert.match(js, /moreButton\.disabled = true/);
 });
 
+// The farewell card carries no close control, because there is none to carry: the tab is
+// user-opened, so window.close() is refused every time. The markup ships the non-Apple copy
+// as its default and the client rewrites it for the reader's platform before unhiding, and
+// the card takes tabindex="-1" because an aria-modal dialog with nothing focusable inside
+// strands keyboard and screen-reader users.
+test("the farewell card has no close button and can hold focus", async () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+  const js = await chromeClientSource();
+  const css = await chromeCssSource();
+
+  assert.match(html, /id="farewell" role="dialog" aria-modal="true" aria-labelledby="farewellTitle" tabindex="-1"/);
+  assert.match(html, /id="farewellCopy">Your feedback is on its way\. Press Ctrl\+W to close this tab\.</);
+  assert.doesNotMatch(html, /farewellClose/);
+  assert.doesNotMatch(html, /farewell-action/);
+  assert.doesNotMatch(css, /\.farewell-action/);
+  // No close attempt survives anywhere in the client.
+  assert.doesNotMatch(js, /farewellClose/);
+  assert.doesNotMatch(js, /attemptTabClose/);
+  assert.match(js, /farewell\.focus\?\.\(\)/);
+});
+
 test("layout gate curtain uses the scrim and modal styling", async () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
   const noGateHtml = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { layoutGateEnabled: false });
@@ -3062,107 +3101,49 @@ test("chrome client chat input sends on Enter and inserts newline on Shift+Enter
   assert.match(js, /sendQueued\(false\)/);
 });
 
-test("chrome falls back to a default favicon and title when none are provided", () => {
+test("every session tab reads Luxe and wears the Luxe mark", () => {
   const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
 
+  assert.match(html, /<title>Luxe<\/title>/);
   assert.match(html, /<link rel="icon" href="data:image\/svg\+xml,/);
-  assert.match(html, /<title>Luxe Editor<\/title>/);
+
+  // The artifact's own <title> and <link rel="icon"> are no longer read. A wall of Luxe
+  // tabs should look like Luxe, and reading a title and an href out of untrusted artifact
+  // HTML was a parsing surface with nothing left to justify it.
+  assert.doesNotMatch(html, /Luxe Editor/);
 });
 
-test("chrome adopts a favicon tag and tab title passed from the artifact", () => {
-  const faviconTag =
-    '<link rel="icon" href="data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\'><text>🗂️</text></svg>">';
-  const html = createChromeHtml(
-    { key: "abc", file: "/tmp/artifact.html" },
-    { faviconTag, title: "Project Board · Luxe" },
-  );
+test("the toolbar carries the wordmark alone", async () => {
+  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact/index.html" });
+  const css = await chromeCssSource();
 
-  assert.ok(html.includes(faviconTag), "artifact favicon tag is injected verbatim");
-  assert.match(html, /<title>Project Board · Luxe<\/title>/);
+  assert.match(html, /<div class="brand"><span class="brand-mark">Luxe<\/span><\/div>/);
+  // The file name is gone from the bar. It is still one click away in the overflow menu,
+  // which is where a path belongs.
+  assert.doesNotMatch(html, /class="bar-file"/);
+  assert.doesNotMatch(html, /class="bar-divider"/);
+  assert.match(html, /class="menu-file"[^>]*title="Copy path/);
+
+  // The product name is set in the brand face, at the brand size, in the cocoa - not in
+  // the same sans at the same size as the buttons beside it.
+  assert.match(css, /\.brand-mark\{[^}]*font-family:var\(--font-brand\)/);
+  assert.match(css, /\.brand-mark\{[^}]*font-size:var\(--text-brand\)/);
+  assert.match(css, /\.brand-mark\{[^}]*letter-spacing:var\(--tracking-brand\)/);
+  assert.match(css, /\.brand-mark\{[^}]*color:var\(--dark-fill\)/);
 });
 
-test("chrome tab title from the artifact is HTML-escaped", () => {
-  const html = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" }, { title: "<script>alert(1)</script>" });
-
-  assert.doesNotMatch(html, /<title><script>/);
-  assert.match(html, /&lt;script&gt;/);
-});
-
-test("extractArtifactHead pulls a data-URI favicon and title from the artifact head", () => {
-  const artifact = `<!doctype html><html><head>
-    <title>  Weekly   Board  </title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
-    </head><body></body></html>`;
-  const { faviconTag, title } = extractArtifactHead(artifact);
-
-  assert.match(faviconTag, /rel="icon"/);
-  assert.match(faviconTag, /viewBox='0 0 100 100'/, "data-URI '>' chars must not truncate the tag");
-  assert.match(faviconTag, /<\/svg>">$/, "the full link tag is captured");
-  assert.equal(title, "Weekly Board");
-});
-
-test("extractArtifactHead handles shortcut icon and absolute hrefs", () => {
-  const artifact = `<head><link rel="shortcut icon" href="https://example.com/fav.ico"></head>`;
-  const { faviconTag } = extractArtifactHead(artifact);
-
-  assert.match(faviconTag, /href="https:\/\/example\.com\/fav\.ico"/);
-});
-
-test("extractArtifactHead reconstructs a clean tag and drops artifact-supplied attributes", () => {
-  const hostile = extractArtifactHead(
-    '<head><link rel="stylesheet icon" href="data:text/css,x" onload="steal()" onerror="steal()"></head>',
-  );
-  assert.equal(hostile.faviconTag, '<link rel="icon" href="data:text/css,x">');
-  assert.doesNotMatch(hostile.faviconTag, /onload|onerror|steal|stylesheet/i);
-
-  const breakout = extractArtifactHead(`<head><link rel='icon' href='data:image/png,x" onload="steal()'></head>`);
-  assert.doesNotMatch(breakout.faviconTag, /onload="/i);
-  assert.match(breakout.faviconTag, /^<link rel="icon" href="[^"]*">$/);
-  assert.match(breakout.faviconTag, /&quot;/);
-});
-
-test("extractArtifactHead falls back to the default for missing or relative favicons", () => {
-  const none = extractArtifactHead("<head><title>No icon</title></head>");
-  assert.match(none.faviconTag, /data:image\/svg\+xml/);
-  assert.equal(none.title, "No icon");
-
-  // Relative hrefs would not resolve against the chrome page, so they fall back.
-  const relative = extractArtifactHead('<head><link rel="icon" href="favicon.png"></head>');
-  assert.match(relative.faviconTag, /data:image\/svg\+xml/);
-});
-
-test("extractArtifactHead does not hang on an unterminated link tag", () => {
-  const start = process.hrtime.bigint();
-  const result = extractArtifactHead("<head><link " + '"'.repeat(60000));
-  const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
-  assert.ok(elapsedMs < 1000, `expected linear scan, took ${elapsedMs}ms`);
-  assert.match(result.faviconTag, /data:image\/svg\+xml/);
-});
-
-test("extractArtifactHead reads the real href, not one hidden in another attribute", () => {
-  // A `data-href` (longer attribute name) must not be mistaken for `href`; the
-  // real, relative href should win and fall back to the default favicon.
-  const dataHref = extractArtifactHead(
-    '<head><link rel="icon" data-href="data:image/png,decoy" href="favicon.png"></head>',
-  );
-  assert.match(dataHref.faviconTag, /data:image\/svg\+xml/, "data-href decoy must not be adopted");
-
-  // A `href=` sequence inside another attribute's quoted value must not be
-  // adopted either; the genuine absolute href should be used.
-  const inValue = extractArtifactHead(
-    '<head><link rel="icon" title="see href=data:image/png,decoy" href="https://cdn.example.com/logo.png"></head>',
-  );
-  assert.equal(inValue.faviconTag, '<link rel="icon" href="https://cdn.example.com/logo.png">');
-});
-
-test("clicking the page backdrop dismisses an open annotation card instead of annotating the body", () => {
+test("clicking away from an open annotation card dismisses it, wherever the click lands", () => {
   const js = createSdkJs("abc");
 
-  // <html> and <body> are not annotation targets: a click that lands on them hit
-  // empty space, which is what a reviewer means by clicking away from the card.
+  // Dismissal used to be gated on isPageBackdrop, which only accepts <html> and <body>.
+  // In an artifact with a centred column - most of them - the empty margins and the tail
+  // below the content hit-test to <main>, so clicking obviously blank space opened a
+  // SECOND card titled "Annotate <main>" instead of closing the first.
+  assert.match(js, /if \(cardIsOpen\(\)\) \{\s*dismissCard\(\);/);
+  // The backdrop is still not an annotation target when no card is open.
   assert.match(js, /function isPageBackdrop/);
   assert.match(js, /el === document\.body \|\| el === document\.documentElement/);
-  assert.match(js, /if \(isPageBackdrop\(event\.target\)\) \{\s*dismissCard\(\);/);
+  assert.match(js, /if \(isPageBackdrop\(event\.target\)\) return;/);
 });
 
 test("dismissing never discards a draft the reviewer has typed", () => {
@@ -3187,4 +3168,103 @@ test("Escape closes an empty annotation card and leaves a draft alone", () => {
 
   assert.match(js, /event\.key === "Escape" && cardIsOpen\(\)/);
   assert.match(js, /if \(dismissCard\(\)\) event\.preventDefault\(\);/);
+});
+
+// P11: reloading an ended session's tab used to bring back a fully live chrome. The store
+// already persisted `status: "ended"`; it simply never reached the browser.
+test("the session bootstrap carries the ended flag", () => {
+  const live = createChromeHtml({ key: "abc", file: "/tmp/artifact.html" });
+  assert.match(live, /"ended":false/);
+
+  const done = createChromeHtml({ key: "abc", file: "/tmp/artifact.html", status: "ended" });
+  assert.match(done, /"ended":true/);
+});
+
+// Reloading an ended tab is only reachable while some other session keeps the server up:
+// ending the last one runs shutdownIfNoLiveSessions() and the process goes away. So this
+// opens two sessions and ends one, which is the shape the bug actually occurs in.
+test("an already-ended session is served its history and then closed, not a live stream", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  const other = path.join(dir, "other.html");
+  await writeFile(artifact, "<!doctype html><html><body></body></html>");
+  await writeFile(other, "<!doctype html><html><body></body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const openSession = async (file) => {
+      const res = await fetch(`${base}/api/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ file }),
+      });
+      return (await res.json()).key;
+    };
+    const key = await openSession(artifact);
+    await openSession(other); // keeps the server alive past the end below
+    await fetch(`${base}/api/${key}/end`, { method: "POST" });
+
+    // No AbortController: if the route does not end the response itself, this hangs, which is
+    // exactly the failure being guarded against.
+    const res = await fetch(`${base}/events/${key}`);
+    const body = await res.text();
+
+    assert.match(body, /event: ended/);
+    assert.doesNotMatch(body, /event: agent-presence/);
+
+    const reloaded = await fetch(`${base}/session/${key}`);
+    assert.match(await reloaded.text(), /"ended":true/);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ending a live session closes its open stream", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body></body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const open = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    });
+    const { key } = await open.json();
+
+    const res = await fetch(`${base}/events/${key}`);
+    const streamed = res.text();
+    await fetch(`${base}/api/${key}/end`, { method: "POST" });
+
+    // Resolves only because the server ended the response; before this it stayed open.
+    const body = await streamed;
+    assert.match(body, /event: ended/);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// The edit affordance used to be `position:absolute; top:8px; right:8px` INSIDE the
+// diagram container, so it sat on top of whatever the diagram drew there. Geometry is
+// verified for real in the browser E2E; this guards the shape of the served SDK so the
+// overlap cannot be reintroduced by a refactor that never runs a browser.
+test("the diagram toolbar is laid out below the diagram, not over it", async () => {
+  const sdk = await sdkJsSource();
+
+  assert.match(sdk, /data-luxe-ui", "diagram-toolbar"/);
+  assert.match(sdk, /role", "toolbar"/);
+  assert.doesNotMatch(sdk, /position:absolute;top:8px;right:8px/);
+
+  // Every control carries an accessible name and a stated reason when disabled.
+  for (const label of ["Zoom out", "Zoom in", "Reset zoom to fit", "Diagram controls"]) {
+    assert.ok(sdk.includes(label), `the toolbar is missing the accessible name ${label}`);
+  }
+  assert.match(sdk, /Turn off Annotate to edit this diagram as a whiteboard/);
+  assert.match(sdk, /This session has ended/);
+
+  // Hit targets clear the 24px WCAG 2.5.8 floor.
+  assert.match(sdk, /min-width:32px;height:32px/);
 });
