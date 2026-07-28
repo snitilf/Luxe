@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The alarming rise of AI slop</title>
+<!-- No baseline snippet is pasted here on purpose. Luxe stands down when it finds a
+     style element carrying the baseline marker id, so a pasted copy would freeze this
+     page against whatever the baseline looked like on the day it was pasted. This page
+     is the showcase for the current guidance, so it takes the live baseline the SDK
+     injects at serve time. The marker string is deliberately not written out above:
+     artifactDeclinesBaseline matches it with a regex over the raw HTML, so even naming
+     it inside a comment would suppress injection. -->
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css" integrity="sha384-/NNZlK8J6WoD6FfmmLzhqE1x/aTnlIJzc75uc+dFz8aI+/sD2ArUirQhs3hbeqBe" crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css" integrity="sha384-ai6dM6tUdx0lUGOHd8x3eGevvDdj0p+CPoJp7Ve+h+kRkt08XtqX/g3a+1cPYKCm" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js" integrity="sha384-v5YF9xS+gLRWdvrQ0u/WRbCkjSIH0NjHIPe8tBL1ZRrmI7PiSH6LLdzs0aAIMCuh" crossorigin="anonymous"></script>
+
+<style>
+:root, [data-theme="luxe"] {
+    color-scheme: light;
+
+    --color-base-100: #ffffff;
+    --color-base-200: #fbf9f4;
+    --color-base-300: #f7f4ee;
+    --color-base-content: #211e17;
+
+    --color-primary: #463527;
+    --color-primary-content: #f7f4ee;
+    --color-secondary: #5c564a;
+    --color-secondary-content: #f7f4ee;
+    --color-accent: #57432f;
+    --color-accent-content: #f7f4ee;
+    --color-neutral: #211e17;
+    --color-neutral-content: #f7f4ee;
+
+    --color-info: #3c5f8f;
+    --color-info-content: #f7f4ee;
+    --color-success: #2e6b27;
+    --color-success-content: #f7f4ee;
+    --color-warning: #8a5a06;
+    --color-warning-content: #f7f4ee;
+    --color-error: #b3341f;
+    --color-error-content: #f7f4ee;
+
+    --radius-selector: 999px;
+    --radius-field: 8px;
+    --radius-box: 16px;
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    --border: 1px;
+    --depth: 0;
+    --noise: 0;
+  }
+
+  html, body {
+    background: #f7f4ee;
+    color: #211e17;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.15px;
+  }
+
+  /* The heading face. Served from Luxe's own /fonts route, which is same-origin for an
+     artifact under review and is inlined into a standalone export by resolveExportAssetPath.
+     An artifact opened straight off disk with no Luxe around simply falls back to Georgia -
+     font-display: swap means that costs nothing and shows nothing broken. */
+  @font-face {
+    font-family: "Newsreader";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/fonts/newsreader-latin-500-normal.woff2") format("woff2");
+  }
+
+  h1, h2, h3 {
+    font-family: "Newsreader", Georgia, "Times New Roman", serif;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+
+  code, pre, kbd, samp {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0;
+  }
+
+  /* The code plane is inset: --code-bg is darker than the canvas, and --strong draws the
+     border so the block reads as its own surface rather than as more paper. 12px is
+     --radius-inner, the radius the spec gives code and diff blocks. 14px is --text-label,
+     the scale's mono size - code sets smaller than body copy, not at body size.
+
+     .mermaid is excluded deliberately. Mermaid takes its source from a <pre class="mermaid">
+     and replaces the text with an <svg>, so a bare pre selector paints every diagram on the
+     page as a code block - a border and an inset fill around a picture.
+
+     The plane brings its own ink as well as its own fill, and it has to: DaisyUI's
+     .mockup-code is built for an inverted terminal and keeps its foreground at
+     --color-neutral-content, which this theme maps to the near-white paper tone. Painting
+     the plane light without saying anything about the text would leave .mockup-code at
+     roughly 1.06:1 - light ink on a light plane, effectively invisible. --syn-plain is the
+     code plane's own ink: it is what the Shiki theme paints unhighlighted code with, so
+     highlighted and unhighlighted code on this surface are the same colour rather than two
+     near-blacks. */
+  pre:not(.mermaid), .mockup-code {
+    background: #efe9db;
+    color: #2c2921;
+    border: 1px solid #cbc4b2;
+    border-radius: 12px;
+    padding: 14px 16px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* A <code> inside a <pre> is the same plane, not a second one stacked on it. */
+  pre:not(.mermaid) code, .mockup-code code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+  }
+
+  /* Nor is a <pre> inside a .mockup-code. DaisyUI builds the terminal mockup as a container
+     with one <pre> per line, and every one of those lines is matched by the pre:not(.mermaid)
+     half of the rule above - so each line came out as its own bordered, rounded, padded plate
+     instead of the block reading as one terminal. The outer .mockup-code stays the plane; the
+     lines inside it are just lines. */
+  .mockup-code pre {
+    background: none;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    font-size: inherit;
+    line-height: inherit;
+  }
+</style>
+
+<script type="importmap">
+  { "integrity": { "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs": "sha384-whY2DyvhZRFfs9hvtGdZaKcgbETgqMlDN+KNlWnXEL2QDa2XQkBOApUT7arfftO9" } }
+</script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+
+  mermaid.initialize({
+    "startOnLoad": false,
+    "theme": "base",
+    "securityLevel": "strict",
+    "themeVariables": {
+      "fontFamily": "\"Inter\", -apple-system, \"Segoe UI\", sans-serif",
+      "fontSize": "14px",
+      "background": "#f7f4ee",
+      "primaryColor": "#ffffff",
+      "primaryBorderColor": "#cbc4b2",
+      "primaryTextColor": "#211e17",
+      "lineColor": "#5c564a",
+      "edgeLabelBackground": "#f7f4ee",
+      "clusterBkg": "#fbf9f4",
+      "clusterBorder": "#e7e2d6",
+      "noteBkgColor": "#faf0d8",
+      "pie1": "#5b85cc",
+      "pie2": "#874420",
+      "pie3": "#4bad8e",
+      "pie4": "#cf8b3b",
+      "pie5": "#677d12",
+      "pie6": "#be5b7f",
+      "pie7": "#73488e",
+      "pie8": "#9f4f36",
+      "pieOpacity": "1",
+      "pieStrokeColor": "#f7f4ee",
+      "pieStrokeWidth": "2px",
+      "pieOuterStrokeColor": "#cbc4b2",
+      "sectionBkgColor": "#fbf9f4",
+      "altSectionBkgColor": "#f7f4ee",
+      "sectionBkgColor2": "#fbf9f4",
+      "excludeBkgColor": "#f7f4ee",
+      "gridColor": "#e7e2d6",
+      "vertLineColor": "#e7e2d6",
+      "doneTaskBkgColor": "#f7f4ee",
+      "doneTaskBorderColor": "#cbc4b2",
+      "activeTaskBkgColor": "#e9eef5",
+      "activeTaskBorderColor": "#3c5f8f",
+      "critBkgColor": "#f9e8e2",
+      "critBorderColor": "#b3341f",
+      "todayLineColor": "#211e17"
+    }
+  });
+
+  const diagrams = [...document.querySelectorAll(".mermaid")];
+  async function render() {
+    if (diagrams.length === 0) return;
+    try {
+      await mermaid.run({ nodes: diagrams });
+    } catch (error) {
+      console.error("Mermaid diagram render failed:", error);
+    }
+  }
+
+  // Render once stylesheets are applied, so the fonts the theme names are the
+  // ones Mermaid measures against.
+  if (document.readyState === "complete") void render();
+  else window.addEventListener("load", () => void render(), { once: true });
+</script>
+<style>
+  /* Page-scoped helpers only. No DaisyUI class is ever @apply-ed here: the Tailwind
+     browser runtime does not know them and one unknown utility kills the whole compile. */
+
+  /* The page is three screens and nothing else. Each section is one viewport tall and
+     centres its own content, so the artifact breaks into exactly three screenshots at
+     any pane size. svh, not vh: inside the Luxe iframe the small-viewport unit is the
+     artifact pane's own height, which is what the reader is actually looking at. Every
+     section is sized to fit the shortest pane we target; on a taller one the surplus
+     becomes margin rather than a fourth screen. */
+  .sc-screen {
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 20px 24px;
+  }
+  @media (min-width: 1024px) {
+    .sc-screen { padding: 16px 40px; }
+  }
+  .sc-inner { width: 100%; max-width: 72rem; margin-inline: auto; }
+
+  /* Mermaid appends a tooltip host to <body> after it renders. It is empty and invisible,
+     but it is in flow, and 6px of empty div at the end of the document is enough to push
+     the page past three exact screens and leave a scrollbar with nothing under it. */
+  body > .mermaidTooltip {
+    position: absolute;
+    top: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .sc-eyebrow {
+    font-size: 14px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-base-content) 55%, transparent);
+  }
+  .sc-plate {
+    background: var(--color-base-300);
+    border: 1px solid color-mix(in srgb, var(--color-base-content) 14%, transparent);
+    border-radius: 12px;
+  }
+  .sc-echo {
+    font-size: 14px;
+    min-height: 1.4em;
+    color: color-mix(in srgb, var(--color-base-content) 70%, transparent);
+  }
+  .sc-echo[data-state="queued"] { color: var(--color-success); font-weight: 500; }
+  .sc-facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 20px;
+    font-size: 14px;
+  }
+  .sc-facts dt { color: color-mix(in srgb, var(--color-base-content) 58%, transparent); }
+  .sc-facts dd { text-align: right; }
+  .sc-code-scroll { overflow-x: auto; max-width: 100%; }
+  /* Mermaid caps a flowchart at its natural width, so a narrow diagram would otherwise
+     sit hard against the left edge of a wide card. */
+  pre.mermaid svg { display: block; margin-inline: auto; }
+  /* Charts carry their own width attribute so one unit of the viewBox is one CSS pixel:
+     scaling an SVG would silently resize the 14px axis text the chart spec asks for. */
+  .sc-chart { display: block; max-width: 100%; height: auto; margin-inline: auto; }
+
+  /* Every section has to clear the shortest artifact pane we target, and DaisyUI's stock
+     card padding is the single biggest lever on that: three cards stacked in a screen
+     spend 144px on padding alone. 20px still reads as a card rather than as a box. */
+  .card-body { padding: 20px; }
+
+  /* DaisyUI's card-body grows a direct <p> so card-actions can sit at the bottom of a
+     stretched card. Here that pushes diagrams and code blocks away from the text that
+     introduces them, and a question wants its submit control next to itself rather than
+     floating at the bottom of the tallest card in the row. */
+  .card-body > p { flex-grow: 0; }
+</style>
+</head>
+<body>
+
+<!-- ======================================================== screen 1: the claim -->
+<section class="sc-screen">
+  <div class="sc-inner">
+
+    <div class="grid gap-6 lg:grid-cols-12 lg:items-end">
+      <div class="lg:col-span-7">
+        <p class="sc-eyebrow">Content integrity</p>
+        <h1 class="text-4xl lg:text-5xl mt-2">The alarming rise of AI slop</h1>
+        <p class="mt-3 text-lg text-base-content/80">
+          Slop is not a taste complaint. It is a measurable distribution of five lexical markers
+          across published text, and over eight quarters that distribution has stopped looking
+          like an artefact and started looking like the baseline.
+        </p>
+        <p class="mt-3 text-base-content/75">
+          Eight quarters ago the markers appeared in 4 percent of the documents we index. They now
+          appear in 57 percent. The part that matters is not the publishing figure but the corpus
+          figure trailing one quarter behind it: the crawler cannot distinguish generated text from
+          the rest, so 48 percent of what the next generation trains on already carries the markers
+          it will go on to reproduce. Nobody decided this. Every individual document was defensible.
+        </p>
+      </div>
+
+      <div class="lg:col-span-5 card card-border bg-base-100">
+        <div class="card-body gap-3">
+          <h3 class="card-title text-lg">At a glance</h3>
+          <dl class="sc-facts">
+            <dt>Corpus</dt><dd>41.2M indexed documents</dd>
+            <dt>Window</dt><dd>Q1 through Q8, rolling</dd>
+            <dt>Slop share, Q8</dt><dd>57%</dd>
+            <dt>Top marker</dt><dd>Em dash, precision 0.91</dd>
+            <dt>Em dashes in this note</dt><dd>0</dd>
+          </dl>
+          <div><span class="badge badge-soft badge-warning">Trend accelerating</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-6 card card-border bg-base-100">
+      <div class="card-body gap-2">
+        <h2 class="card-title text-xl">Slop share of published text, Q1 to Q8</h2>
+        <div class="sc-plate p-3">
+          <svg class="sc-chart" width="940" viewBox="0 0 940 236" role="img"
+               aria-label="Line chart of slop share across eight quarters. Published text rises from 4 percent in Q1 to 57 percent in Q8. The training corpus trails one quarter behind, rising from 2 percent to 48 percent.">
+            <g stroke="#e7e2d6" stroke-width="1">
+              <line x1="60" y1="200" x2="704" y2="200"></line>
+              <line x1="60" y1="156" x2="704" y2="156"></line>
+              <line x1="60" y1="112" x2="704" y2="112"></line>
+              <line x1="60" y1="68"  x2="704" y2="68"></line>
+              <line x1="60" y1="24"  x2="704" y2="24"></line>
+            </g>
+            <g font-size="14" fill="#5c564a" text-anchor="end">
+              <text x="50" y="205">0%</text>
+              <text x="50" y="161">15%</text>
+              <text x="50" y="117">30%</text>
+              <text x="50" y="73">45%</text>
+              <text x="50" y="29">60%</text>
+            </g>
+            <g font-size="14" fill="#5c564a" text-anchor="middle">
+              <text x="60"  y="222">Q1</text>
+              <text x="152" y="222">Q2</text>
+              <text x="244" y="222">Q3</text>
+              <text x="336" y="222">Q4</text>
+              <text x="428" y="222">Q5</text>
+              <text x="520" y="222">Q6</text>
+              <text x="612" y="222">Q7</text>
+              <text x="704" y="222">Q8</text>
+            </g>
+            <g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline stroke="#5b85cc" points="60,188.3 152,179.5 244,164.8 336,144.3 428,117.9 520,91.5 612,59.2 704,32.8"></polyline>
+              <polyline stroke="#874420" points="60,194.1 152,188.3 244,179.5 336,164.8 428,144.3 520,117.9 612,91.5 704,59.2"></polyline>
+            </g>
+            <g stroke="#f7f4ee" stroke-width="2">
+              <circle cx="704" cy="32.8" r="4" fill="#5b85cc"></circle>
+              <circle cx="704" cy="59.2" r="4" fill="#874420"></circle>
+            </g>
+            <g font-size="14" font-weight="500">
+              <text x="718" y="37" fill="#5b85cc">Published text 57%</text>
+              <text x="718" y="64" fill="#874420">Training corpus 48%</text>
+            </g>
+            <g font-size="13" fill="#5c564a">
+              <text x="66" y="178">4% at Q1</text>
+            </g>
+          </svg>
+        </div>
+        <p class="text-sm text-base-content/70">
+          The corpus line is the published line shifted one quarter right. That is not a modelling
+          assumption, it is the crawl interval.
+        </p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ===================================================== screen 2: the anatomy -->
+<section class="sc-screen">
+  <div class="sc-inner">
+
+    <p class="sc-eyebrow">The anatomy</p>
+    <h2 class="text-3xl mt-1">A marker only has to survive four hops</h2>
+
+    <div class="mt-3 grid gap-6 lg:grid-cols-12 lg:items-start">
+      <div class="lg:col-span-7 card card-border bg-base-100">
+        <div class="card-body gap-2">
+<pre class="mermaid">
+---
+config:
+  flowchart:
+    rankSpacing: 14
+    nodeSpacing: 26
+---
+flowchart TD
+  A["Model generates text"] --> B["Text is published"]
+  B --> C["Crawler indexes the page"]
+  C --> D["Next generation trains on it"]
+  D -- "markers become priors" --> A
+  D --> E["Distribution collapse"]
+</pre>
+        </div>
+      </div>
+
+      <aside class="lg:col-span-5 bg-primary text-primary-content rounded-box p-6">
+        <h3 class="text-2xl text-primary-content">What this does not cover</h3>
+        <p class="mt-3 text-primary-content/85">
+          The detector counts markers. It does not read for truth, usefulness, or whether a human
+          wrote the thing. A careful writer who genuinely likes the word <code>delve</code> scores as
+          slop, and a fabricated paragraph in plain words scores clean.
+        </p>
+        <p class="mt-3 text-primary-content/85">
+          It is calibrated on English prose only, and says nothing about code, images, or translated
+          text. A high score is a reason to read a document, not a verdict on it.
+        </p>
+      </aside>
+    </div>
+
+    <div class="mt-3 overflow-x-auto rounded-box border border-base-content/10 bg-base-100">
+      <table class="table table-zebra table-sm" style="font-size:14px">
+        <thead>
+          <tr>
+            <th>Marker</th>
+            <th>Unit</th>
+            <th class="text-right">Q1</th>
+            <th class="text-right">Q8</th>
+            <th class="text-right">Multiple</th>
+            <th class="text-right">Precision</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Em dash <span class="badge badge-soft badge-error">marker no. 1</span></td>
+            <td>per 1,000 words</td>
+            <td class="text-right">2.1</td>
+            <td class="text-right">14.6</td>
+            <td class="text-right">7.0x</td>
+            <td class="text-right">0.91</td>
+          </tr>
+          <tr>
+            <td><code>delve</code>, Delve Index</td>
+            <td>per 100,000 words</td>
+            <td class="text-right">12</td>
+            <td class="text-right">341</td>
+            <td class="text-right">28.4x</td>
+            <td class="text-right">0.87</td>
+          </tr>
+          <tr>
+            <td><code>it's not just X, it's Y</code></td>
+            <td>per 10,000 sentences</td>
+            <td class="text-right">3.0</td>
+            <td class="text-right">64.0</td>
+            <td class="text-right">21.3x</td>
+            <td class="text-right">0.83</td>
+          </tr>
+          <tr>
+            <td><code>tapestry</code>, Tapestry Coefficient</td>
+            <td>figurative uses per literal use</td>
+            <td class="text-right">0.4</td>
+            <td class="text-right">6.8</td>
+            <td class="text-right">17.0x</td>
+            <td class="text-right">0.78</td>
+          </tr>
+          <tr>
+            <td><code>in today's fast-paced world</code></td>
+            <td>openings per 1,000 documents</td>
+            <td class="text-right">1.8</td>
+            <td class="text-right">22.4</td>
+            <td class="text-right">12.4x</td>
+            <td class="text-right">0.69</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</section>
+
+<!-- ======================================== screen 3: the evidence and decision -->
+<section class="sc-screen">
+  <div class="sc-inner">
+
+    <p class="sc-eyebrow">Evidence and decision</p>
+    <h2 class="text-3xl mt-1">Twelve lines, and two things to settle</h2>
+
+    <div class="mt-3 grid gap-6 lg:grid-cols-2">
+      <div class="card card-border bg-base-100">
+        <div class="card-body gap-2">
+          <h3 class="card-title text-lg">src/integrity/slop.js</h3>
+          <p class="text-sm text-base-content/70">
+            The em dash is matched by codepoint, so the file passes its own check.
+          </p>
+          <div id="sc-file" class="sc-code-scroll"></div>
+        </div>
+      </div>
+
+      <div class="card card-border bg-base-100">
+        <div class="card-body gap-2">
+          <h3 class="card-title text-lg">notes/launch-note.md, before and after</h3>
+          <p class="text-sm text-base-content/70">
+            One sentence after a polish pass. Score 0.00 to 0.74.
+          </p>
+          <div id="sc-diff" class="sc-code-scroll"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-3 grid gap-6 lg:grid-cols-12">
+      <form class="lg:col-span-7 card card-border bg-base-100" data-luxe-question="marker-set"
+            onsubmit="scQueueAnswer(event, { topic: 'Marker set', tag: 'choice', lead: 'Ship the slop detector with this marker set:' })">
+        <div class="card-body gap-2">
+          <h3 class="card-title text-lg">Which marker set ships?</h3>
+          <div class="space-y-1">
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="radio" class="radio radio-sm" name="markers" value="All five markers, weighted by precision">
+              <span>All five markers, weighted by precision</span>
+            </label>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="radio" class="radio radio-sm" name="markers" value="The em dash alone, as a single-pass check">
+              <span>The em dash alone, as a single-pass check</span>
+            </label>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="radio" class="radio radio-sm" name="markers" value="The four lexical markers, dropping punctuation">
+              <span>The four lexical markers, dropping punctuation</span>
+            </label>
+          </div>
+          <p class="text-sm text-base-content/65">Weighted recall is highest, at 8 percent false positives. The em dash alone runs one regex at 0.91 precision.</p>
+          <div class="card-actions items-center gap-3 pt-1">
+            <button type="submit" class="btn btn-primary btn-sm">Queue this answer</button>
+            <span class="sc-echo" data-role="selected">Selected: nothing yet</span>
+            <span class="sc-echo" data-role="queued"></span>
+          </div>
+        </div>
+      </form>
+
+      <form class="lg:col-span-5 card card-border bg-base-100" data-luxe-question="enforcement"
+            onsubmit="scQueueAnswer(event, { topic: 'Enforcement', tag: 'choice', lead: 'Apply the slop score like this:' })">
+        <div class="card-body gap-2">
+          <h3 class="card-title text-lg">What happens above 0.5?</h3>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">On the next publishing cycle</legend>
+            <select class="select w-full" name="action">
+              <option value="">Pick an enforcement level</option>
+              <option>Flag it and route to a human reviewer</option>
+              <option>Flag it and hold publication</option>
+              <option>Record the score, act on nothing yet</option>
+            </select>
+            <p class="label">Recording only still gives us a quarter of data to argue with.</p>
+          </fieldset>
+          <div class="card-actions items-center gap-3 pt-1">
+            <button type="submit" class="btn btn-primary btn-sm">Queue this answer</button>
+            <span class="sc-echo" data-role="selected">Selected: nothing yet</span>
+            <span class="sc-echo" data-role="queued"></span>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <footer class="mt-2 border-t border-base-content/10 pt-3 text-sm text-base-content/60">
+      Content integrity analysis, Q8 cycle. Supersedes the marker note written for the last model
+      generation. <strong class="text-base-content/80">This document contains zero em dashes.</strong>
+      <code>slopScore</code> rates it 0.11, all of it the word <code>delve</code> in the table above.
+    </footer>
+
+  </div>
+</section>
+
+<script src="./luxe-pierre-diffs-1.2.10.iife.js"></script>
+<script>
+  // ---------------------------------------------------------------- questions
+  // One submit per question, exactly one queued prompt per submit. The change
+  // handlers below only ever touch local selected state.
+  function scReadAnswers(form) {
+    const answers = {};
+    for (const [key, value] of new FormData(form).entries()) {
+      if (typeof value !== "string" || value === "") continue;
+      if (answers[key] === undefined) answers[key] = value;
+      else if (Array.isArray(answers[key])) answers[key].push(value);
+      else answers[key] = [answers[key], value];
+    }
+    return answers;
+  }
+
+  function scSummarise(answers) {
+    const parts = Object.values(answers).map((value) => (Array.isArray(value) ? value.join(", ") : value));
+    return parts.join(" / ");
+  }
+
+  function scRefreshSelected(form) {
+    const target = form.querySelector('[data-role="selected"]');
+    if (!target) return;
+    const summary = scSummarise(scReadAnswers(form));
+    target.textContent = "Selected: " + (summary || "nothing yet");
+  }
+
+  function scQueueAnswer(event, options) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const answers = scReadAnswers(form);
+    const summary = scSummarise(answers);
+    const queued = form.querySelector('[data-role="queued"]');
+    if (!summary) {
+      if (queued) {
+        queued.removeAttribute("data-state");
+        queued.textContent = "Nothing selected yet, so nothing was queued.";
+      }
+      return;
+    }
+    window.luxe.queuePrompt(options.lead + " " + summary, {
+      tag: options.tag,
+      topic: options.topic,
+      text: summary,
+      element: form,
+      data: { question: form.dataset.luxeQuestion, answer: answers },
+    });
+    if (queued) {
+      queued.setAttribute("data-state", "queued");
+      queued.textContent = "Queued: " + summary;
+    }
+  }
+
+  for (const form of document.querySelectorAll("form[data-luxe-question]")) {
+    form.addEventListener("input", () => scRefreshSelected(form));
+    form.addEventListener("change", () => scRefreshSelected(form));
+    scRefreshSelected(form);
+  }
+
+  // ------------------------------------------------------------------- code
+  const { File, FileDiff, registerCustomTheme } = window.LuxePierreDiffs;
+
+  const luxeShikiTheme = {
+  "name": "luxe",
+  "displayName": "Luxe",
+  "type": "light",
+  "semanticHighlighting": true,
+  "colors": {
+    "editor.background": "#efe9db",
+    "editor.foreground": "#2c2921",
+    "editorLineNumber.foreground": "#8a8375",
+    "editorLineNumber.activeForeground": "#5c564a",
+    "editor.selectionBackground": "rgba(230, 168, 32, 0.28)",
+    "editorGutter.addedBackground": "#c9dfb2",
+    "editorGutter.deletedBackground": "#eec4b8",
+    "diffEditor.insertedTextBackground": "#e8f1dd",
+    "diffEditor.removedTextBackground": "#f9e6e0"
+  },
+  "tokenColors": [
+    {
+      "scope": [
+        "comment",
+        "punctuation.definition.comment",
+        "string.comment"
+      ],
+      "settings": {
+        "foreground": "#716853",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "scope": [
+        "keyword",
+        "keyword.control",
+        "keyword.operator.expression",
+        "keyword.operator.new",
+        "storage",
+        "storage.type",
+        "storage.modifier",
+        "variable.language",
+        "constant.language"
+      ],
+      "settings": {
+        "foreground": "#963f8b"
+      }
+    },
+    {
+      "scope": [
+        "string",
+        "string.quoted",
+        "string.template",
+        "constant.character",
+        "constant.other.symbol"
+      ],
+      "settings": {
+        "foreground": "#467525"
+      }
+    },
+    {
+      "scope": [
+        "constant.numeric",
+        "constant.language.boolean",
+        "constant.language.null",
+        "constant.other"
+      ],
+      "settings": {
+        "foreground": "#995a05"
+      }
+    },
+    {
+      "scope": [
+        "entity.name.function",
+        "support.function",
+        "meta.function-call",
+        "variable.function"
+      ],
+      "settings": {
+        "foreground": "#2f5e9e"
+      }
+    },
+    {
+      "scope": [
+        "entity.name.type",
+        "entity.name.class",
+        "entity.other.inherited-class",
+        "support.type",
+        "support.class",
+        "entity.name.tag"
+      ],
+      "settings": {
+        "foreground": "#b04a15"
+      }
+    },
+    {
+      "scope": [
+        "punctuation",
+        "meta.brace",
+        "punctuation.separator",
+        "punctuation.terminator"
+      ],
+      "settings": {
+        "foreground": "#7a7466"
+      }
+    },
+    {
+      "scope": [
+        "variable",
+        "variable.other",
+        "meta.definition.variable",
+        "source",
+        "text"
+      ],
+      "settings": {
+        "foreground": "#2c2921"
+      }
+    },
+    {
+      "scope": [
+        "markup.inserted",
+        "meta.diff.header.to-file"
+      ],
+      "settings": {
+        "foreground": "#2e6b27"
+      }
+    },
+    {
+      "scope": [
+        "markup.deleted",
+        "meta.diff.header.from-file"
+      ],
+      "settings": {
+        "foreground": "#b3341f"
+      }
+    },
+    {
+      "scope": [
+        "meta.diff.range",
+        "punctuation.definition.range.diff"
+      ],
+      "settings": {
+        "foreground": "#5c564a"
+      }
+    }
+  ]
+};
+
+  // The bundle resolves themes by NAME through a registry and never accepts a theme
+  // object on options.theme. Passing the JSON directly fails after render() has already
+  // returned, so nothing throws and every block comes out unhighlighted.
+  registerCustomTheme("luxe", () => Promise.resolve(luxeShikiTheme));
+
+  const scCodeOptions = { theme: "luxe", themeType: "light", overflow: "wrap" };
+
+  const scDetector = {
+    name: "src/integrity/slop.js",
+    contents: [
+      "const MARKERS = [",
+      "  [/\\u2014/g, 0.91], // the em dash",
+      "  [/\\bdelve\\b/gi, 0.87],",
+      "  [/it's not just .+?, it's/gi, 0.83],",
+      "  [/\\btapestry\\b/gi, 0.78],",
+      "  [/in today's fast-paced world/gi, 0.69],",
+      "];",
+      "const per1k = (t, re, n) =>",
+      "  ((t.match(re)?.length ?? 0) / n) * 1000;",
+      "export const slopScore = (t, n) =>",
+      "  MARKERS.reduce((s, [re, w]) =>",
+      "    s + per1k(t, re, n) * w, 0) / 12;",
+    ].join("\n"),
+  };
+
+  const scOldNote = {
+    name: "notes/launch-note.md",
+    contents: [
+      "## Docs rewrite",
+      "",
+      "Support tickets fell by a third after we rewrote the docs.",
+      "",
+    ].join("\n"),
+  };
+
+  const scNewNote = {
+    name: "notes/launch-note.md",
+    contents: [
+      "## Docs rewrite",
+      "",
+      "In today's fast-paced world, it's not just a support metric, it's a",
+      "tapestry of user trust. Let's delve into how a docs rewrite cut",
+      "tickets by a third.",
+      "",
+    ].join("\n"),
+  };
+
+  new File(scCodeOptions).render({
+    containerWrapper: document.querySelector("#sc-file"),
+    file: scDetector,
+  });
+
+  new FileDiff({ ...scCodeOptions, diffStyle: "unified" }).render({
+    containerWrapper: document.querySelector("#sc-diff"),
+    oldFile: scOldNote,
+    newFile: scNewNote,
+  });
+</script>
+</body>
+</html>

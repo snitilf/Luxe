@@ -11,7 +11,8 @@ CHANGELOG.md
 # gate instead: scripts/check-design-adherence.js.
 .agents
 
-# The kitchen-sink artifact is a verified Luxe output kept byte-for-byte as the
-# agent wrote it, so it stays a faithful sample of what Luxe actually produces.
-# Reformatting it would edit the thing under test.
+# The example artifacts are verified Luxe output kept byte-for-byte as the agent
+# wrote them, so they stay faithful samples of what Luxe actually produces.
+# Reformatting them would edit the thing under test.
 examples/kitchen-sink.html
+examples/showcase.html
