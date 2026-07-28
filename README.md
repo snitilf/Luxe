@@ -21,6 +21,18 @@ Your agent has a plan. Right now it arrives as chat prose you skim, half underst
 Luxe turns it into a page: a rendered HTML artifact with real diagrams, tables, and comparisons, opened in your local browser.
 You read the decision, click the part you disagree with, redraw the diagram if it's wrong, and send it back.
 
+<img src=".github/media/review.jpg" alt="A content integrity analysis open in Luxe: a headline chart of slop share across eight quarters, a facts card, and a conversation panel where the reviewer has asked how to turn on annotation mode and the agent has answered" width="100%">
+
+<p align="center"><em>Your agent writes a page, not a wall of chat.</em></p>
+
+<img src=".github/media/annotate.jpg" alt="Annotation mode on: a sentence inside a dark callout is highlighted in gold and numbered, with a note card open against that exact text range" width="100%">
+
+<p align="center"><em>Select any sentence and write against it. The note is pinned to that character range, not the paragraph.</em></p>
+
+<img src=".github/media/decide.jpg" alt="Syntax-highlighted code beside a diff, and two questions answered inline whose answers appear as queued pills in the conversation panel" width="100%">
+
+<p align="center"><em>Questions get answered in the page. Your agent gets structured answers, not a screenshot.</em></p>
+
 ## Quick Start
 
 ```sh
