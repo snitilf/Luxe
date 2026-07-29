@@ -6,6 +6,9 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { Linter } from "eslint";
+import globals from "globals";
+
 process.env.LUXE_HOST = "127.0.0.1";
 process.env.LUXE_LINK_HOST = "127.0.0.1";
 
@@ -979,6 +982,75 @@ test("artifact SDK reports only near-total occlusion by an opaque sibling", () =
   assert.match(js, /isDiagramLayoutElement/);
   assert.match(js, /isNearTotalOcclusion/);
   assert.match(js, /minRatio = 0\.9/);
+  // The bundle is assembled helper by helper from artifact-sdk.js exports, so a helper the
+  // audit calls but createSdkJs never serializes is a ReferenceError that silently kills the
+  // whole audit in the browser while every Node test stays green.
+  assert.match(js, /const isOccludableAuditText=function isOccludableAuditText/);
+});
+
+// The generated bundle is not the module: createSdkJs re-declares selected helpers one by one
+// and the browser evaluates that text with no module scope behind it. A helper the audit calls
+// but createSdkJs forgot to serialize is a free identifier - syntactically valid, so `new
+// Function(js)` accepts it - that throws only when the audit runs, silently killing every
+// layout warning while Node keeps passing, because in Node the module's own imports resolve.
+//
+// Scope analysis is what catches that, and ESLint's `no-undef` already is exactly this check:
+// an identifier that resolves to no declaration in any enclosing scope and to no known global.
+// Deferring to it is what keeps the guard free of a hand-kept list, and what keeps it from
+// flagging the globals the audit legitimately uses (document, getComputedStyle, Math, Intl,
+// Number, Array) or any name bound by a parameter, a `const`, or a closure - those all resolve
+// in ESLint's scope chain or in `globals.browser`, which is the same browser global set the
+// repo's own eslint.config.js draws from.
+function undeclaredBundleIdentifiers(js) {
+  return new Linter()
+    .verify(js, {
+      // sourceType "script": the bundle is a bare IIFE served as a classic <script>, which is
+      // also what makes every top-level `const` share one scope with the serialized SDK body.
+      languageOptions: { ecmaVersion: "latest", sourceType: "script", globals: { ...globals.browser } },
+      rules: { "no-undef": "error" },
+    })
+    .map((message) => `line ${message.line}: ${message.message}`);
+}
+
+test("artifact SDK bundle declares every identifier its serialized code references", () => {
+  const problems = undeclaredBundleIdentifiers(createSdkJs("abc"));
+
+  assert.deepEqual(
+    problems,
+    [],
+    `createSdkJs produced a bundle with identifiers that resolve to nothing in the browser:\n${problems.join("\n")}`,
+  );
+});
+
+// The predicate being exported, unit-tested and serialized proves nothing about the audit
+// actually using it. Reverting the call site to the inline `text.length >= 8` floor - the bug
+// this branch fixes - leaves every one of those green, and only check:browser notices. This
+// asserts the wiring itself. It reads the bundle rather than running the audit because
+// auditSevereTextOcclusion is a closure over the whole SDK and needs a live document, ranges
+// and getClientRects; the DOM stubs in test/artifact-sdk.test.js cover pure helpers only.
+test("the occlusion audit filters candidates through isOccludableAuditText", () => {
+  const js = createSdkJs("abc");
+  const auditStart = js.indexOf("function auditSevereTextOcclusion");
+  assert.notEqual(auditStart, -1, "auditSevereTextOcclusion is missing from the generated bundle");
+
+  const chainStart = js.indexOf("const candidates", auditStart);
+  const chainEnd = js.indexOf("const failedRoots", auditStart);
+  assert.ok(
+    chainStart !== -1 && chainEnd > chainStart,
+    "could not locate the candidate filter chain of auditSevereTextOcclusion",
+  );
+  const candidateFilters = js.slice(chainStart, chainEnd);
+
+  assert.match(
+    candidateFilters,
+    /\.filter\(\(el\) => isOccludableAuditText\(\{ text: auditedText\(el\), isControl: isRequiredControl\(el\) \}\)\)/,
+    "the occlusion audit no longer selects candidates through isOccludableAuditText",
+  );
+  assert.doesNotMatch(
+    candidateFilters,
+    /\.length\s*[<>=!]=*\s*\d/,
+    "the occlusion audit selects candidates with an inline text-length threshold instead of isOccludableAuditText",
+  );
 });
 
 test("artifact SDK reports its scroll position and restores it on request", () => {

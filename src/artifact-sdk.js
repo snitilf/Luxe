@@ -351,6 +351,43 @@ export function findStableLayoutFindings(first, second) {
   );
 }
 
+// Which text is worth measuring for occlusion at all. Occlusion is total loss rather than
+// degradation, so materiality cannot be borrowed from the overflow path's instinct that a
+// short string is cosmetic: the clipped-text audit already qualifies on any non-empty text,
+// and an eight-character floor here made the audit stricter about content that disappears
+// than about content that is merely cut off. A two-character badge covered 100% by an opaque
+// sibling reported nothing at all. What is excluded is a single character with no interactive
+// role - bullets, separators, arrows, drop caps - where deliberate layering is common and the
+// loss is decorative. Everything else earns its materiality from the occlusion evidence
+// itself: an opaque sibling blocker over at least ninety percent of the sample points.
+export function isOccludableAuditText({ text, isControl = false, minLength = 2 }) {
+  const value = String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!value) return false;
+  // Count what a reader sees, not UTF-16 units. A lone emoji is `.length` 2, so a raw
+  // length floor of 2 admits the single decorative glyph this rule exists to exclude while
+  // still rejecting a bullet. Code points are not enough either: an emoji carrying a
+  // variation selector or a skin-tone modifier is two or more of those. Grapheme clusters
+  // are the unit that matches the intent, with a code-point count as the fallback where
+  // Intl.Segmenter is missing.
+  //
+  // This stays a heuristic and its bias is worth naming: a single CJK character is a whole
+  // word, and a lone digit is a count or a rating, and both are rejected. The trade is
+  // deliberate, since a floor of 1 admits bullets, arrows and icon-font glyphs that are
+  // layered on purpose all the time, but it is a Latin-alphabet assumption rather than a
+  // universal one.
+  return isControl || countGraphemes(value) >= minLength;
+}
+
+export function countGraphemes(value) {
+  const text = String(value ?? "");
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    return [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)].length;
+  }
+  return [...text].length;
+}
+
 export function isNearTotalOcclusion({ occludedSamples, totalSamples, minSamples = 5, minRatio = 0.9 }) {
   const occluded = Number(occludedSamples);
   const total = Number(totalSamples);
@@ -1902,10 +1939,7 @@ export function createArtifactSdk(
   function auditSevereTextOcclusion(elements, viewportWidth, findings, seen, animationTargets) {
     const candidates = elements
       .filter((el) => !isExcludedLayoutAuditElement(el))
-      .filter((el) => {
-        const text = auditedText(el);
-        return text.length >= 8 || (text.length > 0 && isRequiredControl(el));
-      })
+      .filter((el) => isOccludableAuditText({ text: auditedText(el), isControl: isRequiredControl(el) }))
       .filter((el) => isSemanticTextBoundary(el) || !hasSemanticTextBoundaryAncestor(el))
       .filter((el) => isVisibleForLayoutAudit(el))
       .filter((el) => getComputedStyle(el).position === "static")

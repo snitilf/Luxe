@@ -15,6 +15,7 @@ import {
   isModeToggleHotkeyEvent,
   isNativeInteractiveControl,
   isNearTotalOcclusion,
+  isOccludableAuditText,
 } from "../src/artifact-sdk.js";
 import { token, wcagContrast } from "./helpers/design-tokens.js";
 
@@ -416,6 +417,23 @@ test("isNearTotalOcclusion requires enough samples and at least ninety percent c
   assert.equal(isNearTotalOcclusion({ occludedSamples: 9, totalSamples: 10 }), true);
   assert.equal(isNearTotalOcclusion({ occludedSamples: 8, totalSamples: 10 }), false);
   assert.equal(isNearTotalOcclusion({ occludedSamples: 4, totalSamples: 4 }), false);
+});
+
+test("isOccludableAuditText measures short labels that can still be painted over entirely", () => {
+  // A badge reading "QA" covered 100% by an opaque sibling used to be dropped before the
+  // occlusion probe ever ran, so the audit stayed silent about content that had vanished.
+  assert.equal(isOccludableAuditText({ text: "QA" }), true);
+  assert.equal(isOccludableAuditText({ text: "  QA\n" }), true);
+  assert.equal(isOccludableAuditText({ text: "Deployment readiness" }), true);
+});
+
+test("isOccludableAuditText skips empty text and lone decorative characters", () => {
+  assert.equal(isOccludableAuditText({ text: "" }), false);
+  assert.equal(isOccludableAuditText({ text: "   " }), false);
+  assert.equal(isOccludableAuditText({ text: null }), false);
+  assert.equal(isOccludableAuditText({ text: "\u2022" }), false);
+  // A single character earns its place when it is an interactive control rather than a glyph.
+  assert.equal(isOccludableAuditText({ text: "\u00d7", isControl: true }), true);
 });
 
 test("isModeToggleHotkeyEvent matches Cmd/Ctrl+I regardless of case", () => {
