@@ -7,7 +7,7 @@
 // one. Gated on LUXE_BROWSER_E2E=1 like the layout audit E2E, since it needs Chrome.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -54,6 +54,15 @@ async function freePort() {
 // `pre { background; border; border-radius }` is what every code-block theme ends in,
 // including the snippet Luxe itself tells authors to paste. It paints every Mermaid
 // diagram as a code block, and a zero-specificity repair loses to it.
+//
+// Mermaid is imported from a copy served next to the artifact rather than from a CDN. Real
+// artifacts do use the CDN, but a test that fetches 13MB of unpinned JavaScript over the
+// public internet before it can assert anything is a test that fails for reasons that have
+// nothing to do with Luxe: this suite's long-standing intermittent failure on macOS was a
+// `net::ERR_SOCKET_NOT_CONNECTED` on the jsdelivr request, after which mermaid.run never
+// ran, no SVG appeared, and the toolbar this file is about was never injected. The version
+// under test is the one in package.json, for the same reason chrome-devtools-mcp is pinned
+// rather than fetched with `npx -y ...@latest`.
 const ARTIFACT = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Diagram toolbar</title>
 <style>
@@ -79,7 +88,7 @@ flowchart TD
 </pre>
 <pre id="code">const answer = 42;</pre>
 <script type="module">
-import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+import mermaid from "./mermaid/mermaid.esm.min.mjs";
 mermaid.initialize({ startOnLoad: false, theme: "base", securityLevel: "strict" });
 await mermaid.run({ nodes: [...document.querySelectorAll(".mermaid")] });
 </script>
@@ -108,6 +117,21 @@ test(
     try {
       const file = path.join(temp, "diagram.html");
       await writeFile(file, ARTIFACT);
+      // The artifact route serves siblings of the artifact file, so the Mermaid bundle only
+      // has to land beside it. Both halves are needed: the entry module lazy-imports one
+      // chunk per diagram type from `chunks/mermaid.esm.min/`, and a missing chunk fails at
+      // render time rather than at import time.
+      const mermaidDist = path.join(repoRoot, "node_modules", "mermaid", "dist");
+      const mermaidDir = path.join(temp, "mermaid");
+      await mkdir(mermaidDir, { recursive: true });
+      await cp(path.join(mermaidDist, "mermaid.esm.min.mjs"), path.join(mermaidDir, "mermaid.esm.min.mjs"));
+      await cp(
+        path.join(mermaidDist, "chunks", "mermaid.esm.min"),
+        path.join(mermaidDir, "chunks", "mermaid.esm.min"),
+        {
+          recursive: true,
+        },
+      );
       const output = run(process.execPath, ["bin/luxe.js", file, "--no-open"], luxeEnv);
       const sessionUrl = output.match(/url:\s*"([^"]+)"/)?.[1];
       assert.ok(sessionUrl, output);
@@ -115,30 +139,84 @@ test(
       // allow-same-origin, so the parent page cannot script into it.
       const artifactUrl = sessionUrl.replace("/session/", "/artifact/") + "/index.html";
 
-      // The CLI prints `result: "<json-encoded string>"` on one line, then unrelated help
-      // text. Match to end of LINE, not end of output: a greedy dot-all capture swallows
-      // the help block and yields undefined fields that quietly pass some assertions.
       // The CLI prints `result: <payload>` on one line, then unrelated help text. Match to
-      // end of LINE, not end of output: a greedy dot-all capture swallows the help block.
-      // The payload arrives JSON-encoded more than once - the eval returns a string, and
-      // the CLI encodes it again - so unwrap until an object falls out rather than
-      // hard-coding a nesting depth that varies with how the value was produced.
-      const evaluate = (fn) => {
+      // end of LINE, not end of output: a greedy dot-all capture swallows the help block and
+      // yields undefined fields that quietly pass some assertions.
+      const resultPayload = (fn) => {
         const output = run("chrome-devtools-axi", ["eval", fn], chromeEnv);
         const line = output.match(/^result: (.*)$/m);
         assert.ok(line, `no result line in chrome-devtools-axi output:\n${output}`);
-        let value = line[1].trim();
+        return { payload: line[1].trim(), output };
+      };
+
+      // The payload arrives JSON-encoded more than once - the eval returns a string, and the
+      // CLI encodes it again - so unwrap until an object falls out rather than hard-coding a
+      // nesting depth that varies with how the value was produced. Returns undefined for
+      // anything that is not JSON at all, which is what an in-page throw looks like: the CLI
+      // reports it as the bare string `Error: <message>`.
+      const unwrap = (payload) => {
+        let value = payload;
         for (let depth = 0; depth < 4 && typeof value === "string"; depth += 1) {
-          value = JSON.parse(value);
+          try {
+            value = JSON.parse(value);
+          } catch {
+            return undefined;
+          }
         }
-        assert.ok(value && typeof value === "object", `unexpected eval payload: ${line[1]}`);
-        return /** @type {Record<string, any>} */ (value);
+        return value && typeof value === "object" ? /** @type {Record<string, any>} */ (value) : undefined;
+      };
+
+      const evaluate = (fn) => {
+        const { payload, output } = resultPayload(fn);
+        const value = unwrap(payload);
+        // Reporting the payload is the whole point of this branch. Left to JSON.parse, an
+        // in-page `Error: Cannot read properties of null ...` surfaced as
+        // `SyntaxError: Unexpected token 'E', "Error: Can"... is not valid JSON` - the parser
+        // quotes ten characters and throws the message that names the actual failure away,
+        // which is an hour of debugging for a payload that was self-explanatory all along.
+        assert.ok(
+          value,
+          `chrome-devtools-axi eval did not return a JSON object.\npayload: ${payload}\n\nfull output:\n${output}`,
+        );
+        return value;
+      };
+
+      // Mermaid renders asynchronously and Luxe injects each toolbar only once the SVG it
+      // belongs to has laid out, so "the page is ready" is a fact to observe, not a duration
+      // to guess. The fixed `wait 3000` this replaced turned every slow render into an
+      // assertion about a null element, which is a failure that describes the symptom and
+      // not the cause.
+      const waitForDiagrams = (viewport) => {
+        const probe = `() => JSON.stringify({
+          containers: document.querySelectorAll('.mermaid').length,
+          ready: [...document.querySelectorAll('.mermaid')].filter(
+            (el) => el.querySelector('svg') && el.querySelector('[role=toolbar] button'),
+          ).length,
+        })`;
+        const deadline = Date.now() + 60_000;
+        // No initialiser: the loop body runs at least once and always describes what it saw.
+        let last;
+        do {
+          const state = unwrap(resultPayload(probe).payload);
+          if (state) {
+            if (state.containers === 2 && state.ready === 2) return;
+            last = `${state.ready}/${state.containers} container(s) rendered with a toolbar`;
+          } else {
+            last = "the readiness probe itself did not return JSON";
+          }
+          run("chrome-devtools-axi", ["wait", "500"], chromeEnv);
+        } while (Date.now() < deadline);
+        // A stalled render is almost always something the page already complained about -
+        // a blocked CDN import, a Mermaid parse error - so the browser console goes into
+        // the failure rather than leaving the next reader to reproduce it by hand.
+        const console_ = run("chrome-devtools-axi", ["console"], chromeEnv);
+        assert.fail(`the diagrams never rendered with their toolbars at ${viewport}: ${last}\n\n${console_}`);
       };
 
       for (const viewport of ["1440x900", "768x900"]) {
         run("chrome-devtools-axi", ["emulate", "--viewport", viewport], chromeEnv);
         run("chrome-devtools-axi", ["open", artifactUrl], chromeEnv);
-        run("chrome-devtools-axi", ["wait", "3000"], chromeEnv);
+        waitForDiagrams(viewport);
 
         const geometry = evaluate(`() => {
         const diagrams = [...document.querySelectorAll('.mermaid')].map((container) => {

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { MERMAID_VERSION } from "../src/design-reference.js";
+
 async function readPackageJson() {
   return JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 }
@@ -55,6 +57,32 @@ test("browser tests have their own script, outside check, and run in CI", async 
 // mid-test and executed with full rights in CI. Pinning it as a devDependency only helps
 // if the runner points the bridge at that copy, so both halves are asserted here.
 const BROWSER_CLI_PACKAGES = ["chrome-devtools-axi", "chrome-devtools-mcp"];
+
+// Two different Mermaids exist here on purpose, and it is worth stating because the obvious
+// tidy-up breaks a whiteboard contract. MERMAID_VERSION is what an artifact loads from the
+// CDN at render time. The mermaid devDependency is what the whiteboard BUNDLES through
+// @excalidraw/mermaid-to-excalidraw, and test/whiteboard-pins.test.js holds it at an exact
+// version because Excalidraw measures glyphs synchronously at conversion time: bumping it
+// re-measures every scene ever saved, which is why WHITEBOARD_TEXT_METRICS_VERSION exists.
+//
+// The diagram toolbar suite serves the bundled copy rather than fetching the CDN one, so
+// the two versions being different is load-bearing, not an oversight. This asserts the
+// divergence is deliberate: if someone aligns them, whiteboard-pins goes red and this
+// points at why. Written as an explicit pair so the day they legitimately match, this test
+// fails and forces the comment above to be re-read rather than silently going stale.
+const MERMAID_SPLIT = { bundled: "11.12.1", cdn: "11.15.0" };
+
+test("the bundled Mermaid and the CDN Mermaid diverge on purpose", async () => {
+  const packageJson = await readPackageJson();
+
+  assert.equal(packageJson.devDependencies.mermaid, MERMAID_SPLIT.bundled);
+  assert.equal(MERMAID_VERSION, MERMAID_SPLIT.cdn);
+  assert.notEqual(
+    packageJson.devDependencies.mermaid,
+    MERMAID_VERSION,
+    "these are equal now - re-read the comment above, then update MERMAID_SPLIT if that is genuinely intended",
+  );
+});
 
 test("the browser-driving CLIs are pinned devDependencies, not global installs", async () => {
   const packageJson = await readPackageJson();
