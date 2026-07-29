@@ -25,6 +25,7 @@ import {
   isMaterialPageOverflow,
   isModeToggleHotkeyEvent,
   isNativeInteractiveControl,
+  countGraphemes,
   isNearTotalOcclusion,
   isOccludableAuditText,
   MODE_TOGGLE_HOTKEY_KEY,
@@ -1683,6 +1684,7 @@ const isMaterialPageOverflow=${isMaterialPageOverflow.toString()};
 const findStableLayoutFindings=${findStableLayoutFindings.toString()};
 const isNearTotalOcclusion=${isNearTotalOcclusion.toString()};
 const isOccludableAuditText=${isOccludableAuditText.toString()};
+const countGraphemes=${countGraphemes.toString()};
 const DOM_SNAPSHOT_MAX_NODES=${DOM_SNAPSHOT_MAX_NODES};
 const DOM_SNAPSHOT_MAX_BYTES=${DOM_SNAPSHOT_MAX_BYTES};
 const DOM_SNAPSHOT_TRUNCATION_MARKER=${JSON.stringify(DOM_SNAPSHOT_TRUNCATION_MARKER)};

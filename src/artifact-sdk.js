@@ -365,7 +365,27 @@ export function isOccludableAuditText({ text, isControl = false, minLength = 2 }
     .replace(/\s+/g, " ")
     .trim();
   if (!value) return false;
-  return isControl || value.length >= minLength;
+  // Count what a reader sees, not UTF-16 units. A lone emoji is `.length` 2, so a raw
+  // length floor of 2 admits the single decorative glyph this rule exists to exclude while
+  // still rejecting a bullet. Code points are not enough either: an emoji carrying a
+  // variation selector or a skin-tone modifier is two or more of those. Grapheme clusters
+  // are the unit that matches the intent, with a code-point count as the fallback where
+  // Intl.Segmenter is missing.
+  //
+  // This stays a heuristic and its bias is worth naming: a single CJK character is a whole
+  // word, and a lone digit is a count or a rating, and both are rejected. The trade is
+  // deliberate, since a floor of 1 admits bullets, arrows and icon-font glyphs that are
+  // layered on purpose all the time, but it is a Latin-alphabet assumption rather than a
+  // universal one.
+  return isControl || countGraphemes(value) >= minLength;
+}
+
+export function countGraphemes(value) {
+  const text = String(value ?? "");
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    return [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)].length;
+  }
+  return [...text].length;
 }
 
 export function isNearTotalOcclusion({ occludedSamples, totalSamples, minSamples = 5, minRatio = 0.9 }) {
