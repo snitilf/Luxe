@@ -61,9 +61,37 @@
     </style>
   </head>
   <body>
+    <!-- This fixture carries TWO overflow defects, and only the second one is what the
+         browser suite asserts on. Keeping both is deliberate.
+
+         1. The two-column grid has no min-width protection, so its children refuse to
+            shrink below their content. That used to push the document ~252px wider than a
+            390px viewport. The artifact baseline (src/artifact-baseline.css) now injects
+            `min-width: 0` onto `.grid > *` into every artifact Luxe shows, so Luxe REPAIRS
+            this before the audit ever measures it and the overflow collapses to ~12px,
+            under the audit's 24px materiality threshold.
+
+            Do NOT read that as end-to-end coverage of the repair: this fixture cannot
+            observe it. Delete the baseline rule and the audit still reports exactly one
+            warning here, because defect 2 below produces one on its own - the warning
+            count is identical repaired or not. The rule's existence is asserted directly,
+            in test/artifact-baseline.test.js ("grid and flex children are given
+            min-width:0"). The defect is kept because removing it would make this fixture
+            less like the real artifacts the audit runs against, not because it tests
+            anything by itself. It is also why the fixture needed a second defect at all:
+            the baseline silently disarmed the only one it had.
+
+         2. The owner badge is `white-space: nowrap` on a `flex: 0 0 auto` child, so no
+            baseline rule can shrink it. That is the defect the audit is expected to catch,
+            and it only escapes the viewport at narrow widths: at 1440 the badge ends well
+            inside the page, at 390 it runs 168px past the right edge. Hence 0 warnings
+            wide and 1 warning at 390. -->
     <main>
       <h1>Deployment readiness</h1>
-      <p>This deliberately broken grid has no min-width protection and forces the whole document wider.</p>
+      <p>
+        This grid has no min-width protection, and its owner badge is an unbreakable run that nothing can shrink. On a
+        narrow viewport the badge runs off the right edge of the page.
+      </p>
       <section class="grid">
         <article class="card">
           <h2>Status</h2>
@@ -73,7 +101,7 @@
         </article>
         <article class="card">
           <h2>Owner</h2>
-          <div class="badge-row"><span class="badge">PLATFORM-FOUNDATIONS</span></div>
+          <div class="badge-row"><span class="badge">PLATFORM-FOUNDATIONS-RELEASE-ENGINEERING</span></div>
         </article>
       </section>
     </main>
