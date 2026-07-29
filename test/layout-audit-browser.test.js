@@ -128,8 +128,12 @@ test(
       // 390. The fixture's grid also lacks min-width protection, but the artifact
       // baseline repairs that one before the audit measures anything, so it is not what
       // the mobile warning is about. See the comment in the fixture.
+      // The second mobile warning is the occlusion one: the baseline shrinks the status card,
+      // the later Owner card paints its opaque background over what spilled out, and the "QA"
+      // badge ends up 100% covered. It is reported separately from the page overflow because
+      // it is a different root and a different repair.
       audit("control-broken-overflow", "1440x1000x1", 3200, 0);
-      audit("control-broken-overflow", "390x844x1,mobile,touch", 3200, 1);
+      audit("control-broken-overflow", "390x844x1,mobile,touch", 3200, 2);
       audit("control-broken-clipping", "1440x1000x1", 3200, 3);
       audit("control-broken-clipping", "390x844x1,mobile,touch", 3200, 3);
       audit("control-broken-reachability", "1440x1000x1", 3200, 3);

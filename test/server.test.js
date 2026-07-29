@@ -979,6 +979,10 @@ test("artifact SDK reports only near-total occlusion by an opaque sibling", () =
   assert.match(js, /isDiagramLayoutElement/);
   assert.match(js, /isNearTotalOcclusion/);
   assert.match(js, /minRatio = 0\.9/);
+  // The bundle is assembled helper by helper from artifact-sdk.js exports, so a helper the
+  // audit calls but createSdkJs never serializes is a ReferenceError that silently kills the
+  // whole audit in the browser while every Node test stays green.
+  assert.match(js, /const isOccludableAuditText=function isOccludableAuditText/);
 });
 
 test("artifact SDK reports its scroll position and restores it on request", () => {

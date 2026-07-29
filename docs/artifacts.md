@@ -35,6 +35,8 @@ After fonts and finite animations settle, the injected SDK reports warnings from
 
 Explicit ellipsis and line clamp, standard visually hidden accessibility text, intentional scrollers or masks, parent overhang, generic element scroll geometry, decorative overlap, and uncertain motion do not produce findings by themselves.
 
+Occlusion is measured for any label of two or more characters and for any interactive control, because content painted over is lost at any length, while a lone covered character with no interactive role stays decorative.
+
 Reported warnings are returned from `luxe poll` in `layout_warnings` with `selector`, `kind`, `axis`, `overflowPx`, `severity`, and server-computed `persistent`.
 
 `persistent` is `true` when a matching finding was already delivered in a prior poll, so the agent can tell a fresh warning from one its last repair did not clear.
