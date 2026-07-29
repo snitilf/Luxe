@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.3.0...editeur-luxe-v0.3.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **sdk:** count graphemes, and guard the wiring that carries the fix ([8e98117](https://github.com/snitilf/Luxe/commit/8e981177e09a3744d299692632ec4e3ac44d6dc2))
+* **sdk:** warn when a short label is painted over entirely ([2b88e67](https://github.com/snitilf/Luxe/commit/2b88e678fd7c47003e432262ad6c25ee836b2abe))
+* **sdk:** warn when a short label is painted over entirely ([9c8d098](https://github.com/snitilf/Luxe/commit/9c8d09889ebf79f6cdd56963f38b030d9c5e5fc1))
+
 ## [0.3.0](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.2.2...editeur-luxe-v0.3.0) (2026-07-28)
 
 
