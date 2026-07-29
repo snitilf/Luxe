@@ -65,16 +65,23 @@ const BROWSER_CLI_PACKAGES = ["chrome-devtools-axi", "chrome-devtools-mcp"];
 // version because Excalidraw measures glyphs synchronously at conversion time: bumping it
 // re-measures every scene ever saved, which is why WHITEBOARD_TEXT_METRICS_VERSION exists.
 //
-// So this asserts that they are ALLOWED to differ, rather than that they match. If a future
-// reader "aligns" them, the whiteboard pin test fails and points here.
-test("the CDN Mermaid and the bundled Mermaid are tracked separately", async () => {
+// The diagram toolbar suite serves the bundled copy rather than fetching the CDN one, so
+// the two versions being different is load-bearing, not an oversight. This asserts the
+// divergence is deliberate: if someone aligns them, whiteboard-pins goes red and this
+// points at why. Written as an explicit pair so the day they legitimately match, this test
+// fails and forces the comment above to be re-read rather than silently going stale.
+const MERMAID_SPLIT = { bundled: "11.12.1", cdn: "11.15.0" };
+
+test("the bundled Mermaid and the CDN Mermaid diverge on purpose", async () => {
   const packageJson = await readPackageJson();
-  assert.match(
-    packageJson.devDependencies.mermaid ?? "",
-    /^\d+\.\d+\.\d+$/,
-    "the bundled mermaid must be pinned exactly",
+
+  assert.equal(packageJson.devDependencies.mermaid, MERMAID_SPLIT.bundled);
+  assert.equal(MERMAID_VERSION, MERMAID_SPLIT.cdn);
+  assert.notEqual(
+    packageJson.devDependencies.mermaid,
+    MERMAID_VERSION,
+    "these are equal now - re-read the comment above, then update MERMAID_SPLIT if that is genuinely intended",
   );
-  assert.match(MERMAID_VERSION, /^\d+\.\d+\.\d+$/, "the CDN mermaid version must be exact");
 });
 
 test("the browser-driving CLIs are pinned devDependencies, not global installs", async () => {
