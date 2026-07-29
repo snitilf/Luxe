@@ -21,22 +21,40 @@ const virtualTimeBudgetMs = 8_000;
 // budget free to be generous, and generous is what a contended CI runner needs - a shared
 // ubuntu runner has been observed spending over 18s here while macOS and Windows spent ~3s.
 const chromeTimeoutMs = 45_000;
+// How long to wait for Chrome to be reaped after it is killed. SIGKILL is already the
+// strongest signal there is, so this is not a step on the way to a harder kill: it is the
+// point at which waiting stops being useful and the retrying rm below takes over. Generous
+// enough that a contended runner never trips it, short enough that a wedged Chrome cannot
+// push the run anywhere near the node:test ceiling.
+const chromeExitGraceMs = 5_000;
 const maxDumpBytes = 8 * 1024 * 1024;
+// Chrome keeps writing into its --user-data-dir right up to the moment it dies, and on a
+// contended runner some of those writes land after the process has been killed. A removal
+// that walks a directory another process is still creating files in fails the final rmdir
+// with ENOTEMPTY, so the walk is retried rather than trusted the first time.
+const cleanupRetries = 10;
+const cleanupRetryDelayMs = 100;
 // Chrome is chatty on stderr and a broken install can be endlessly chatty, so the stream is
 // always drained but only its tail is retained: enough to carry the actual loader or sandbox
 // error into the assertion message, small enough that it can never flood one.
 const maxStderrTailBytes = 4 * 1024;
 
 /**
- * Runs Chrome with --dump-dom and resolves as soon as the serialised document has been
+ * Runs Chrome with --dump-dom and returns as soon as the serialised document has been
  * written, killing Chrome at that point instead of waiting for an exit that never comes.
+ *
+ * Killing is not the same as having exited: child.kill only delivers the signal, and Chrome
+ * is still flushing writes into its --user-data-dir when it returns. Handing that directory
+ * to a caller that removes it immediately turns a successful render into an ENOTEMPTY on the
+ * temp directory, so this waits for the process to actually be reaped before returning, and
+ * reports whether it was - a Chrome that never dies is bounded, not waited on forever.
  *
  * stderr and the exit status come back alongside the dump so that a Chrome which never
  * managed to render can be diagnosed as a launch failure rather than an empty document.
  *
  * @param {string} chrome
  * @param {string[]} args
- * @returns {Promise<{ stdout: string, stderr: string, code: number | null, signal: NodeJS.Signals | null, timedOut: boolean }>}
+ * @returns {Promise<{ stdout: string, stderr: string, code: number | null, signal: NodeJS.Signals | null, timedOut: boolean, exited: boolean }>}
  */
 function runChromeDump(chrome, args) {
   return new Promise((resolve, reject) => {
@@ -46,14 +64,37 @@ function runChromeDump(chrome, args) {
     let code = null;
     let signal = null;
     let settled = false;
+    let hasExited = false;
+    /**
+     * Resolves true once the OS has reaped Chrome, false if it is still alive after the
+     * grace window. SIGKILL has already been sent by then, so there is no harder signal to
+     * escalate to; the caller's retrying cleanup is what absorbs the leftover writes.
+     *
+     * @returns {Promise<boolean>}
+     */
+    const waitForExit = () =>
+      new Promise((settle) => {
+        if (hasExited) return settle(true);
+        function onExit() {
+          clearTimeout(graceTimer);
+          settle(true);
+        }
+        const graceTimer = setTimeout(() => {
+          child.off("exit", onExit);
+          settle(false);
+        }, chromeExitGraceMs);
+        child.once("exit", onExit);
+      });
     const finish = (timedOut) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       child.kill("SIGKILL");
-      child.stdout.destroy();
-      child.stderr.destroy();
-      resolve({ stdout, stderr, code, signal, timedOut });
+      waitForExit().then((exited) => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        resolve({ stdout, stderr, code, signal, timedOut, exited });
+      });
     };
     const timer = setTimeout(() => finish(true), chromeTimeoutMs);
     child.stdout.setEncoding("utf8");
@@ -75,13 +116,16 @@ function runChromeDump(chrome, args) {
       clearTimeout(timer);
       reject(new Error(`Chrome could not be launched from ${chrome}: ${error.message}`, { cause: error }));
     });
-    // close fires once Chrome has exited and both pipes have drained, so the status and the
-    // stderr tail recorded here are complete for every path that ends in an exit.
-    child.on("close", (exitCode, exitSignal) => {
+    // exit fires the moment the process is reaped, which is exactly the fact the cleanup
+    // depends on, so the status is recorded here rather than waiting for the pipes to drain.
+    child.on("exit", (exitCode, exitSignal) => {
+      hasExited = true;
       code = exitCode;
       signal = exitSignal;
-      finish(false);
     });
+    // close fires once Chrome has exited and both pipes have drained, so the stderr tail is
+    // complete by the time a Chrome that ended on its own is turned into a diagnosis.
+    child.on("close", () => finish(false));
   });
 }
 
@@ -213,6 +257,11 @@ test("real Excalidraw rendering keeps loaded-font labels inside their text bound
       ];
       const run = await runChromeDump(chrome, args);
       const { stdout, timedOut } = run;
+      // Giving up on the exit is survivable - the retrying cleanup below is built for it -
+      // but it is never normal, so it is said out loud rather than absorbed in silence.
+      if (!run.exited) {
+        t.diagnostic(`Chrome was still alive ${chromeExitGraceMs}ms after SIGKILL; leaving it to the cleanup retries`);
+      }
       const dumpComplete = stdout.includes("</html>");
       const result = dumpComplete ? resultFromDump(stdout) : null;
       // These three are different diagnoses and must read differently. A timeout says nothing
@@ -244,6 +293,20 @@ test("real Excalidraw rendering keeps loaded-font labels inside their text bound
       await new Promise((resolve) => server.close(resolve));
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    // Two rules for this teardown. It retries, because Chrome can still be creating files
+    // under the profile directory while the walk is emptying it and the final rmdir then
+    // fails with ENOTEMPTY. And it never throws, because a `finally` that throws replaces
+    // whatever the body threw: an ENOTEMPTY on a temp directory would stand in for the
+    // assertion the reader actually needs, which is how a green render once got reported as
+    // a filesystem error. A directory that survives both is a leak worth naming, not a
+    // reason to fail a run that already told the truth about the render.
+    await rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: cleanupRetries,
+      retryDelay: cleanupRetryDelayMs,
+    }).catch((error) => {
+      t.diagnostic(`could not remove the fixture directory ${root}: ${error.message}`);
+    });
   }
 });

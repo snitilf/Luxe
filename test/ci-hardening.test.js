@@ -18,6 +18,24 @@ test("the hosted Chrome regression is force-killed after its deadline", async ()
   assert.match(source, /child\.kill\("SIGKILL"\)/);
 });
 
+test("the hosted Chrome regression tears its fixture down without masking the failure", async () => {
+  const source = await read("test/whiteboard-render.browser.test.js");
+
+  // Killing Chrome is not the same as Chrome having exited, and a Chrome that is still
+  // flushing writes into the profile directory turns the removal into an ENOTEMPTY. So the
+  // run must wait for a real, bounded exit, and the removal must retry rather than trust the
+  // first walk.
+  assert.match(source, /const chromeExitGraceMs = \d[\d_]*;/);
+  assert.match(source, /waitForExit\(\)/);
+  assert.match(source, /maxRetries: cleanupRetries/);
+  assert.match(source, /retryDelay: cleanupRetryDelayMs/);
+
+  // And the teardown must never throw. A `finally` that throws replaces the assertion that
+  // actually failed, so a temp-directory error would be reported in place of whatever the
+  // render did wrong - the half of this bug that cost the most to diagnose.
+  assert.match(source, /\}\)\.catch\(\(error\) => \{\s*t\.diagnostic\(/);
+});
+
 test("every GitHub Actions job has a finite timeout", async () => {
   const workflows = [
     ".github/workflows/ci.yml",

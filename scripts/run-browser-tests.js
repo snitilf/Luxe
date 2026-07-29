@@ -131,7 +131,14 @@ try {
     }
   }
 } finally {
-  await rm(reportDir, { recursive: true, force: true });
+  // Retry, and never throw. A cleanup error thrown from `finally` replaces whatever the
+  // body threw, which is how a Chrome teardown race once reported itself as the only
+  // failure and hid the test result behind it. `maxRetries` covers the same race here:
+  // rmdir reports ENOTEMPTY when a new entry lands after fs.rm has emptied a directory,
+  // and a retry simply re-reads it.
+  await rm(reportDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch((error) => {
+    console.error(`warning: could not remove the browser test report directory: ${error.message}`);
+  });
 }
 
 if (didNotRun.length > 0) {
