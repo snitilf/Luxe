@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { MERMAID_VERSION } from "../src/design-reference.js";
+
 async function readPackageJson() {
   return JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 }
@@ -55,6 +57,25 @@ test("browser tests have their own script, outside check, and run in CI", async 
 // mid-test and executed with full rights in CI. Pinning it as a devDependency only helps
 // if the runner points the bridge at that copy, so both halves are asserted here.
 const BROWSER_CLI_PACKAGES = ["chrome-devtools-axi", "chrome-devtools-mcp"];
+
+// Two different Mermaids exist here on purpose, and it is worth stating because the obvious
+// tidy-up breaks a whiteboard contract. MERMAID_VERSION is what an artifact loads from the
+// CDN at render time. The mermaid devDependency is what the whiteboard BUNDLES through
+// @excalidraw/mermaid-to-excalidraw, and test/whiteboard-pins.test.js holds it at an exact
+// version because Excalidraw measures glyphs synchronously at conversion time: bumping it
+// re-measures every scene ever saved, which is why WHITEBOARD_TEXT_METRICS_VERSION exists.
+//
+// So this asserts that they are ALLOWED to differ, rather than that they match. If a future
+// reader "aligns" them, the whiteboard pin test fails and points here.
+test("the CDN Mermaid and the bundled Mermaid are tracked separately", async () => {
+  const packageJson = await readPackageJson();
+  assert.match(
+    packageJson.devDependencies.mermaid ?? "",
+    /^\d+\.\d+\.\d+$/,
+    "the bundled mermaid must be pinned exactly",
+  );
+  assert.match(MERMAID_VERSION, /^\d+\.\d+\.\d+$/, "the CDN mermaid version must be exact");
+});
 
 test("the browser-driving CLIs are pinned devDependencies, not global installs", async () => {
   const packageJson = await readPackageJson();
