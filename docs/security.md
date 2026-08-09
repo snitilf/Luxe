@@ -118,3 +118,6 @@ The Mermaid the whiteboard converter bundles is pinned at 11.12.1 under a record
 See [`security/mermaid-11.12-risk-acceptance.md`](security/mermaid-11.12-risk-acceptance.md).
 
 That pin is separate from the Mermaid CDN version `luxe design` offers for artifacts, which tracks a newer release.
+The generated Mermaid snippet pins that entry module with SHA-384 integrity metadata.
+Every release fetches the exact declared CDN URL and verifies its bytes against the declared digest before npm publishing can begin.
+The networked verification stays outside the normal development and pull-request gate so offline checks remain deterministic.
