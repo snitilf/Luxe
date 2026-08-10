@@ -53,3 +53,18 @@ test("every GitHub Actions job has a finite timeout", async () => {
     assert.equal(timeoutCount, jobCount, `${workflowPath} must bound every job`);
   }
 });
+
+test("a release verifies the Mermaid CDN pin before publishing", async () => {
+  const workflow = await read(".github/workflows/release-please.yml");
+  const checkIndex = workflow.indexOf("- run: npm run check");
+  const integrityIndex = workflow.indexOf("- run: npm run verify:mermaid-cdn");
+  const publishIndex = workflow.indexOf("- run: npm publish --access public");
+
+  assert.ok(checkIndex >= 0, "the release must run the offline repository gate");
+  assert.ok(integrityIndex > checkIndex, "the networked integrity check must follow the offline gate");
+  assert.ok(publishIndex > integrityIndex, "publishing must happen only after the integrity check passes");
+  assert.match(
+    workflow,
+    /- run: npm run verify:mermaid-cdn\n\s+if: \$\{\{ steps\.release\.outputs\.release_created \}\}/,
+  );
+});

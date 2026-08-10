@@ -37,6 +37,12 @@ jobs:
       - run: npm run check
         if: ${{ steps.release.outputs.release_created }}
 
+      # The Mermaid snippet printed into artifacts pins this exact CDN file by SHA-384.
+      # Keep the network out of the normal test gate, but refuse to publish a release if
+      # the URL and integrity value have drifted apart.
+      - run: npm run verify:mermaid-cdn
+        if: ${{ steps.release.outputs.release_created }}
+
       # Trusted Publishing (OIDC) requires npm >= 11.5; publish auth comes from
       # the id-token permission above, not from a token secret. Pinned to the
       # exact npm CLI version to keep the publish path reproducible.

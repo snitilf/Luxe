@@ -45,6 +45,13 @@ test("browser tests have their own script, outside check, and run in CI", async 
   assert.match(workflow, /run: npm run check:browser/);
 });
 
+test("the networked Mermaid integrity check stays out of the local gate", async () => {
+  const packageJson = await readPackageJson();
+
+  assert.equal(packageJson.scripts["verify:mermaid-cdn"], "node scripts/verify-mermaid-cdn-integrity.js");
+  assert.doesNotMatch(packageJson.scripts.check, /verify:mermaid-cdn/);
+});
+
 // The CLI that drives Chrome used to be an undeclared prerequisite, present only because
 // of a global install, with CI pinning it by hand. It is a devDependency now, which is
 // what puts it on PATH for `check:browser` and locks it in package-lock.json. A range
