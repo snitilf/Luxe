@@ -591,7 +591,7 @@ test("the DOM-snapshot copy path is gone from the chrome", async () => {
   assert.doesNotMatch(js, /requestSnapshot\("copy"\)/);
   // What must survive: the request/response snapshot flow that feeds every feedback POST.
   assert.match(js, /function requestSnapshot\(prompts, endAfter\)/);
-  assert.match(js, /domSnapshot: pendingSnapshot/);
+  assert.match(js, /domSnapshot: submission\.snapshot/);
 });
 
 // The gate that stops artifact-page JS from forcing a feedback send. A `luxe:snapshot`
@@ -600,14 +600,24 @@ test("the DOM-snapshot copy path is gone from the chrome", async () => {
 test("chrome accepts a snapshot only against an outstanding request", async () => {
   const js = await chromeClientSource();
 
-  assert.match(js, /const snapshotRequests = \[\]/);
-  assert.match(js, /snapshotRequests\.push\(\{ prompts, endAfter \}\)/);
-  assert.match(js, /const request = snapshotRequests\.shift\(\)/);
-  assert.match(js, /pendingSubmitPrompts = request\.prompts/);
-  assert.match(js, /const prompts = pendingSubmitPrompts/);
-  // The upstream `|| "submit"` fallback defeated the queue: an unrequested snapshot fell
-  // through to the send branch. It must not come back.
-  assert.doesNotMatch(js, /snapshotRequests\.shift\(\) \|\| /);
+  assert.match(js, /let snapshotPreflight = null/);
+  assert.match(js, /const SNAPSHOT_TIMEOUT_MS = 1_500/);
+  assert.match(js, /postToFrame\(\{ type: "luxe:requestSnapshot", requestId \}\)/);
+  assert.match(js, /preflight\.requestId !== requestId/);
+  assert.match(js, /snapshotPreflight = null/);
+  assert.match(js, /settleSnapshotPreflight\(msg\.requestId, msg\.snapshot\)/);
+});
+
+test("artifact SDK announces readiness and returns correlated best-effort snapshots", async () => {
+  const js = await sdkJsSource();
+  const listenerIndex = js.indexOf('window.addEventListener("message", (event) => {');
+  const readyIndex = js.indexOf('parent.postMessage({ type: "luxe:ready" }, "*")');
+
+  assert.ok(listenerIndex >= 0 && readyIndex > listenerIndex);
+  assert.match(js, /if \(event\.source !== parent\) return/);
+  assert.match(js, /Number\.isSafeInteger\(msg\.requestId\) && msg\.requestId > 0/);
+  assert.match(js, /requestId: msg\.requestId, snapshot: currentSnapshot/);
+  assert.match(js, /try \{\n {8}currentSnapshot = snapshot\(\);\n {6}\} catch \{/);
 });
 
 test("overflow menu offers a standalone HTML export that downloads a portable file", async () => {
@@ -784,14 +794,14 @@ test("composer offers two always-visible top-level send actions", async () => {
 test("send and end submits queued prompts before ending the session", async () => {
   const js = await chromeClientSource();
 
-  assert.match(js, /let endAfterSubmit = false/);
+  assert.match(js, /requestedEnd: endAfter/);
   assert.match(js, /sendQueued\(true\)/);
   assert.match(js, /if \(shouldEndSession\) body\.endSession = true/);
   assert.match(
     js,
-    /if \(shouldEndSession && result\.session_ended === true\) \{\n {4}endAfterSubmit = false;\n {4}markSessionEnded\(\{ farewell: true \}\)/,
+    /if \(shouldEndSession && result\.session_ended === true\) \{\n {4}markSessionEnded\(\{ farewell: true \}\)/,
   );
-  assert.match(js, /if \(!succeeded\) \{\n {6}endAfterSubmit = false/);
+  assert.match(js, /if \(!outcome \|\| outcome\.rejectedCount > 0\) \{\n {4}cancelDeferredWork\(\)/);
   assert.doesNotMatch(js, /await endSession\(/);
 });
 
@@ -802,7 +812,7 @@ test("chrome only marks session ended after the end request succeeds", async () 
   assert.match(js, /if \(!response\.ok\) throw new Error\("failed to end session"\)/);
   assert.match(
     js,
-    /if \(!response\.ok\) throw new Error\("failed to end session"\);\n {2}markSessionEnded\(\{ farewell: showGoodbye \}\)/,
+    /if \(!response\.ok\) throw new Error\("failed to end session"\);\n {4}markSessionEnded\(\{ farewell: showGoodbye \}\)/,
   );
 });
 
@@ -1109,26 +1119,22 @@ test("chrome keeps queued prompts persisted until submit succeeds", async () => 
   assert.match(js, /if \(index !== -1\) queued\.splice\(index, 1\)/);
 });
 
-test("chrome ignores concurrent queued prompt submits", async () => {
+test("chrome permits only one posting and one deferred prompt submission", async () => {
   const js = await chromeClientSource();
 
-  assert.match(js, /let submitQueuedPromise = null/);
-  assert.match(js, /if \(submitQueuedPromise\) \{/);
-  assert.match(js, /return submitQueuedPromise/);
-  assert.match(js, /submitQueuedPromise = null/);
+  assert.match(js, /let postingSubmission = null/);
+  assert.match(js, /let deferredSubmission = null/);
+  assert.match(js, /if \(!submission \|\| submission\.phase !== "ready" \|\| postingSubmission \|\| ended\) return/);
 });
 
 test("chrome submits prompts queued during an in-flight submit", async () => {
   const js = await chromeClientSource();
 
-  assert.match(js, /let submitQueuedAgain = false/);
-  assert.match(js, /submitQueuedAgain = true/);
-  assert.match(js, /const shouldSubmitAgain = submitQueuedAgain/);
-  assert.match(js, /else if \(!ended && shouldSubmitAgain\) \{\n {6}if \(queued\.length\) \{\n {8}submitQueued\(\)/);
-  assert.match(
-    js,
-    /else if \(endAfterSubmit\) \{\n {8}endAfterSubmit = false;\n {8}endSession\(\{ farewell: true \}\)/,
-  );
+  assert.match(js, /prompts: queued\.filter\(\(prompt\) => !promptIsOwned\(prompt\)\)/);
+  assert.match(js, /submissionOwnsPrompt\(postingSubmission, prompt\)/);
+  assert.match(js, /submissionOwnsPrompt\(deferredSubmission, prompt\)/);
+  assert.match(js, /if \(deferredSubmission\) \{\n {4}startDeferredSubmission\(\)/);
+  assert.match(js, /deferredEndAfterPost = true/);
 });
 
 test("/health reports the server version so clients can detect upgrades", async () => {
@@ -2419,7 +2425,7 @@ test("poll on an ended session reports who ended it", async () => {
   }
 });
 
-test("send-and-end prompt submissions wake active polls with ended attribution", async () => {
+test("empty-snapshot send-and-end wakes active polls with ended attribution", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
   const artifact = path.join(dir, "artifact.html");
   await writeFile(artifact, "<!doctype html><html><body></body></html>");
@@ -2442,7 +2448,7 @@ test("send-and-end prompt submissions wake active polls with ended attribution",
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          domSnapshot: 'uid=1 h1 "Hello"',
+          domSnapshot: "",
           endSession: true,
           prompts: [{ prompt: "bye", tag: "message" }],
         }),
@@ -2454,6 +2460,7 @@ test("send-and-end prompt submissions wake active polls with ended attribution",
       assert.equal(feedback.session_ended, true);
       assert.equal(feedback.ended_by, "user");
       assert.equal(feedback.prompts.length, 1);
+      assert.equal(feedback.dom_snapshot, "");
 
       const ended = await pollRequest(base, artifact, { timeoutMs: 0 });
       const endedBody = await ended.json();

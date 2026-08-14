@@ -475,7 +475,7 @@ test(
       // Luxe-owned controls must never reach the agent.
       const snapshot = evaluate(`() => new Promise((resolve) => {
       window.addEventListener('message', (event) => {
-        if (event.data && event.data.type === 'luxe:snapshot') {
+        if (event.data && event.data.type === 'luxe:snapshot' && event.data.requestId === 1) {
           const text = event.data.snapshot || '';
           resolve(JSON.stringify({
             carriesDiagram: /Artifact SDK/.test(text),
@@ -483,7 +483,7 @@ test(
           }));
         }
       });
-      window.postMessage({ type: 'luxe:requestSnapshot' }, '*');
+      window.postMessage({ type: 'luxe:requestSnapshot', requestId: 1 }, '*');
       setTimeout(() => resolve(JSON.stringify({ carriesDiagram: false, leaksToolbar: false })), 3000);
     })`);
       assert.equal(snapshot.carriesDiagram, true, "the snapshot should still carry the diagram");

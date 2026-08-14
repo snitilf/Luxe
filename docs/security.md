@@ -30,11 +30,12 @@ A queued prompt whose scene path does not match the expected path for that sessi
 
 ## What a Send transmits
 
-Every Send delivers a `dom_snapshot` of the artifact as currently rendered.
-It captures visible rendered text, including anything sensitive shown in a table, code block, or config listing, up to 2,000 nodes and 128 KiB.
+Every Send attempts to deliver a `dom_snapshot` of the artifact as currently rendered.
+If the artifact frame does not answer within 1.5 seconds, feedback still sends and the snapshot is empty.
+A successful snapshot captures visible rendered text, including anything sensitive shown in a table, code block, or config listing, up to 2,000 nodes and 128 KiB.
 The snapshot is stored in the local state file until the agent's next poll collects it.
 
-If an artifact displays a secret, that secret is in the snapshot.
+If an artifact displays a secret, that secret may be included in a successful snapshot.
 See [Reviewing artifacts](reviewing.md) for the full description.
 
 A sent item carries `prompt`, `text`, `selector`, `tag`, and a normalized `target`, and nothing else.

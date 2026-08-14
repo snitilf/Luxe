@@ -33,10 +33,13 @@ Use `data-luxe-question` or `queueKey` when pre-send updates for the same questi
 Queued annotation preview pills and chat history share a scrollable Conversation panel above a sticky composer, so long feedback queues do not push the text box or send controls off screen.
 
 The browser chrome keeps editing actions in the overflow menu (copy path, reload artifact, export standalone HTML, end session), while the composer exposes **Send & End** beside **Send to Agent** to submit queued prompts and user-ended attribution together.
+**End session** refuses to discard a composer draft, queued item, or feedback submission that is still in progress.
 
 ## What a Send includes
 
-Every Send delivers a `dom_snapshot` alongside your prompts: a text outline of the artifact as it is currently rendered, so the agent has page context for the feedback.
+Every Send attempts to deliver a `dom_snapshot` alongside your prompts: a text outline of the artifact as it is currently rendered, so the agent has page context for the feedback.
+Snapshot capture is best effort.
+If the artifact frame does not answer within 1.5 seconds, the prompts still send and `dom_snapshot` is empty.
 
 It captures visible rendered text, including anything sensitive shown in a table, code block, or config listing, up to 2,000 nodes and 128 KiB.
 A capped snapshot ends with `[Luxe DOM snapshot truncated]`, and the snapshot is stored in the local state file until the agent's next poll collects it.
@@ -81,7 +84,8 @@ That writes `<artifact-basename>.wb<n>.excalidraw` next to the artifact, plus th
 ## Agent presence
 
 The browser shows when no agent is listening.
-It keeps queued feedback and reported layout warnings for the next successful `luxe poll` send even across reloads, and only blocks human sends while the agent is working on delivered feedback.
+It keeps queued feedback and reported layout warnings for the next successful `luxe poll` send even across reloads.
+Send controls pause during snapshot preparation, while one confirmed follow-up waits behind an active submission, and while the agent is working on delivered feedback.
 The agent's reply (`--agent-reply`) concludes that work and re-enables sends.
 
 The no-timeout poll always writes an immediate stderr banner so it is visibly not hung.

@@ -62,8 +62,6 @@ let annotation = sessionData.annotationDefault === true;
 const initialEnded = sessionData.ended === true;
 let ended = false;
 let agentPresence = "waiting";
-let pendingSnapshot = "";
-let pendingSubmitPrompts = [];
 let pointerdownSendFreeze = null;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let pointerdownSendFreezeTimer;
@@ -79,8 +77,16 @@ let layoutGateManuallyBypassed = !layoutGateEnabled;
 let layoutGateCycle = 0;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let layoutGateTimer;
-const snapshotRequests = [];
-let endAfterSubmit = false;
+const SNAPSHOT_TIMEOUT_MS = 1_500;
+let nextSnapshotRequestId = 1;
+/** @type {{ requestId: number, submission: FeedbackSubmission, timer: ReturnType<typeof setTimeout>, readyReplayed: boolean } | null} */
+let snapshotPreflight = null;
+/** @typedef {{ prompts: Array<Record<string, any>>, snapshot: string, requestedEnd: boolean, endAfter: boolean, endBlocked: boolean, phase: "preparing" | "ready" | "posting" }} FeedbackSubmission */
+/** @type {FeedbackSubmission | null} */
+let postingSubmission = null;
+/** @type {FeedbackSubmission | null} */
+let deferredSubmission = null;
+let deferredEndAfterPost = false;
 // Whether an end initiated FROM THIS TAB is in flight, and therefore whether the session
 // ending should be answered with a farewell.
 //
@@ -92,8 +98,6 @@ let endAfterSubmit = false;
 // the request goes out is what makes the two paths agree.
 let farewellPending = false;
 let workingBubble = null;
-let submitQueuedPromise = null;
-let submitQueuedAgain = false;
 let lastScroll = { x: 0, y: 0 };
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let copyHintTimer;
@@ -290,13 +294,20 @@ function targetRows(target) {
   return rows;
 }
 
+function submissionOwnsPrompt(submission, prompt) {
+  return Boolean(submission?.prompts.includes(prompt));
+}
+
+function promptIsOwned(prompt) {
+  return submissionOwnsPrompt(postingSubmission, prompt) || submissionOwnsPrompt(deferredSubmission, prompt);
+}
+
 function render() {
-  const sending = Boolean(submitQueuedPromise);
   annotationPills.innerHTML = queued
     .map(
       (prompt, index) =>
         '<div class="pill-wrap"><div class="pill' +
-        (sending ? " sent" : "") +
+        (promptIsOwned(prompt) ? " sent" : "") +
         '"><div class="pill-fields">' +
         promptInlineHtml(prompt) +
         '</div><button class="pill-close" type="button" aria-label="Remove queued prompt" data-index="' +
@@ -325,8 +336,12 @@ const WORKING_SEND_REASON = "Waiting for the agent to finish before sending.";
 // without hovering anything.
 function updateSendState() {
   const waitingOnAgent = !ended && agentPresence === "working";
-  sendButton.disabled = ended || waitingOnAgent;
+  const snapshotBusy = Boolean(snapshotPreflight || deferredSubmission || deferredEndAfterPost);
+  const endingInFlight = Boolean(postingSubmission?.endAfter);
+  sendButton.disabled = ended || waitingOnAgent || snapshotBusy || endingInFlight;
   sendAndEndButton.disabled = sendButton.disabled;
+  annotationSwitch.disabled = ended || endingInFlight;
+  chatInput.disabled = ended || endingInFlight;
 
   const reason = waitingOnAgent ? WORKING_SEND_REASON : "";
   for (const button of [sendButton, sendAndEndButton]) {
@@ -367,6 +382,16 @@ function showSendStatus(text) {
   sendHint.textContent = text;
   sendHint.hidden = false;
   sendHintOwner = "status";
+}
+
+function showTransientSendStatus(text) {
+  showSendStatus(text);
+  sendHintTimer = setTimeout(() => {
+    if (sendHintOwner !== "status") return;
+    sendHint.hidden = true;
+    sendHintOwner = null;
+    updateSendState();
+  }, 2600);
 }
 
 function hideSendHint() {
@@ -570,6 +595,10 @@ function normalizeQueuedPrompt(prompt, { preserveBrowserMetadata = false } = {})
 
 function enqueuePrompt(prompt) {
   if (!prompt || typeof prompt !== "object") return;
+  // Once the final prompt-plus-end mutation has started, the session can become terminal
+  // before another browser message could be delivered. Feedback entry is locked in the
+  // chrome for the same interval, and this guard closes the programmatic message path.
+  if (postingSubmission?.endAfter) return;
 
   const normalized = normalizeQueuedPrompt(prompt);
   const queueKey = promptQueueKey(normalized);
@@ -647,7 +676,7 @@ function sendIntentForTarget(target) {
 function freezeDisplayedBatch(endAfter) {
   return {
     endAfter,
-    prompts: queued.slice(),
+    prompts: queued.filter((prompt) => !promptIsOwned(prompt)),
     composerText: chatInput.value.trim(),
   };
 }
@@ -667,20 +696,103 @@ function consumeSendFreeze(endAfter) {
   return frozen;
 }
 
-// Snapshot-request ledger, half one. Artifact JS can postMessage to its parent whenever it
-// likes, so a `luxe:snapshot` message arriving is not evidence that the chrome asked for one.
-// Every chrome-owned Send or Send & End gesture records the exact prompt batch it authorizes;
-// the handler below consumes exactly one entry per snapshot it accepts and drops anything it
-// did not ask for. Artifact messages can fill the queue, but cannot create or expand a send.
+function nextRequestId() {
+  const requestId = nextSnapshotRequestId;
+  nextSnapshotRequestId = requestId >= Number.MAX_SAFE_INTEGER ? 1 : requestId + 1;
+  return requestId;
+}
+
+function postSnapshotRequest(requestId) {
+  postToFrame({ type: "luxe:requestSnapshot", requestId });
+}
+
 function requestSnapshot(prompts, endAfter) {
-  snapshotRequests.push({ prompts, endAfter });
-  postToFrame({ type: "luxe:requestSnapshot" });
+  /** @type {FeedbackSubmission} */
+  const submission = {
+    prompts: prompts.slice(),
+    snapshot: "",
+    requestedEnd: endAfter,
+    endAfter,
+    endBlocked: false,
+    phase: "preparing",
+  };
+  const requestId = nextRequestId();
+  deferredSubmission = submission;
+  snapshotPreflight = {
+    requestId,
+    submission,
+    timer: setTimeout(() => settleSnapshotPreflight(requestId, ""), SNAPSHOT_TIMEOUT_MS),
+    readyReplayed: false,
+  };
+  showSendStatus("Preparing feedback...");
+  render();
+  postSnapshotRequest(requestId);
+}
+
+function settleSnapshotPreflight(requestId, snapshot) {
+  const preflight = snapshotPreflight;
+  if (!preflight || preflight.requestId !== requestId || typeof snapshot !== "string") return;
+  clearTimeout(preflight.timer);
+  snapshotPreflight = null;
+  preflight.submission.snapshot = snapshot;
+  preflight.submission.phase = "ready";
+  showSendStatus("Sending feedback...");
+  render();
+  startDeferredSubmission();
+}
+
+function replaySnapshotRequestOnReady() {
+  if (!snapshotPreflight || snapshotPreflight.readyReplayed) return;
+  snapshotPreflight.readyReplayed = true;
+  postSnapshotRequest(snapshotPreflight.requestId);
+}
+
+function cancelDeferredWork() {
+  if (snapshotPreflight) clearTimeout(snapshotPreflight.timer);
+  snapshotPreflight = null;
+  deferredSubmission = null;
+  deferredEndAfterPost = false;
+  farewellPending = false;
+}
+
+function hasUnsentFeedback(submission) {
+  return queued.some((prompt) => !submission.prompts.includes(prompt)) || Boolean(chatInput.value.trim());
+}
+
+function startDeferredSubmission() {
+  const submission = deferredSubmission;
+  if (!submission || submission.phase !== "ready" || postingSubmission || ended) return;
+  deferredSubmission = null;
+  submission.endBlocked = submission.requestedEnd && hasUnsentFeedback(submission);
+  submission.endAfter = submission.requestedEnd && !submission.endBlocked;
+  submission.phase = "posting";
+  postingSubmission = submission;
+  farewellPending = submission.endAfter;
+  if (submission.endAfter && annotation) {
+    annotation = false;
+    annotationSwitch.setAttribute("aria-pressed", "false");
+    postToFrame({ type: "luxe:setAnnotationMode", enabled: false });
+  }
+  showSendStatus("Sending feedback...");
+  // Lock composer and annotation input before the end-bearing request can commit. If the
+  // request fails, finishSubmission clears postingSubmission and render enables them again.
+  render();
+  const promise = submitSubmission(submission);
+  finishSubmission(submission, promise);
 }
 
 function sendQueued(endAfter) {
-  if (ended || agentPresence === "working") return;
+  if (
+    ended ||
+    agentPresence === "working" ||
+    snapshotPreflight ||
+    deferredSubmission ||
+    deferredEndAfterPost ||
+    postingSubmission?.endAfter
+  ) {
+    return;
+  }
   closeMenus();
-  if (endAfter) farewellPending = true;
 
   const frozen = consumeSendFreeze(endAfter);
   const text = frozen.composerText;
@@ -699,6 +811,12 @@ function sendQueued(endAfter) {
     render();
   }
   if (!frozen.prompts.length) {
+    if (endAfter && postingSubmission) {
+      deferredEndAfterPost = true;
+      showSendStatus("Finishing the current send before ending the session...");
+      render();
+      return;
+    }
     showSendHint();
     return;
   }
@@ -707,43 +825,51 @@ function sendQueued(endAfter) {
   requestSnapshot(frozen.prompts, endAfter);
 }
 
-async function submitQueued() {
-  if (submitQueuedPromise) {
-    submitQueuedAgain = true;
-    return submitQueuedPromise;
-  }
-
-  let succeeded = false;
-  submitQueuedPromise = submitQueuedOnce();
-  render(); // repaint the queued pills in their sent treatment
+async function finishSubmission(submission, promise) {
+  let outcome = null;
   try {
-    const result = await submitQueuedPromise;
-    succeeded = true;
-    return result;
+    outcome = await promise;
   } catch (error) {
     showSendStatus(error instanceof Error ? error.message : "Feedback was not sent. Please try again.");
-  } finally {
-    submitQueuedPromise = null;
+  }
+
+  const isCurrent = postingSubmission === submission;
+  if (!isCurrent) return;
+  postingSubmission = null;
+  if (!outcome?.sessionEnded) farewellPending = false;
+
+  if (!outcome || outcome.rejectedCount > 0) {
+    cancelDeferredWork();
     render();
-    const shouldSubmitAgain = submitQueuedAgain;
-    submitQueuedAgain = false;
-    if (!succeeded) {
-      endAfterSubmit = false;
-    } else if (!ended && shouldSubmitAgain) {
-      if (queued.length) {
-        submitQueued();
-      } else if (endAfterSubmit) {
-        endAfterSubmit = false;
-        endSession({ farewell: true });
-      }
+    return;
+  }
+
+  render();
+  if (outcome.sessionEnded || ended) return;
+
+  if (deferredSubmission) {
+    startDeferredSubmission();
+    return;
+  }
+
+  if (deferredEndAfterPost) {
+    deferredEndAfterPost = false;
+    if (queued.length || chatInput.value.trim()) {
+      showSendStatus("New feedback is still queued. Send or remove it before ending the session.");
+      render();
+    } else {
+      farewellPending = true;
+      endSession({ farewell: true }).catch(() => {
+        showSendStatus("The session could not be ended. Please try again.");
+      });
     }
   }
 }
 
-async function submitQueuedOnce() {
-  const prompts = pendingSubmitPrompts;
-  const shouldEndSession = endAfterSubmit;
-  const body = { prompts: prompts.map(stripInternalPromptFields), domSnapshot: pendingSnapshot };
+async function submitSubmission(submission) {
+  const prompts = submission.prompts;
+  const shouldEndSession = submission.endAfter;
+  const body = { prompts: prompts.map(stripInternalPromptFields), domSnapshot: submission.snapshot };
   if (shouldEndSession) body.endSession = true;
   const response = await fetch("/api/" + key + "/prompts", {
     method: "POST",
@@ -814,11 +940,16 @@ async function submitQueuedOnce() {
     );
   }
   if (shouldEndSession && result.session_ended === true) {
-    endAfterSubmit = false;
     markSessionEnded({ farewell: true });
-    return;
+    return { acceptedCount: acceptedIndices.size, rejectedCount: rejectedByIndex.size, sessionEnded: true };
   }
   if (acceptedIndices.size > 0 && agentPresence === "listening") setAgentPresence("working");
+  if (submission.endBlocked) {
+    showSendStatus("Feedback sent, but new feedback is still queued. The session was not ended.");
+  } else if (rejectedByIndex.size === 0 && acceptedIndices.size > 0) {
+    showTransientSendStatus("Feedback queued for the agent.");
+  }
+  return { acceptedCount: acceptedIndices.size, rejectedCount: rejectedByIndex.size, sessionEnded: false };
 }
 
 function normalizeLayoutWarningsPayload(value) {
@@ -979,9 +1110,14 @@ async function submitLayoutWarnings(layoutWarnings) {
 async function endSession({ farewell: showGoodbye = false } = {}) {
   if (ended) return;
   if (showGoodbye) farewellPending = true;
-  const response = await fetch("/api/" + key + "/end", { method: "POST" });
-  if (!response.ok) throw new Error("failed to end session");
-  markSessionEnded({ farewell: showGoodbye });
+  try {
+    const response = await fetch("/api/" + key + "/end", { method: "POST" });
+    if (!response.ok) throw new Error("failed to end session");
+    markSessionEnded({ farewell: showGoodbye });
+  } catch (error) {
+    if (showGoodbye) farewellPending = false;
+    throw error;
+  }
 }
 
 // Remove the "Working..." bubble directly. Routing this through setAgentPresence("waiting")
@@ -1009,6 +1145,10 @@ function clearSessionTimers() {
   copyHintTimer = undefined;
   clearLayoutGateTimer();
   clearPointerdownSendFreeze();
+  if (snapshotPreflight) clearTimeout(snapshotPreflight.timer);
+  snapshotPreflight = null;
+  deferredSubmission = null;
+  deferredEndAfterPost = false;
 }
 
 // The goodbye, and the honest half of "close the page".
@@ -1654,15 +1794,12 @@ window.addEventListener("message", (event) => {
     case "luxe:queuePrompt":
       enqueuePrompt(msg.prompt);
       return;
+    case "luxe:ready":
+      replaySnapshotRequestOnReady();
+      return;
     case "luxe:snapshot":
-      // Snapshot-request ledger, half two: a snapshot with no outstanding chrome request behind
-      // it was pushed by the artifact page on its own initiative, so drop it.
-      if (snapshotRequests.length && typeof msg.snapshot === "string") {
-        const request = snapshotRequests.shift();
-        pendingSnapshot = msg.snapshot;
-        pendingSubmitPrompts = request.prompts;
-        endAfterSubmit = request.endAfter;
-        submitQueued();
+      if (Number.isSafeInteger(msg.requestId) && msg.requestId > 0) {
+        settleSnapshotPreflight(msg.requestId, msg.snapshot);
       }
       return;
     case "luxe:layoutWarnings":
@@ -1699,7 +1836,7 @@ window.addEventListener("message", (event) => {
 loadFrame();
 
 function toggleAnnotationMode() {
-  if (ended) return;
+  if (ended || postingSubmission?.endAfter) return;
   annotation = !annotation;
   annotationSwitch.setAttribute("aria-pressed", String(annotation));
   postToFrame({ type: "luxe:setAnnotationMode", enabled: annotation });
@@ -1722,7 +1859,20 @@ reloadArtifactButton.onclick = reloadArtifact;
 exportArtifactButton.onclick = exportArtifact;
 endButton.onclick = () => {
   closeMenus();
-  endSession({ farewell: true });
+  if (
+    snapshotPreflight ||
+    postingSubmission ||
+    deferredSubmission ||
+    deferredEndAfterPost ||
+    queued.length ||
+    chatInput.value.trim()
+  ) {
+    showSendStatus("Send or remove queued feedback before ending the session.");
+    return;
+  }
+  endSession({ farewell: true }).catch(() => {
+    showSendStatus("The session could not be ended. Please try again.");
+  });
 };
 document.addEventListener("mousedown", (event) => {
   const target = /** @type {Node} */ (event.target);

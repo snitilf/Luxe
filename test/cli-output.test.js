@@ -187,6 +187,17 @@ test("home output warns agents that poll needs an observable wake path", () => {
   assert.doesNotMatch(pollHelp, /above 10 minutes/);
 });
 
+test("home output treats snapshot context as best effort, not a feedback delivery gate", () => {
+  const output = createHomeOutput({ bin: "luxe", sessions: [] });
+  const snapshotHelp = output.help.find((item) => item.includes("dom_snapshot"));
+
+  assert.ok(snapshotHelp, "home help describes browser snapshot context");
+  assert.match(snapshotHelp, /best effort/);
+  assert.match(snapshotHelp, /1\.5 seconds/);
+  assert.match(snapshotHelp, /feedback still sends/);
+  assert.match(snapshotHelp, /`dom_snapshot` is empty/);
+});
+
 test("home output tailors poll guidance when invoked under Codex", () => {
   const output = createHomeOutput({ bin: "luxe", sessions: [], agent: "codex" });
   const pollHelp = output.help.find((item) => item.includes("luxe poll <html-file>"));
