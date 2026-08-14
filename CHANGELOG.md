@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.3.1...editeur-luxe-v0.3.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **chrome:** make feedback sends snapshot-independent ([c208f1f](https://github.com/snitilf/Luxe/commit/c208f1fabeb50083bf900f9e4b505d134312c406))
+
 ## [0.3.1](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.3.0...editeur-luxe-v0.3.1) (2026-07-29)
 
 
