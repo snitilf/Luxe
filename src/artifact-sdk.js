@@ -2295,6 +2295,7 @@ export function createArtifactSdk(
   };
 
   window.addEventListener("message", (event) => {
+    if (event.source !== parent) return;
     const msg = event.data || {};
     if (msg.type === "luxe:setSessionEnded") setSessionEnded();
     else if (msg.type === "luxe:setAnnotationMode") setAnnotationMode(msg.enabled);
@@ -2302,13 +2303,20 @@ export function createArtifactSdk(
     // sandboxed without same-origin), so the chrome forwards clicks that land on
     // itself and we treat them the same as clicking the page backdrop.
     if (msg.type === "luxe:dismissAnnotationCard") dismissCard();
-    if (msg.type === "luxe:requestSnapshot") {
-      parent.postMessage({ type: "luxe:snapshot", snapshot: snapshot() }, "*");
+    if (msg.type === "luxe:requestSnapshot" && Number.isSafeInteger(msg.requestId) && msg.requestId > 0) {
+      let currentSnapshot = "";
+      try {
+        currentSnapshot = snapshot();
+      } catch {
+        // Feedback delivery is authoritative. Snapshot context is best effort.
+      }
+      parent.postMessage({ type: "luxe:snapshot", requestId: msg.requestId, snapshot: currentSnapshot }, "*");
     }
     if (msg.type === "luxe:restoreScroll") {
       window.scrollTo(Number(msg.x) || 0, Number(msg.y) || 0);
     }
   });
+  parent.postMessage({ type: "luxe:ready" }, "*");
 
   // Capture phase so the mode hotkey fires no matter where focus is inside the artifact -
   // including a checkbox, button, link, or the annotation-card textarea - without disturbing

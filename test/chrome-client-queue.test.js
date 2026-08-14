@@ -300,6 +300,16 @@ async function createChromeHarness({
     sendFrameMessage(data) {
       const handlers = windowListeners.get("message") || [];
       assert.ok(handlers.length > 0, "chrome-client registered a message handler");
+      const message = { ...data };
+      if (message.type === "luxe:snapshot" && !Object.hasOwn(message, "requestId")) {
+        const request = [...postedToFrame].reverse().find((item) => item.type === "luxe:requestSnapshot");
+        if (request) message.requestId = request.requestId;
+      }
+      for (const handler of handlers) handler({ source: frame.contentWindow, data: message });
+    },
+    sendRawFrameMessage(data) {
+      const handlers = windowListeners.get("message") || [];
+      assert.ok(handlers.length > 0, "chrome-client registered a message handler");
       for (const handler of handlers) handler({ source: frame.contentWindow, data });
     },
     sendWhiteboardMessage(data) {
@@ -547,7 +557,7 @@ test("chrome client rejects artifact prose and malformed layout-warning fields",
   assert.equal(posts.length, 0);
 });
 
-test("artifact-frame dispatch is exhaustive over the six authorized message types", async () => {
+test("artifact-frame dispatch is exhaustive over the seven authorized message types", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const handler = source.slice(
     source.indexOf('window.addEventListener("message", (event) => {', source.indexOf("function loadFrame")),
@@ -556,6 +566,7 @@ test("artifact-frame dispatch is exhaustive over the six authorized message type
 
   assert.deepEqual(cases, [
     "luxe:queuePrompt",
+    "luxe:ready",
     "luxe:snapshot",
     "luxe:layoutWarnings",
     "luxe:openWhiteboard",
@@ -889,6 +900,76 @@ test("a snapshot the chrome never requested does not trigger a send", async () =
   await flushPromises();
   await flushPromises();
   assert.equal(posts.length, 1);
+});
+
+test("a missing snapshot falls back once with visible progress and ignores a late reply", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Keep this feedback", selector: "h1", tag: "annotation", text: "Heading" },
+  });
+
+  chrome.element("send").click();
+  const request = chrome.postedToFrame.at(-1);
+  assert.equal(request.type, "luxe:requestSnapshot");
+  assert.equal(Number.isSafeInteger(request.requestId) && request.requestId > 0, true);
+  assert.equal(chrome.element("send").disabled, true);
+  assert.match(chrome.element("sendHint").textContent, /Preparing feedback/);
+  assert.equal(posts.length, 0);
+
+  chrome.runTimers(1500);
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, "/api/abc/prompts");
+  assert.equal(posts[0].body.domSnapshot, "");
+  assert.match(chrome.element("sendHint").textContent, /Feedback queued for the agent/);
+
+  chrome.sendRawFrameMessage({ type: "luxe:snapshot", requestId: request.requestId, snapshot: "too late" });
+  await flushPromises();
+  assert.equal(posts.length, 1, "a late snapshot cannot replay the send");
+});
+
+test("ready replays one correlated snapshot request without extending its deadline", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Replay safely", selector: "main", tag: "annotation", text: "Page" },
+  });
+
+  chrome.element("send").click();
+  const first = chrome.postedToFrame.at(-1);
+  chrome.sendRawFrameMessage({ type: "luxe:ready" });
+  chrome.sendRawFrameMessage({ type: "luxe:ready" });
+  const requests = chrome.postedToFrame.filter((message) => message.type === "luxe:requestSnapshot");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].requestId, requests[1].requestId);
+
+  chrome.sendRawFrameMessage({ type: "luxe:snapshot", requestId: String(first.requestId), snapshot: "malformed id" });
+  chrome.sendRawFrameMessage({ type: "luxe:snapshot", requestId: first.requestId, snapshot: { text: "not a string" } });
+  chrome.sendRawFrameMessage({ type: "luxe:snapshot", requestId: first.requestId + 1, snapshot: "wrong" });
+  assert.equal(posts.length, 0);
+  chrome.sendRawFrameMessage({ type: "luxe:snapshot", requestId: first.requestId, snapshot: "current page" });
+  await flushPromises();
+  await flushPromises();
+  chrome.runTimers(1500);
+  await flushPromises();
+
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.domSnapshot, "current page");
 });
 
 test("artifact postMessage cannot send queued feedback without a chrome gesture", async () => {
@@ -1496,6 +1577,240 @@ test("chrome send and end during an in-flight submit still ends after the submit
   assert.equal(posts[1].body, null);
   assert.equal(chrome.queued().length, 0);
   assert.equal(chrome.element("chatInput").disabled, true);
+});
+
+test("a deferred send and end owns only new prompts while the first post is in flight", async () => {
+  const posts = [];
+  let releaseFirstPost = () => {};
+  const firstPost = new Promise((resolve) => {
+    releaseFirstPost = () => resolve();
+  });
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init = {}) => {
+      posts.push({ url, body: init.body ? JSON.parse(init.body) : null });
+      if (posts.length === 1) await firstPost;
+      return { ok: true };
+    },
+  });
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "First", selector: "h1", tag: "annotation", text: "Heading" },
+  });
+  chrome.element("send").click();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "first page" });
+  await flushPromises();
+  assert.equal(posts.length, 1);
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Second", selector: "p", tag: "annotation", text: "Paragraph" },
+  });
+  assert.match(chrome.element("annotationPills").innerHTML, /class="pill sent"[\s\S]*First/);
+  assert.match(chrome.element("annotationPills").innerHTML, /class="pill"[\s\S]*Second/);
+
+  chrome.element("sendAndEnd").click();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "second page" });
+  chrome.element("send").click();
+  await flushPromises();
+  assert.equal(posts.length, 1, "the deferred slot blocks a third gesture");
+
+  releaseFirstPost();
+  await flushPromises();
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(posts.length, 2);
+  assert.deepEqual(
+    posts.map((post) => post.body.prompts.map((prompt) => prompt.prompt)),
+    [["First"], ["Second"]],
+  );
+  assert.equal(posts[1].body.endSession, true);
+});
+
+test("send and end stays open when new feedback arrives after confirmation", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Confirmed", selector: "h1", tag: "annotation", text: "Heading" },
+  });
+
+  chrome.element("sendAndEnd").click();
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Arrived later", selector: "p", tag: "annotation", text: "Paragraph" },
+  });
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "page" });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.endSession, undefined);
+  assert.deepEqual(
+    posts[0].body.prompts.map((prompt) => prompt.prompt),
+    ["Confirmed"],
+  );
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Arrived later"],
+  );
+  assert.match(chrome.element("sendHint").textContent, /session was not ended/i);
+  assert.equal(chrome.element("chatInput").disabled, false);
+});
+
+test("send and end stays open when a composer draft appears during snapshot preparation", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Confirmed", selector: "h1", tag: "annotation", text: "Heading" },
+  });
+
+  chrome.element("sendAndEnd").click();
+  chrome.element("chatInput").value = "One more thing";
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "page" });
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.endSession, undefined);
+  assert.equal(chrome.element("chatInput").value, "One more thing");
+  assert.equal(chrome.element("chatInput").disabled, false);
+  assert.match(chrome.element("sendHint").textContent, /session was not ended/i);
+});
+
+test("an end-bearing post locks feedback entry until the server acknowledges it", async () => {
+  const posts = [];
+  let releasePost = () => {};
+  const heldPost = new Promise((resolve) => {
+    releasePost = () => resolve();
+  });
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      posts.push({ url, body: JSON.parse(init.body) });
+      await heldPost;
+      return {
+        ok: true,
+        async json() {
+          return { status: "queued", accepted_prompt_indices: [0], rejected_prompts: [], session_ended: true };
+        },
+      };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Final feedback", selector: "h1", tag: "annotation", text: "Heading" },
+  });
+
+  chrome.element("sendAndEnd").click();
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "page" });
+  await flushPromises();
+
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.endSession, true);
+  assert.equal(chrome.element("chatInput").disabled, true);
+  assert.equal(chrome.element("annotation").disabled, true);
+
+  const annotationPressed = chrome.element("annotation")["aria-pressed"];
+  chrome.sendFrameMessage({ type: "luxe:toggleAnnotationMode" });
+  assert.equal(chrome.element("annotation")["aria-pressed"], annotationPressed);
+  assert.notDeepEqual(chrome.postedToFrame.at(-1), { type: "luxe:setAnnotationMode", enabled: true });
+
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Too late", selector: "p", tag: "annotation", text: "Paragraph" },
+  });
+  assert.deepEqual(
+    chrome.queued().map((prompt) => prompt.prompt),
+    ["Final feedback"],
+  );
+
+  releasePost();
+  await flushPromises();
+  await flushPromises();
+
+  assert.equal(chrome.queued().length, 0);
+  assert.equal(chrome.element("chatInput").disabled, true);
+});
+
+test("standalone End refuses to discard queued or in-flight feedback", async () => {
+  const posts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      posts.push(url);
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Do not discard", selector: "main", tag: "annotation", text: "Page" },
+  });
+
+  chrome.element("end").click();
+  await flushPromises();
+
+  assert.deepEqual(posts, []);
+  assert.match(chrome.element("sendHint").textContent, /Send or remove queued feedback before ending/);
+  assert.equal(chrome.element("chatInput").disabled, false);
+});
+
+test("standalone End also refuses composer, preflight, active-post, and deferred feedback", async () => {
+  const draftPosts = [];
+  const draftChrome = await createChromeHarness({
+    fetchImpl: async (url) => {
+      draftPosts.push(url);
+      return { ok: true };
+    },
+  });
+  draftChrome.element("chatInput").value = "Unsent draft";
+  draftChrome.element("end").click();
+  assert.deepEqual(draftPosts, []);
+  assert.match(draftChrome.element("sendHint").textContent, /Send or remove queued feedback before ending/);
+
+  const posts = [];
+  let releaseFirstPost = () => {};
+  const firstPost = new Promise((resolve) => {
+    releaseFirstPost = () => resolve();
+  });
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init = {}) => {
+      posts.push({ url, body: init.body ? JSON.parse(init.body) : null });
+      if (posts.length === 1) await firstPost;
+      return { ok: true };
+    },
+  });
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "First", selector: "h1", tag: "annotation", text: "Heading" },
+  });
+  chrome.element("send").click();
+  chrome.element("end").click();
+  assert.equal(posts.length, 0, "standalone End stayed inert during snapshot preparation");
+
+  chrome.sendFrameMessage({ type: "luxe:snapshot", snapshot: "first page" });
+  await flushPromises();
+  chrome.sendFrameMessage({
+    type: "luxe:queuePrompt",
+    prompt: { prompt: "Second", selector: "p", tag: "annotation", text: "Paragraph" },
+  });
+  chrome.element("send").click();
+  chrome.element("end").click();
+  assert.equal(posts.length, 1, "standalone End stayed inert with an active POST and deferred submission");
+  assert.match(chrome.element("sendHint").textContent, /Send or remove queued feedback before ending/);
+
+  releaseFirstPost();
+  await flushPromises();
 });
 
 test("Cmd/Ctrl+I toggles annotation mode from the chrome document, regardless of focus", async () => {
