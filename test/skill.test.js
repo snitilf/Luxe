@@ -78,6 +78,8 @@ test("createSkillMarkdown requires an observable wake path for every poll", () =
   assert.match(workflow, /`Send & End` ends the session.*final feedback is still delivered once.*polling stops/i);
   assert.match(workflow, /(?:do|must) not reopen (?:it|the session) uninvited/i);
   assert.match(workflow, /queued feedback is never lost/);
+  assert.match(md, /Snapshot capture is best effort/);
+  assert.match(md, /feedback still sends and `dom_snapshot` is empty/);
   assert.doesNotMatch(md, /Codex detected/);
 });
 
