@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.3](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.3.2...editeur-luxe-v0.3.3) (2026-08-15)
+
+
+### Bug Fixes
+
+* **sdk:** stop the diagram toolbar's self-triggered re-render loop ([79e1c08](https://github.com/snitilf/Luxe/commit/79e1c08cf5eeaa7f491700551eeaa13561ef3c5f))
+* **sdk:** stop the diagram toolbar's self-triggered re-render loop ([af2d4ea](https://github.com/snitilf/Luxe/commit/af2d4eab0335cf8ab8665cc20b4e24dfa4a878fd)), closes [#20](https://github.com/snitilf/Luxe/issues/20)
+
 ## [0.3.2](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.3.1...editeur-luxe-v0.3.2) (2026-08-14)
 
 
