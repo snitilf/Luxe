@@ -30,6 +30,7 @@ import {
   isOccludableAuditText,
   MODE_TOGGLE_HOTKEY_KEY,
   mutationsAreAllLuxeUi,
+  createPreInitBuffer,
 } from "./artifact-sdk.js";
 import * as mermaidNode from "./mermaid-node.js";
 import { extractMermaidSources, mermaidSourceHash } from "./mermaid-source.js";
@@ -1680,6 +1681,7 @@ const isNativeInteractiveControl=${isNativeInteractiveControl.toString()};
 const MODE_TOGGLE_HOTKEY_KEY=${JSON.stringify(MODE_TOGGLE_HOTKEY_KEY)};
 const isModeToggleHotkeyEvent=${isModeToggleHotkeyEvent.toString()};
 const mutationsAreAllLuxeUi=${mutationsAreAllLuxeUi.toString()};
+const createPreInitBuffer=${createPreInitBuffer.toString()};
 const classifySevereTextOverflow=${classifySevereTextOverflow.toString()};
 const classifyMaterialRectEscape=${classifyMaterialRectEscape.toString()};
 const isMaterialPageOverflow=${isMaterialPageOverflow.toString()};

@@ -138,6 +138,40 @@ export function mutationsAreAllLuxeUi(mutations) {
   return true;
 }
 
+/**
+ * The chrome starts talking to the SDK the moment the frame loads, but the SDK's message
+ * listener used to register near the END of a long init - a synchronous throw anywhere
+ * earlier silently killed the whole protocol (issue #21). Registering the listener first
+ * means messages can arrive before the state they touch exists (the let bindings are in
+ * the temporal dead zone until init reaches them), so messages received early sit in this
+ * bounded buffer and replay, in order, right before the SDK announces luxe:ready.
+ *
+ * The cap bounds memory when init never completes: the buffer then dies with the frame,
+ * and the chrome-side ready watchdog is what surfaces that failure.
+ */
+export function createPreInitBuffer(dispatch, { cap = 50 } = {}) {
+  let settled = false;
+  const queue = [];
+  return {
+    receive(message) {
+      if (settled) {
+        dispatch(message);
+        return;
+      }
+      queue.push(message);
+      if (queue.length > cap) queue.shift();
+    },
+    settle() {
+      if (settled) return;
+      settled = true;
+      // A throwing handler aborts the replay: a handler that throws on init-complete state
+      // means the init it belongs to is broken, and quietly skipping the rest hides it.
+      for (const message of queue) dispatch(message);
+      queue.length = 0;
+    },
+  };
+}
+
 export function isModeToggleHotkeyEvent(event) {
   if (event.shiftKey || event.altKey) return false;
   return Boolean(event.metaKey || event.ctrlKey) && String(event.key || "").toLowerCase() === MODE_TOGGLE_HOTKEY_KEY;
@@ -476,6 +510,19 @@ export function createArtifactSdk(
   baselineOptOutAttribute = "data-luxe-baseline",
 ) {
   const { isMermaidSvg, mermaidNodeFrom, mermaidNodeElement } = mermaid;
+
+  // Protocol before init. The chrome starts posting messages the moment the frame loads,
+  // and this listener used to register near the END of init - so a synchronous throw
+  // anywhere in between silently killed the whole protocol: no annotation mode, no snapshot
+  // replies, nothing (issue #21). Registering here instead exposes the opposite hazard -
+  // messages arriving before the state they touch is initialized - so early messages sit in
+  // a bounded buffer and replay in order right before luxe:ready announces init completed.
+  const protocolBuffer = createPreInitBuffer(handleChromeMessage);
+  window.addEventListener("message", (event) => {
+    if (event.source !== parent) return;
+    protocolBuffer.receive(event.data || {});
+  });
+
   // The SDK has no mode state of its own to decide: the chrome owns annotate/explore and
   // pushes it here via `luxe:setAnnotationMode` on every frame load. This initial value only
   // covers the few milliseconds before that message arrives, so it must match the chrome's
@@ -2337,9 +2384,7 @@ export function createArtifactSdk(
     snapshot,
   };
 
-  window.addEventListener("message", (event) => {
-    if (event.source !== parent) return;
-    const msg = event.data || {};
+  function handleChromeMessage(msg) {
     if (msg.type === "luxe:setSessionEnded") setSessionEnded();
     else if (msg.type === "luxe:setAnnotationMode") setAnnotationMode(msg.enabled);
     // The chrome and this document cannot see each other's clicks (the iframe is
@@ -2358,7 +2403,17 @@ export function createArtifactSdk(
     if (msg.type === "luxe:restoreScroll") {
       window.scrollTo(Number(msg.x) || 0, Number(msg.y) || 0);
     }
-  });
+  }
+
+  // window.luxe stays here, at the end of init, deliberately NOT next to the protocol
+  // listener: queuePrompt reaches init state through context(), so early exposure risks
+  // temporal-dead-zone throws for zero protocol gain. Total init failure is surfaced by
+  // the chrome-side ready watchdog, not by this object existing early.
+  //
+  // Replay the buffered pre-init messages BEFORE announcing ready: the chrome treats
+  // luxe:ready as "init completed", and a state message replayed after that announcement
+  // would contradict it.
+  protocolBuffer.settle();
   parent.postMessage({ type: "luxe:ready" }, "*");
 
   // Capture phase so the mode hotkey fires no matter where focus is inside the artifact -
