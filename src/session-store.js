@@ -188,6 +188,40 @@ export class SessionStore {
     });
   }
 
+  // The chrome's SDK watchdog reports whether the artifact's annotation layer completed
+  // init (issue #21). A failure is agent-visible exactly once, like a layout warning;
+  // a "ready" report retracts a stored failure, which matters after a hot reload fixes
+  // whatever broke the SDK. Neither a repeated failure nor a retraction wakes the poll -
+  // only a NEW undelivered failure does.
+  async recordSdkStatus(key, sdkState) {
+    return queueStateMutation(this.file, async () => {
+      const state = await this.readState();
+      const session = state.sessions[key];
+      if (!session) {
+        return null;
+      }
+      if (sdkState === "failed") {
+        if (session.sdk_status?.state === "failed") {
+          return { session, wake: false };
+        }
+        session.sdk_status = { state: "failed", at: new Date().toISOString() };
+        session.sdk_status_delivered = false;
+        if (session.status !== "ended") session.status = "feedback";
+        session.updated_at = new Date().toISOString();
+        await this.writeState(state);
+        return { session, wake: true };
+      }
+      if (!session.sdk_status) {
+        return { session, wake: false };
+      }
+      delete session.sdk_status;
+      delete session.sdk_status_delivered;
+      session.updated_at = new Date().toISOString();
+      await this.writeState(state);
+      return { session, wake: false };
+    });
+  }
+
   async takeFeedback(key) {
     return queueStateMutation(this.file, async () => {
       const state = await this.readState();
@@ -215,8 +249,9 @@ export class SessionStore {
         session.layout_warnings,
         new Set(session.delivered_layout_warning_keys || []),
       );
+      const sdkFailurePending = session.sdk_status?.state === "failed" && session.sdk_status_delivered !== true;
       const alreadyEnded = session.status === "ended";
-      if (prompts.length === 0 && layoutWarnings.length === 0) {
+      if (prompts.length === 0 && layoutWarnings.length === 0 && !sdkFailurePending) {
         if (storedPrompts.length > 0) {
           session.prompts = [];
           session.pending_prompts = 0;
@@ -232,6 +267,7 @@ export class SessionStore {
         dom_snapshot: domSnapshot,
         prompts,
         ...(layoutWarnings.length > 0 ? { layout_warnings: layoutWarnings } : {}),
+        ...(sdkFailurePending ? { sdk_status: "failed" } : {}),
         // This is the final delivery before the session shows as ended - flag it so the agent
         // knows not to expect (or force) a reopened browser afterward.
         ...(alreadyEnded && remainingPrompts.length === 0 ? { session_ended: true, ended_by: session.ended_by } : {}),
@@ -244,6 +280,9 @@ export class SessionStore {
         const deliveredKeys = new Set(session.delivered_layout_warning_keys || []);
         for (const warning of layoutWarnings) deliveredKeys.add(layoutWarningKey(warning));
         session.delivered_layout_warning_keys = [...deliveredKeys].slice(-200);
+      }
+      if (sdkFailurePending) {
+        session.sdk_status_delivered = true;
       }
       if (!alreadyEnded) {
         session.status = remainingPrompts.length > 0 ? "feedback" : "open";

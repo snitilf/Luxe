@@ -1784,3 +1784,25 @@ test("save-diagram help and the command set advertise the ephemeral contract", (
   assert.match(help, /counting from 0/);
   assert.deepEqual(normalizeArgv(["save-diagram", "a.html"]), ["save-diagram", "a.html"]);
 });
+
+test("poll output surfaces an sdk failure with recovery guidance", () => {
+  const output = createPollOutput({
+    file: "/tmp/report.html",
+    response: { status: "feedback", dom_snapshot: "", prompts: [], sdk_status: "failed" },
+  });
+
+  assert.equal(output.sdk_status, "failed");
+  assert.match(output.next_step, /annotation layer.*failed to start/);
+  assert.match(output.next_step, /reload the artifact/);
+  assert.match(output.next_step, /npx cache/);
+});
+
+test("poll output omits sdk_status when the SDK is healthy", () => {
+  const output = createPollOutput({
+    file: "/tmp/report.html",
+    response: { status: "feedback", dom_snapshot: "", prompts: [] },
+  });
+
+  assert.equal("sdk_status" in output, false);
+  assert.doesNotMatch(output.next_step, /annotation layer.*failed/);
+});
