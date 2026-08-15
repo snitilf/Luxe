@@ -16,6 +16,7 @@ import {
   isNativeInteractiveControl,
   isNearTotalOcclusion,
   isOccludableAuditText,
+  mutationsAreAllLuxeUi,
 } from "../src/artifact-sdk.js";
 import { token, wcagContrast } from "./helpers/design-tokens.js";
 
@@ -175,6 +176,10 @@ function matchesSelector(el, selector) {
     const value = el.getAttribute("contenteditable");
     return value !== null && value !== "false";
   }
+  if (/^\[data-[a-z-]+\]$/.test(selector)) {
+    const name = selector.slice(1, -1);
+    return el.getAttribute(name) !== null;
+  }
   if (/^[a-z]+$/i.test(selector)) return el.tagName.toLowerCase() === selector.toLowerCase();
   return false;
 }
@@ -201,6 +206,39 @@ test("isNativeInteractiveControl allows details as a text selection ancestor", (
   assert.equal(isNativeInteractiveControl(details), false);
   assert.equal(isNativeInteractiveControl(firstParagraph), false);
   assert.equal(isNativeInteractiveControl(secondParagraph), false);
+});
+
+test("mutationsAreAllLuxeUi is true when every target sits inside Luxe's own UI", () => {
+  const toolbar = node("div", { "data-luxe-ui": "diagram-toolbar" });
+  const button = append(toolbar, node("button", { "data-luxe-ui": "whiteboard-edit" }));
+
+  assert.equal(mutationsAreAllLuxeUi([{ target: toolbar }, { target: button }]), true);
+});
+
+test("mutationsAreAllLuxeUi resolves text-node targets to their parent element", () => {
+  const toolbar = node("div", { "data-luxe-ui": "diagram-toolbar" });
+  const button = append(toolbar, node("button", { "data-luxe-ui": "whiteboard-edit" }));
+  const textNode = { nodeType: 3, parentElement: button };
+
+  assert.equal(mutationsAreAllLuxeUi([{ target: textNode }]), true);
+});
+
+test("mutationsAreAllLuxeUi is false when any target is artifact content", () => {
+  // The case that keeps Mermaid re-renders working: mermaid.run() writes into the
+  // artifact's own .mermaid container, which must keep scheduling enhancement passes.
+  const container = node("pre", { class: "mermaid" });
+  const toolbar = node("div", { "data-luxe-ui": "diagram-toolbar" });
+
+  assert.equal(mutationsAreAllLuxeUi([{ target: toolbar }, { target: container }]), false);
+  assert.equal(mutationsAreAllLuxeUi([{ target: container }]), false);
+});
+
+test("mutationsAreAllLuxeUi tolerates empty batches and opaque targets", () => {
+  // An empty batch carries nothing to react to. A target the predicate cannot classify
+  // (no closest, no parentElement) must fail open to scheduling, never to silence.
+  assert.equal(mutationsAreAllLuxeUi([]), true);
+  assert.equal(mutationsAreAllLuxeUi([{ target: null }]), false);
+  assert.equal(mutationsAreAllLuxeUi([{ target: {} }]), false);
 });
 
 test("annotation card dismissal closes an empty card and preserves typed text", () => {
