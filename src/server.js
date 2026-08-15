@@ -237,6 +237,10 @@ export async function serve({
   const logEvent = verbose ? (line) => writeLog(`[luxe] ${line}`) : null;
   let publicPort = port;
 
+  // A broken install turns /sdk.js into a 500 and every artifact silent. One loud boot
+  // line beats a mystery per session (issue #21).
+  await checkServableAssets({ write: writeLog });
+
   // Whiteboard sidecar files live next to state.json, keyed by session + diagram.
   const whiteboardStateRoot = path.dirname(stateFile);
 
@@ -773,6 +777,12 @@ export async function serve({
         .type("application/javascript")
         .send(createSdkJs(String(req.query.key || ""), await readLuxeTokensCss(), await readArtifactBaselineCss()));
     } catch (error) {
+      // Request-time safety net behind the boot check: assets can disappear after startup,
+      // and a silent 500 here is a silent, annotation-less artifact for every session.
+      writeLog(
+        `[luxe] WARNING: /sdk.js failed to build: ${error instanceof Error ? error.message : String(error)}. ` +
+          "Artifacts have no annotation layer until this is fixed - reinstall editeur-luxe or clear the npx cache.",
+      );
       next(error);
     }
   });
@@ -1684,6 +1694,40 @@ export async function readLuxeTokensCss() {
   const css = await readFile(chromeCssUrl, "utf8");
   const match = /:root\s*\{[\s\S]*?\n\}/.exec(css);
   return match ? match[0] : "";
+}
+
+// A broken or incomplete install (observed: a pruned npx cache missing dist assets) fails
+// these reads at request time, which turns /sdk.js into a 500 and every artifact silent:
+// no annotation, no window.luxe, and no signal anywhere. Checking at boot with the SAME
+// reader functions the routes use - fallbacks included - turns a per-artifact mystery into
+// one loud startup line. Warn, never refuse: a server that boots and warns beats one that
+// will not boot while you are debugging it.
+/**
+ * Warn at boot when the assets /sdk.js depends on cannot be read. Warn, never refuse.
+ * @param {{ write?: (line: string) => void, readers?: Array<[string, () => Promise<string>]> }} [options]
+ * @returns {Promise<string[]>}
+ */
+export async function checkServableAssets({ write = (line) => process.stderr.write(`${line}\n`), readers } = {}) {
+  const checks = readers || [
+    ["luxe-tokens.css", () => readLuxeTokensCss()],
+    ["artifact-baseline.css", () => readArtifactBaselineCss()],
+  ];
+  const failures = [];
+  for (const [name, read] of checks) {
+    try {
+      const content = await read();
+      if (!content) failures.push(`${name} resolved to empty content`);
+    } catch (error) {
+      failures.push(`${name} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  for (const failure of failures) {
+    write(
+      `[luxe] WARNING: ${failure}. Artifacts will fail to load their annotation layer (/sdk.js 500). ` +
+        "This usually means a broken or incomplete install - reinstall editeur-luxe, or if you ran it via npx, clear the npx cache and retry.",
+    );
+  }
+  return failures;
 }
 
 export function createSdkJs(key, luxeTokensCss = "", artifactBaselineCss = "") {

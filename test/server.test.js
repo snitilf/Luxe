@@ -16,6 +16,7 @@ import {
   allowsAllHosts,
   ANNOTATION_DEFAULT,
   buildAllowedHostnames,
+  checkServableAssets,
   createChromeHtml,
   createSdkJs,
   displayPathParts,
@@ -25,13 +26,13 @@ import {
   hostnameFromHostHeader,
   isAllowedHostHeader,
   isAllowedRequestHost,
+  remoteBindingWarning,
   resolveArtifactAsset,
   resolveDesignAssetPath,
   resolveExportAssetPath,
   resolveFontAssetPath,
   resolveIdleTimeoutMs,
   resolveWatchTarget,
-  remoteBindingWarning,
   serve,
 } from "../src/server.js";
 import { canonicalFile, sessionKey } from "../src/session-store.js";
@@ -3397,4 +3398,31 @@ test("an sdk status failure wakes the long poll once, then retracts on ready", a
     await server.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("checkServableAssets warns loudly on unreadable or empty assets and stays quiet otherwise", async () => {
+  const healthy = [];
+  const healthyFailures = await checkServableAssets({ write: (line) => healthy.push(line) });
+  assert.deepEqual(healthyFailures, []);
+  assert.deepEqual(healthy, []);
+
+  const warnings = [];
+  const failures = await checkServableAssets({
+    write: (line) => warnings.push(line),
+    readers: [
+      [
+        "luxe-tokens.css",
+        async () => {
+          throw new Error("ENOENT: no such file or directory");
+        },
+      ],
+      ["artifact-baseline.css", async () => ""],
+    ],
+  });
+  assert.equal(failures.length, 2);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /could not be read/);
+  assert.match(warnings[0], /annotation layer/);
+  assert.match(warnings[0], /npx cache/);
+  assert.match(warnings[1], /empty content/);
 });
