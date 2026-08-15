@@ -94,129 +94,151 @@ await mermaid.run({ nodes: [...document.querySelectorAll(".mermaid")] });
 </script>
 </body></html>`;
 
+let toolbarSessionCounter = 0;
+
+// Both suites in this file drive the same artifact through the same server-plus-bridge
+// rig, so the rig lives here once. startToolbarSession leaves the browser ON the artifact
+// route: the session's iframe is sandboxed without allow-same-origin, so the parent page
+// cannot script into it.
+async function startToolbarSession() {
+  const temp = await mkdtemp(path.join(tmpdir(), "luxe-toolbar-browser-"));
+  const port = await freePort();
+  const luxeEnv = {
+    LUXE_PORT: String(port),
+    LUXE_STATE_DIR: path.join(temp, "state"),
+    LUXE_NO_OPEN: "1",
+    LUXE_HOST: "127.0.0.1",
+    LUXE_LINK_HOST: "127.0.0.1",
+  };
+  const chromeEnv = {
+    CHROME_DEVTOOLS_AXI_SESSION: `luxe-toolbar-${process.pid}-${++toolbarSessionCounter}`,
+    CHROME_DEVTOOLS_AXI_USER_DATA_DIR: path.join(temp, "chrome"),
+  };
+  const file = path.join(temp, "diagram.html");
+  await writeFile(file, ARTIFACT);
+  // The artifact route serves siblings of the artifact file, so the Mermaid bundle only
+  // has to land beside it. Both halves are needed: the entry module lazy-imports one
+  // chunk per diagram type from `chunks/mermaid.esm.min/`, and a missing chunk fails at
+  // render time rather than at import time.
+  const mermaidDist = path.join(repoRoot, "node_modules", "mermaid", "dist");
+  const mermaidDir = path.join(temp, "mermaid");
+  await mkdir(mermaidDir, { recursive: true });
+  await cp(path.join(mermaidDist, "mermaid.esm.min.mjs"), path.join(mermaidDir, "mermaid.esm.min.mjs"));
+  await cp(path.join(mermaidDist, "chunks", "mermaid.esm.min"), path.join(mermaidDir, "chunks", "mermaid.esm.min"), {
+    recursive: true,
+  });
+  const output = run(process.execPath, ["bin/luxe.js", file, "--no-open"], luxeEnv);
+  const sessionUrl = output.match(/url:\s*"([^"]+)"/)?.[1];
+  assert.ok(sessionUrl, output);
+  const artifactUrl = sessionUrl.replace("/session/", "/artifact/") + "/index.html";
+  run("chrome-devtools-axi", ["open", artifactUrl], chromeEnv);
+  return { temp, port, luxeEnv, chromeEnv, artifactUrl };
+}
+
+async function stopToolbarSession({ temp, port, luxeEnv, chromeEnv }) {
+  // The bridge and the Chrome it launched outlive this process, so they have to be
+  // stopped here rather than left to the temp-directory sweep. The helper reports its
+  // own trouble instead of throwing, so a shutdown hiccup cannot replace the
+  // assertion failure that brought us into this block.
+  shutdownBrowserSession({ repoRoot, port, luxeEnv, chromeEnv });
+  await rm(temp, { recursive: true, force: true });
+}
+
+function makeEvaluate(chromeEnv) {
+  // The CLI prints `result: <payload>` on one line, then unrelated help text. Match to
+  // end of LINE, not end of output: a greedy dot-all capture swallows the help block and
+  // yields undefined fields that quietly pass some assertions.
+  const resultPayload = (fn) => {
+    const output = run("chrome-devtools-axi", ["eval", fn], chromeEnv);
+    const line = output.match(/^result: (.*)$/m);
+    assert.ok(line, `no result line in chrome-devtools-axi output:\n${output}`);
+    return { payload: line[1].trim(), output };
+  };
+
+  // The payload arrives JSON-encoded more than once - the eval returns a string, and the
+  // CLI encodes it again - so unwrap until an object falls out rather than hard-coding a
+  // nesting depth that varies with how the value was produced. Returns undefined for
+  // anything that is not JSON at all, which is what an in-page throw looks like: the CLI
+  // reports it as the bare string `Error: <message>`.
+  const unwrap = (payload) => {
+    let value = payload;
+    for (let depth = 0; depth < 4 && typeof value === "string"; depth += 1) {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return undefined;
+      }
+    }
+    return value && typeof value === "object" ? /** @type {Record<string, any>} */ (value) : undefined;
+  };
+
+  const tryEvaluate = (fn) => unwrap(resultPayload(fn).payload);
+
+  const evaluate = (fn) => {
+    const { payload, output } = resultPayload(fn);
+    const value = unwrap(payload);
+    // Reporting the payload is the whole point of this branch. Left to JSON.parse, an
+    // in-page `Error: Cannot read properties of null ...` surfaced as
+    // `SyntaxError: Unexpected token 'E', "Error: Can"... is not valid JSON` - the parser
+    // quotes ten characters and throws the message that names the actual failure away,
+    // which is an hour of debugging for a payload that was self-explanatory all along.
+    assert.ok(
+      value,
+      `chrome-devtools-axi eval did not return a JSON object.\npayload: ${payload}\n\nfull output:\n${output}`,
+    );
+    return value;
+  };
+
+  return { evaluate, tryEvaluate };
+}
+
+// Mermaid renders asynchronously and Luxe injects each toolbar only once the SVG it
+// belongs to has laid out, so "the page is ready" is a fact to observe, not a duration
+// to guess. The fixed `wait 3000` this replaced turned every slow render into an
+// assertion about a null element, which is a failure that describes the symptom and
+// not the cause.
+function waitForToolbars({ chromeEnv, tryEvaluate, label, expected = 2 }) {
+  const probe = `() => JSON.stringify({
+    containers: document.querySelectorAll('.mermaid').length,
+    ready: [...document.querySelectorAll('.mermaid')].filter(
+      (el) => el.querySelector('svg') && el.querySelector('[role=toolbar] button'),
+    ).length,
+  })`;
+  const deadline = Date.now() + 60_000;
+  // No initialiser: the loop body runs at least once and always describes what it saw.
+  let last;
+  do {
+    const state = tryEvaluate(probe);
+    if (state) {
+      if (state.containers === expected && state.ready === expected) return;
+      last = `${state.ready}/${state.containers} container(s) rendered with a toolbar`;
+    } else {
+      last = "the readiness probe itself did not return JSON";
+    }
+    run("chrome-devtools-axi", ["wait", "500"], chromeEnv);
+  } while (Date.now() < deadline);
+  // A stalled render is almost always something the page already complained about -
+  // a blocked CDN import, a Mermaid parse error - so the browser console goes into
+  // the failure rather than leaving the next reader to reproduce it by hand.
+  const console_ = run("chrome-devtools-axi", ["console"], chromeEnv);
+  assert.fail(`the diagrams never rendered with their toolbars at ${label}: ${last}\n\n${console_}`);
+}
+
 test(
   "the diagram toolbar sits below the diagram and drives the viewport",
   // Same ceiling as the layout audit suite: sized for a slow shared runner, so it only
   // trips on a genuine hang. See the browser-tests job budget in .github/workflows/ci.yml.
   { skip: skipReason, timeout: 720_000 },
   async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "luxe-toolbar-browser-"));
-    const port = await freePort();
-    const luxeEnv = {
-      LUXE_PORT: String(port),
-      LUXE_STATE_DIR: path.join(temp, "state"),
-      LUXE_NO_OPEN: "1",
-      LUXE_HOST: "127.0.0.1",
-      LUXE_LINK_HOST: "127.0.0.1",
-    };
-    const chromeEnv = {
-      CHROME_DEVTOOLS_AXI_SESSION: `luxe-toolbar-${process.pid}`,
-      CHROME_DEVTOOLS_AXI_USER_DATA_DIR: path.join(temp, "chrome"),
-    };
+    const session = await startToolbarSession();
+    const { chromeEnv } = session;
+    const { evaluate, tryEvaluate } = makeEvaluate(chromeEnv);
 
     try {
-      const file = path.join(temp, "diagram.html");
-      await writeFile(file, ARTIFACT);
-      // The artifact route serves siblings of the artifact file, so the Mermaid bundle only
-      // has to land beside it. Both halves are needed: the entry module lazy-imports one
-      // chunk per diagram type from `chunks/mermaid.esm.min/`, and a missing chunk fails at
-      // render time rather than at import time.
-      const mermaidDist = path.join(repoRoot, "node_modules", "mermaid", "dist");
-      const mermaidDir = path.join(temp, "mermaid");
-      await mkdir(mermaidDir, { recursive: true });
-      await cp(path.join(mermaidDist, "mermaid.esm.min.mjs"), path.join(mermaidDir, "mermaid.esm.min.mjs"));
-      await cp(
-        path.join(mermaidDist, "chunks", "mermaid.esm.min"),
-        path.join(mermaidDir, "chunks", "mermaid.esm.min"),
-        {
-          recursive: true,
-        },
-      );
-      const output = run(process.execPath, ["bin/luxe.js", file, "--no-open"], luxeEnv);
-      const sessionUrl = output.match(/url:\s*"([^"]+)"/)?.[1];
-      assert.ok(sessionUrl, output);
-      // Drive the artifact route directly: the session's iframe is sandboxed without
-      // allow-same-origin, so the parent page cannot script into it.
-      const artifactUrl = sessionUrl.replace("/session/", "/artifact/") + "/index.html";
-
-      // The CLI prints `result: <payload>` on one line, then unrelated help text. Match to
-      // end of LINE, not end of output: a greedy dot-all capture swallows the help block and
-      // yields undefined fields that quietly pass some assertions.
-      const resultPayload = (fn) => {
-        const output = run("chrome-devtools-axi", ["eval", fn], chromeEnv);
-        const line = output.match(/^result: (.*)$/m);
-        assert.ok(line, `no result line in chrome-devtools-axi output:\n${output}`);
-        return { payload: line[1].trim(), output };
-      };
-
-      // The payload arrives JSON-encoded more than once - the eval returns a string, and the
-      // CLI encodes it again - so unwrap until an object falls out rather than hard-coding a
-      // nesting depth that varies with how the value was produced. Returns undefined for
-      // anything that is not JSON at all, which is what an in-page throw looks like: the CLI
-      // reports it as the bare string `Error: <message>`.
-      const unwrap = (payload) => {
-        let value = payload;
-        for (let depth = 0; depth < 4 && typeof value === "string"; depth += 1) {
-          try {
-            value = JSON.parse(value);
-          } catch {
-            return undefined;
-          }
-        }
-        return value && typeof value === "object" ? /** @type {Record<string, any>} */ (value) : undefined;
-      };
-
-      const evaluate = (fn) => {
-        const { payload, output } = resultPayload(fn);
-        const value = unwrap(payload);
-        // Reporting the payload is the whole point of this branch. Left to JSON.parse, an
-        // in-page `Error: Cannot read properties of null ...` surfaced as
-        // `SyntaxError: Unexpected token 'E', "Error: Can"... is not valid JSON` - the parser
-        // quotes ten characters and throws the message that names the actual failure away,
-        // which is an hour of debugging for a payload that was self-explanatory all along.
-        assert.ok(
-          value,
-          `chrome-devtools-axi eval did not return a JSON object.\npayload: ${payload}\n\nfull output:\n${output}`,
-        );
-        return value;
-      };
-
-      // Mermaid renders asynchronously and Luxe injects each toolbar only once the SVG it
-      // belongs to has laid out, so "the page is ready" is a fact to observe, not a duration
-      // to guess. The fixed `wait 3000` this replaced turned every slow render into an
-      // assertion about a null element, which is a failure that describes the symptom and
-      // not the cause.
-      const waitForDiagrams = (viewport) => {
-        const probe = `() => JSON.stringify({
-          containers: document.querySelectorAll('.mermaid').length,
-          ready: [...document.querySelectorAll('.mermaid')].filter(
-            (el) => el.querySelector('svg') && el.querySelector('[role=toolbar] button'),
-          ).length,
-        })`;
-        const deadline = Date.now() + 60_000;
-        // No initialiser: the loop body runs at least once and always describes what it saw.
-        let last;
-        do {
-          const state = unwrap(resultPayload(probe).payload);
-          if (state) {
-            if (state.containers === 2 && state.ready === 2) return;
-            last = `${state.ready}/${state.containers} container(s) rendered with a toolbar`;
-          } else {
-            last = "the readiness probe itself did not return JSON";
-          }
-          run("chrome-devtools-axi", ["wait", "500"], chromeEnv);
-        } while (Date.now() < deadline);
-        // A stalled render is almost always something the page already complained about -
-        // a blocked CDN import, a Mermaid parse error - so the browser console goes into
-        // the failure rather than leaving the next reader to reproduce it by hand.
-        const console_ = run("chrome-devtools-axi", ["console"], chromeEnv);
-        assert.fail(`the diagrams never rendered with their toolbars at ${viewport}: ${last}\n\n${console_}`);
-      };
-
       for (const viewport of ["1440x900", "768x900"]) {
         run("chrome-devtools-axi", ["emulate", "--viewport", viewport], chromeEnv);
-        run("chrome-devtools-axi", ["open", artifactUrl], chromeEnv);
-        waitForDiagrams(viewport);
+        run("chrome-devtools-axi", ["open", session.artifactUrl], chromeEnv);
+        waitForToolbars({ chromeEnv, tryEvaluate, label: viewport });
 
         const geometry = evaluate(`() => {
         const diagrams = [...document.querySelectorAll('.mermaid')].map((container) => {
@@ -489,12 +511,71 @@ test(
       assert.equal(snapshot.carriesDiagram, true, "the snapshot should still carry the diagram");
       assert.equal(snapshot.leaksToolbar, false, "Luxe controls leaked into the agent's snapshot");
     } finally {
-      // The bridge and the Chrome it launched outlive this process, so they have to be
-      // stopped here rather than left to the temp-directory sweep. The helper reports its
-      // own trouble instead of throwing, so a shutdown hiccup cannot replace the
-      // assertion failure that brought us into this block.
-      shutdownBrowserSession({ repoRoot, port, luxeEnv, chromeEnv });
-      await rm(temp, { recursive: true, force: true });
+      await stopToolbarSession(session);
+    }
+  },
+);
+
+test(
+  "an idle page with rendered toolbars does not mutate the DOM",
+  // Regression for the self-triggered re-render loop (issue #20): the toolbar's own state
+  // writes used to retrigger the document-wide mermaid observer, measured at ~1-2k
+  // mutations/sec on an idle page, and visible as oscillating layout when artifact CSS made
+  // the toolbar and the SVG compete for width.
+  { skip: skipReason, timeout: 720_000 },
+  async () => {
+    const session = await startToolbarSession();
+    const { chromeEnv } = session;
+    const { evaluate, tryEvaluate } = makeEvaluate(chromeEnv);
+    try {
+      waitForToolbars({ chromeEnv, tryEvaluate, label: "the churn probe" });
+      // Let post-render stragglers (font swaps, the first announce write) land before
+      // counting, so the assertion measures the steady state rather than startup.
+      run("chrome-devtools-axi", ["wait", "1000"], chromeEnv);
+
+      const countMutations = `() => new Promise((resolve) => {
+        let count = 0;
+        const observer = new MutationObserver((batch) => { count += batch.length; });
+        observer.observe(document.documentElement, { attributes: true, childList: true, subtree: true });
+        setTimeout(() => { observer.disconnect(); resolve(JSON.stringify({ mutations: count })); }, 1500);
+      })`;
+
+      const idle = evaluate(countMutations);
+      assert.equal(
+        idle.mutations,
+        0,
+        `an idle page mutated ${idle.mutations} times in 1.5s - the toolbar's self-triggered loop is back`,
+      );
+
+      // The same page must still write when state genuinely changes: zoom in and the
+      // readout moves off 100%. A compare-before-write guard that swallowed real changes
+      // would fail here.
+      const zoom = evaluate(`() => new Promise((resolve) => {
+        const bar = document.querySelector('[role=toolbar]');
+        const buttons = [...bar.querySelectorAll('button')];
+        const reset = buttons[1];
+        const before = reset.textContent;
+        buttons[2].click();
+        setTimeout(() => resolve(JSON.stringify({ before, after: reset.textContent })), 600);
+      })`);
+      assert.equal(zoom.before, "100%");
+      assert.notEqual(
+        zoom.after,
+        "100%",
+        "zoom-in no longer reaches the readout - the write guard swallowed a real change",
+      );
+
+      // The zoom's own writes (the readout, the 400ms announce) land inside [data-luxe-ui]
+      // and must not re-arm the loop: once they settle, the page is quiet again.
+      run("chrome-devtools-axi", ["wait", "1000"], chromeEnv);
+      const idleAgain = evaluate(countMutations);
+      assert.equal(
+        idleAgain.mutations,
+        0,
+        `the page kept mutating after a settled zoom (${idleAgain.mutations} in 1.5s)`,
+      );
+    } finally {
+      await stopToolbarSession(session);
     }
   },
 );

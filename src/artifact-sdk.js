@@ -117,6 +117,27 @@ export function buildDomSnapshot(
   return lines.join("\n");
 }
 
+/**
+ * The mermaid observer watches the whole document for childList mutations, and the SDK's own
+ * diagram toolbar lives in that document: refreshing toolbar state writes text into toolbar
+ * nodes, each write is a childList mutation, and without this filter each one schedules the
+ * enhancement pass that writes again - a self-triggered loop measured at ~1-2k mutations/sec
+ * on an idle diagram page. Mermaid itself never renders into a [data-luxe-ui] subtree (it
+ * renders into the artifact's own .mermaid container), so a batch of nothing-but-own-UI
+ * mutations carries no signal worth an enhancement pass.
+ *
+ * An empty batch is vacuously true: there is nothing to react to.
+ */
+export function mutationsAreAllLuxeUi(mutations) {
+  if (!mutations || mutations.length === 0) return true;
+  for (const mutation of mutations) {
+    const target = mutation?.target;
+    const el = target && target.nodeType === 1 ? target : target?.parentElement;
+    if (!el || typeof el.closest !== "function" || !el.closest("[data-luxe-ui]")) return false;
+  }
+  return true;
+}
+
 export function isModeToggleHotkeyEvent(event) {
   if (event.shiftKey || event.altKey) return false;
   return Boolean(event.metaKey || event.ctrlKey) && String(event.key || "").toLowerCase() === MODE_TOGGLE_HOTKEY_KEY;
@@ -758,12 +779,27 @@ export function createArtifactSdk(
     return "Open this diagram as an editable whiteboard";
   }
 
+  // Compare-before-write, every one of these. Assigning textContent replaces the text node
+  // even when the string is unchanged, and the mermaid observer hears that as a DOM change
+  // and schedules the enhancement pass that writes it again - a self-triggered loop measured
+  // at ~1-2k mutations/sec on an idle diagram page. The attribute writes take the same guard
+  // so an artifact-side attributes:true observer sees the same quiet. Genuine state changes
+  // are unaffected: the computed value differs exactly when a transition lands.
+  function setTextIfChanged(el, text) {
+    if (el.textContent !== text) el.textContent = text;
+  }
+
+  function setAttributeIfChanged(el, name, value) {
+    if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+  }
+
   function setAffordanceState(entry) {
     const busy = openWhiteboardIndex === entry.index;
     entry.button.disabled = busy || annotationMode || sessionEnded;
-    entry.button.textContent = busy ? "Editing in the whiteboard" : "Edit as whiteboard";
-    entry.button.setAttribute("aria-disabled", String(entry.button.disabled));
-    entry.button.title = affordanceReason(entry);
+    setTextIfChanged(entry.button, busy ? "Editing in the whiteboard" : "Edit as whiteboard");
+    setAttributeIfChanged(entry.button, "aria-disabled", String(entry.button.disabled));
+    const reason = affordanceReason(entry);
+    if (entry.button.title !== reason) entry.button.title = reason;
     // A disabled control has to LOOK disabled. Without this the button kept full opacity
     // and cursor:pointer, so a reviewer with annotate mode on clicked a control that
     // looked entirely live and nothing happened - which reads as a broken feature rather
@@ -1059,21 +1095,28 @@ export function createArtifactSdk(
         "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
 
       let announceTimer;
+      let lastAnnouncedPercent = null;
       entry.updateZoom = () => {
         const percent = Math.round(viewport.getScale() * 100);
-        reset.textContent = `${percent}%`;
+        setTextIfChanged(reset, `${percent}%`);
         // The ends of the clamp disable rather than silently doing nothing.
         zoomIn.disabled = viewport.atMaxZoom();
         zoomOut.disabled = viewport.atMinZoom();
         reset.disabled = percent === 100;
         for (const control of [zoomIn, zoomOut, reset]) {
-          control.setAttribute("aria-disabled", String(control.disabled));
+          setAttributeIfChanged(control, "aria-disabled", String(control.disabled));
           setControlEnabled(control, !control.disabled);
         }
-        window.clearTimeout(announceTimer);
-        announceTimer = window.setTimeout(() => {
-          status.textContent = `Diagram zoom ${percent} percent`;
-        }, 400);
+        // Announce only real zoom changes: scheduling this write unconditionally made every
+        // quiet refresh pass emit a delayed mutation of its own, feeding the loop the
+        // compare-before-write guards above exist to starve.
+        if (percent !== lastAnnouncedPercent) {
+          lastAnnouncedPercent = percent;
+          window.clearTimeout(announceTimer);
+          announceTimer = window.setTimeout(() => {
+            status.textContent = `Diagram zoom ${percent} percent`;
+          }, 400);
+        }
       };
 
       zoomOut.onclick = () => viewport.zoomBy(1.25);
@@ -2523,6 +2566,9 @@ export function createArtifactSdk(
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", enhanceMermaid, { once: true });
   }
-  const mermaidObserver = new MutationObserver(() => scheduleMermaidEnhance());
+  const mermaidObserver = new MutationObserver((mutations) => {
+    if (mutationsAreAllLuxeUi(mutations)) return;
+    scheduleMermaidEnhance();
+  });
   mermaidObserver.observe(document.documentElement, { childList: true, subtree: true });
 }
