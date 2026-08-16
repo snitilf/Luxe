@@ -6,9 +6,10 @@
  *
  * Delivery: `scripts/build.js` inlines this file into `dist/chrome.css` at the
  * token marker, and the `/chrome.css` route performs the same substitution at
- * request time for source runs. There is deliberately no `@import`: chrome.css
- * is served by one dedicated route with no companion route or copy step for
- * this file, so an import would 404 in the browser. See src/chrome-css.js.
+ * request time for source runs. There is deliberately no `@import`: no route
+ * serves this file to the browser, so an import would 404. The build also copies
+ * this file into `dist/` (issue #30): the bundle's readLuxeTokensCss and
+ * readArtifactBaselineCss resolve it against import.meta.url at runtime.
  *
  * The file is a single self-contained `:root` block with no imports and no
  * selectors of its own, so a verbatim copy can be generated for the design

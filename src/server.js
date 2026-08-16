@@ -1681,10 +1681,11 @@ export function createWhiteboardFrameHtml(channelToken = "") {
 </html>`;
 }
 
-// The design tokens as CSS text. Source runs read src/luxe-tokens.css; the
-// published bundle has no such file, because the build already inlined the
-// tokens into dist/chrome.css - so read them back out of the first :root block
-// there. Either way there is exactly one source.
+// The design tokens as CSS text. Both source and published-bundle runs read
+// luxe-tokens.css next to the entry point (the bundle ships it since the #30 fix).
+// The fallback covers hand-built or partial installs where only dist/chrome.css
+// exists: the build already inlined the tokens there, so read them back out of the
+// first :root block. Either way there is exactly one source.
 export async function readLuxeTokensCss() {
   try {
     return await readFile(luxeTokensCssUrl, "utf8");

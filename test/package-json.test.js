@@ -20,6 +20,8 @@ test("check script runs all verification commands", async () => {
 
   assert.deepEqual(checkCommands, [
     "npm run build",
+    "node scripts/smoke-dist.js",
+    "node scripts/check-tarball.js",
     "node scripts/build-skill.js --check",
     "node scripts/build-design-skill.js --check",
     "node scripts/check-design-adherence.js",
