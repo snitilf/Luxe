@@ -9,7 +9,7 @@ import { whiteboardFeedbackPaths } from "../src/whiteboard-store.js";
 
 function feedbackResult(result) {
   assert.equal(result.status, "feedback");
-  return /** @type {{ status: string, dom_snapshot: string, prompts: any[], layout_warnings?: any[], session_ended?: boolean, ended_by?: string }} */ (
+  return /** @type {{ status: string, dom_snapshot: string, prompts: any[], layout_warnings?: any[], sdk_status?: string, session_ended?: boolean, ended_by?: string }} */ (
     result
   );
 }
@@ -957,6 +957,38 @@ test("a receipt topic is bounded and never leaks a multi-line prompt", async () 
     assert.equal(multiline, "Queue answered - First line of a long answer");
     assert.ok(long.length < 90, `receipt should be trimmed, got ${long.length} chars`);
     assert.match(long, /\u2026$/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("an sdk_status failure is delivered exactly once, and a ready report retracts it", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-store-"));
+  try {
+    const artifact = path.join(dir, "artifact.html");
+    await writeFile(artifact, "<h1>Hello</h1>");
+    const store = new SessionStore(path.join(dir, "state.json"));
+    const session = await store.upsertSession(artifact, "http://localhost:4387/session/test");
+
+    // A fresh failure wakes the poll; the same continuous failure never wakes it twice.
+    const first = await store.recordSdkStatus(session.key, "failed");
+    assert.equal(first.wake, true);
+    const repeat = await store.recordSdkStatus(session.key, "failed");
+    assert.equal(repeat.wake, false);
+
+    const delivered = feedbackResult(await store.takeFeedback(session.key));
+    assert.equal(delivered.sdk_status, "failed");
+    assert.deepEqual(delivered.prompts, []);
+
+    // Delivered means delivered: the next poll is back to waiting.
+    assert.deepEqual(await store.takeFeedback(session.key), { status: "waiting" });
+
+    // A healthy reload retracts the failure quietly, and a later failure is news again.
+    const cleared = await store.recordSdkStatus(session.key, "ready");
+    assert.equal(cleared.wake, false);
+    assert.deepEqual(await store.takeFeedback(session.key), { status: "waiting" });
+    const second = await store.recordSdkStatus(session.key, "failed");
+    assert.equal(second.wake, true);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

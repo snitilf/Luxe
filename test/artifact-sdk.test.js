@@ -6,6 +6,7 @@ import {
   annotationCardCanDismiss,
   buildDomSnapshot,
   buildStructuralSelector,
+  createPreInitBuffer,
   classifyMaterialRectEscape,
   classifySevereTextOverflow,
   DOM_SNAPSHOT_TRUNCATION_MARKER,
@@ -239,6 +240,59 @@ test("mutationsAreAllLuxeUi tolerates empty batches and opaque targets", () => {
   assert.equal(mutationsAreAllLuxeUi([]), true);
   assert.equal(mutationsAreAllLuxeUi([{ target: null }]), false);
   assert.equal(mutationsAreAllLuxeUi([{ target: {} }]), false);
+});
+
+test("createPreInitBuffer holds messages until settle, then replays in order", () => {
+  const delivered = [];
+  const buffer = createPreInitBuffer((message) => delivered.push(message));
+
+  buffer.receive({ type: "first" });
+  buffer.receive({ type: "second" });
+  assert.deepEqual(delivered, []);
+
+  buffer.settle();
+  assert.deepEqual(delivered, [{ type: "first" }, { type: "second" }]);
+});
+
+test("createPreInitBuffer dispatches directly once settled, and settle is idempotent", () => {
+  const delivered = [];
+  const buffer = createPreInitBuffer((message) => delivered.push(message));
+
+  buffer.settle();
+  buffer.settle();
+  buffer.receive({ type: "after" });
+  assert.deepEqual(delivered, [{ type: "after" }]);
+});
+
+test("createPreInitBuffer drops the oldest messages past the cap", () => {
+  // A frame whose init never completes keeps buffering until the frame dies; the cap is
+  // what makes that bounded, and the newest messages are the ones worth keeping.
+  const delivered = [];
+  const buffer = createPreInitBuffer((message) => delivered.push(message), { cap: 3 });
+
+  for (const type of ["a", "b", "c", "d", "e"]) buffer.receive({ type });
+  buffer.settle();
+  assert.deepEqual(delivered, [{ type: "c" }, { type: "d" }, { type: "e" }]);
+});
+
+test("createPreInitBuffer lets a throwing handler abort the replay", () => {
+  // Pinned behavior: a handler that throws on init-complete state means the init it
+  // belongs to is broken, and quietly skipping the remaining messages would hide that.
+  const delivered = [];
+  const buffer = createPreInitBuffer((message) => {
+    if (message.type === "boom") throw new Error("handler failed");
+    delivered.push(message);
+  });
+
+  buffer.receive({ type: "ok" });
+  buffer.receive({ type: "boom" });
+  buffer.receive({ type: "never" });
+  assert.throws(() => buffer.settle(), /handler failed/);
+  assert.deepEqual(delivered, [{ type: "ok" }]);
+
+  // The throw does not un-settle the buffer: post-settle messages still dispatch directly.
+  buffer.receive({ type: "later" });
+  assert.deepEqual(delivered, [{ type: "ok" }, { type: "later" }]);
 });
 
 test("annotation card dismissal closes an empty card and preserves typed text", () => {

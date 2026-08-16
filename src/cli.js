@@ -389,6 +389,7 @@ export function startPollWaitReporter({
  *   dom_snapshot?: string,
  *   prompts?: any[],
  *   layout_warnings?: any[],
+ *   sdk_status?: string,
  * }}
  */
 export function createPollOutput({ file, response, agent = "generic" }) {
@@ -399,6 +400,7 @@ export function createPollOutput({ file, response, agent = "generic" }) {
     const layoutWarnings = canonicalLayoutWarningsForAgent(response.layout_warnings);
     const sessionEnded = Boolean(response.session_ended);
     const endedBy = typeof response.ended_by === "string" ? response.ended_by : undefined;
+    const sdkFailed = response.sdk_status === "failed";
     return {
       session: {
         file,
@@ -408,7 +410,16 @@ export function createPollOutput({ file, response, agent = "generic" }) {
       dom_snapshot: response.dom_snapshot || "",
       prompts: response.prompts || [],
       ...(layoutWarnings.length > 0 ? { layout_warnings: layoutWarnings } : {}),
-      next_step: createFeedbackNextStep(file, layoutWarnings, sessionEnded, endedBy, response.prompts || [], agent),
+      ...(sdkFailed ? { sdk_status: "failed" } : {}),
+      next_step: createFeedbackNextStep(
+        file,
+        layoutWarnings,
+        sessionEnded,
+        endedBy,
+        response.prompts || [],
+        agent,
+        sdkFailed,
+      ),
     };
   }
   if (response.status === "ended") {
@@ -438,7 +449,18 @@ function canonicalLayoutWarningsForAgent(value) {
   return warnings;
 }
 
-function createFeedbackNextStep(file, layoutWarnings, sessionEnded, endedBy, prompts = [], agent = "generic") {
+function createFeedbackNextStep(
+  file,
+  layoutWarnings,
+  sessionEnded,
+  endedBy,
+  prompts = [],
+  agent = "generic",
+  sdkFailed = false,
+) {
+  const sdkNote = sdkFailed
+    ? "The artifact's annotation layer (the Luxe SDK) failed to start in the browser - the user cannot annotate, and sends may lack dom_snapshot. Have the user reload the artifact from the More menu; if it persists, check the browser console for the init error, and if Luxe runs from an npx cache, a corrupt cache is a known cause - clear it and retry. Treat this as a bug and report the console error. "
+    : "";
   const count = layoutWarnings.length;
   const whiteboardNote = prompts.some((prompt) => prompt && prompt.tag === "whiteboard")
     ? `This feedback includes whiteboard edits (tag "whiteboard"): read the edit summary in the prompt text first, and only when it is not enough, open the target's scenePath (.excalidraw scene JSON) or previewPath (PNG) local files for detail. The artifact's Mermaid source stays authoritative - apply the edits by updating the Mermaid text in ${file} (Luxe live-reloads it); never try to write the .excalidraw scene back. `
@@ -455,13 +477,13 @@ function createFeedbackNextStep(file, layoutWarnings, sessionEnded, endedBy, pro
         count > 0
           ? ""
           : ` Only run \`luxe ${file} --reopen\` if the user explicitly asks for further review or something genuinely important needs their visual attention.`;
-      return `${layoutNote}${whiteboardNote}This was the last feedback before the user ended the session. Stop polling ${file} and do not reopen it - deliver any remaining updates directly in this conversation instead.${reopenNote}`;
+      return `${sdkNote}${layoutNote}${whiteboardNote}This was the last feedback before the user ended the session. Stop polling ${file} and do not reopen it - deliver any remaining updates directly in this conversation instead.${reopenNote}`;
     }
-    return `${layoutNote}${whiteboardNote}This was the last feedback before the Luxe Editor session ended. Stop polling ${file}. Deliver any remaining updates directly in this conversation, or run \`luxe ${file}\` to open a fresh session if the user needs further visual review.`;
+    return `${sdkNote}${layoutNote}${whiteboardNote}This was the last feedback before the Luxe Editor session ended. Stop polling ${file}. Deliver any remaining updates directly in this conversation, or run \`luxe ${file}\` to open a fresh session if the user needs further visual review.`;
   }
   const layoutPrefix =
     count > 0 ? layoutWarningsPrefix(file, layoutWarnings) : `Apply the requested changes to ${file}. `;
-  return `${layoutPrefix}${whiteboardNote}Do not respond to the user just yet. Now you must run \`luxe poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms unless the user ended the session. The poll waits silently until the user sends more feedback, ends the session, or reports fresh layout_warnings - never kill it. ${pollExecutionGuidance({ agent })}`;
+  return `${sdkNote}${layoutPrefix}${whiteboardNote}Do not respond to the user just yet. Now you must run \`luxe poll ${file} --agent-reply "<message for the user>"\` without --timeout-ms unless the user ended the session. The poll waits silently until the user sends more feedback, ends the session, or reports fresh layout_warnings - never kill it. ${pollExecutionGuidance({ agent })}`;
 }
 
 function reportedWarningsText(layoutWarnings) {

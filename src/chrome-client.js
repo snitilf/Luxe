@@ -32,6 +32,7 @@ const copyPathButton = /** @type {HTMLButtonElement} */ (document.getElementById
 const copyHint = /** @type {HTMLSpanElement} */ (document.getElementById("copyHint"));
 const copyHintText = /** @type {HTMLSpanElement} */ (document.getElementById("copyHintText"));
 const presenceBanner = /** @type {HTMLDivElement} */ (document.getElementById("presenceBanner"));
+const sdkIssueBanner = /** @type {HTMLDivElement} */ (document.getElementById("sdkIssueBanner"));
 const endedChip = /** @type {HTMLSpanElement} */ (document.getElementById("endedChip"));
 const layoutGateOverlay = /** @type {HTMLDivElement} */ (document.getElementById("layoutGateOverlay"));
 const layoutGateTitle = /** @type {HTMLDivElement} */ (document.getElementById("layoutGateTitle"));
@@ -65,6 +66,20 @@ let agentPresence = "waiting";
 let pointerdownSendFreeze = null;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let pointerdownSendFreezeTimer;
+// The artifact SDK announces a completed init by posting luxe:ready. When init throws - or
+// /sdk.js never arrives at all, e.g. a broken install answering it with a 500 - the page
+// looks fine while annotation, window.luxe, hotkeys, and snapshot replies are all dead, and
+// nobody could tell (issue #21). The watchdog turns that silent death into a banner for the
+// reviewer and an sdk_status report for the agent.
+//
+// sdkReady resets at navigation START (replaceArtifactFrame), not on the load event: the SDK
+// posts luxe:ready during document parse, which precedes the load event, so resetting on
+// load would discard a ready that legitimately arrived early.
+const SDK_READY_TIMEOUT_MS = 3_000;
+let sdkReady = false;
+let sdkFailureReported = false;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let sdkWatchdogTimer;
 const layoutGateEnabled = sessionData.layoutGateEnabled !== false;
 const configuredLayoutGateMaxHoldMs = Number(sessionData.layoutGateMaxHoldMs);
 const layoutGateMaxHoldMs =
@@ -1291,8 +1306,51 @@ async function exportArtifact() {
   }
 }
 
+async function reportSdkStatus(state) {
+  try {
+    await fetch("/api/" + key + "/sdk-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ state }),
+    });
+  } catch {
+    // The banner is the local signal; a failed report only loses the agent half, and the
+    // next reload re-reports. Telemetry must never throw into the UI.
+  }
+}
+
+function armSdkWatchdog() {
+  if (sdkReady || ended || initialEnded) return;
+  clearTimeout(sdkWatchdogTimer);
+  sdkWatchdogTimer = setTimeout(() => {
+    if (sdkReady || ended) return;
+    sdkFailureReported = true;
+    if (sdkIssueBanner) sdkIssueBanner.hidden = false;
+    reportSdkStatus("failed");
+  }, SDK_READY_TIMEOUT_MS);
+}
+
+function noteSdkReady() {
+  sdkReady = true;
+  clearTimeout(sdkWatchdogTimer);
+  if (sdkIssueBanner) sdkIssueBanner.hidden = true;
+  // A ready that lands after the watchdog fired retracts the failure everywhere: the banner
+  // hides again and the stored sdk_status clears, so a hot reload that fixes the SDK does
+  // not leave a stale failure attached to the session.
+  if (sdkFailureReported) {
+    sdkFailureReported = false;
+    reportSdkStatus("ready");
+  }
+}
+
 function replaceArtifactFrame() {
   startLayoutGateCycle();
+  // New document, new verdict: the previous init's ready (or failure) says nothing about
+  // the SDK that is about to load, so the watchdog starts from scratch on every navigation.
+  sdkReady = false;
+  sdkFailureReported = false;
+  if (sdkIssueBanner) sdkIssueBanner.hidden = true;
+  clearTimeout(sdkWatchdogTimer);
   // The iframe is sandboxed, so reload by resetting the iframe URL from chrome.
   frame.src = artifactSrc || frame.src;
 }
@@ -1795,6 +1853,7 @@ window.addEventListener("message", (event) => {
       enqueuePrompt(msg.prompt);
       return;
     case "luxe:ready":
+      noteSdkReady();
       replaySnapshotRequestOnReady();
       return;
     case "luxe:snapshot":
@@ -1900,6 +1959,7 @@ document.addEventListener(
   true,
 );
 frame.addEventListener("load", () => {
+  armSdkWatchdog();
   postToFrame({ type: "luxe:setAnnotationMode", enabled: annotation && !ended });
   // Replay the pre-reload scroll position so hot reloads don't jump the artifact to the top.
   postToFrame({ type: "luxe:restoreScroll", x: lastScroll.x, y: lastScroll.y });

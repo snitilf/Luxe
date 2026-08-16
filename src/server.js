@@ -30,6 +30,7 @@ import {
   isOccludableAuditText,
   MODE_TOGGLE_HOTKEY_KEY,
   mutationsAreAllLuxeUi,
+  createPreInitBuffer,
 } from "./artifact-sdk.js";
 import * as mermaidNode from "./mermaid-node.js";
 import { extractMermaidSources, mermaidSourceHash } from "./mermaid-source.js";
@@ -235,6 +236,10 @@ export async function serve({
   const writeLog = typeof log === "function" ? log : (line) => process.stderr.write(`${line}\n`);
   const logEvent = verbose ? (line) => writeLog(`[luxe] ${line}`) : null;
   let publicPort = port;
+
+  // A broken install turns /sdk.js into a 500 and every artifact silent. One loud boot
+  // line beats a mystery per session (issue #21).
+  await checkServableAssets({ write: writeLog });
 
   // Whiteboard sidecar files live next to state.json, keyed by session + diagram.
   const whiteboardStateRoot = path.dirname(stateFile);
@@ -465,6 +470,27 @@ export async function serve({
         events.emit("feedback", req.params.key);
       }
       res.json({ status: "recorded", layout_warnings: result.session.layout_warnings?.length || 0 });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/:key/sdk-status", async (req, res, next) => {
+    try {
+      if (rejectCrossOriginWrite(req, res, "cross-origin sdk-status report rejected")) return;
+      const state = req.body?.state;
+      if (state !== "failed" && state !== "ready") {
+        throw new PayloadBoundaryError(400, "invalid_payload", 'state must be "failed" or "ready"');
+      }
+      const result = await store.recordSdkStatus(req.params.key, state);
+      if (!result) {
+        res.status(404).json({ error: "session not found" });
+        return;
+      }
+      // A fresh failure wakes a waiting poll the same way layout warnings do; a repeated
+      // failure or a clearing ready never does.
+      if (result.wake) events.emit("feedback", req.params.key);
+      res.json({ status: "recorded" });
     } catch (error) {
       next(error);
     }
@@ -751,6 +777,12 @@ export async function serve({
         .type("application/javascript")
         .send(createSdkJs(String(req.query.key || ""), await readLuxeTokensCss(), await readArtifactBaselineCss()));
     } catch (error) {
+      // Request-time safety net behind the boot check: assets can disappear after startup,
+      // and a silent 500 here is a silent, annotation-less artifact for every session.
+      writeLog(
+        `[luxe] WARNING: /sdk.js failed to build: ${error instanceof Error ? error.message : String(error)}. ` +
+          "Artifacts have no annotation layer until this is fixed - reinstall editeur-luxe or clear the npx cache.",
+      );
       next(error);
     }
   });
@@ -1623,7 +1655,7 @@ ${LUXE_DEFAULT_FAVICON}
 </head>
 <body class="${bodyClass}">
 <div class="bar"><div class="brand"><span class="brand-mark">Luxe</span></div><div class="spacer" aria-hidden="true"></div><span class="ended-chip" id="endedChip" hidden>${chromeIcons.check}<span>Session ended</span></span><button class="annotate-switch" id="annotation" type="button" aria-pressed="${annotationPressed}" title="${escapeHtml(modeToggleHint)}"><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span>Annotate</span></button><div class="more-wrap" id="moreWrap"><button class="more-button" id="moreButton" type="button" title="More" aria-haspopup="menu" aria-expanded="false">${chromeIcons.more}</button><div class="menu more-menu" id="moreMenu" hidden><div class="menu-head"><div class="menu-label">Editing</div><button class="menu-file" id="copyPath" type="button" title="Copy path · ${escapeHtml(session.file)}">${chromeIcons.file}<span class="menu-file-text"><span class="path-head">${escapeHtml(pathHead)}</span><span class="path-tail">${escapeHtml(pathTail)}</span></span><span class="copy-hint" id="copyHint"><span class="icon-copy">${chromeIcons.copy}</span><span class="icon-check">${chromeIcons.check}</span><span id="copyHintText">Copy</span></span></button></div><div class="menu-rule"></div><button class="menu-item" id="reloadArtifact" type="button">${chromeIcons.refresh}<span>Reload artifact</span></button><button class="menu-item" id="exportArtifact" type="button">${chromeIcons.download}<span>Export standalone HTML</span></button><div class="menu-rule"></div><button class="menu-item" id="end" type="button">${chromeIcons.exit}<span>End session</span></button></div></div></div>
-<div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-downloads" data-artifact-src="/artifact/${session.key}/index.html"></iframe><div class="layout-issue-banner" id="layoutIssueBanner" hidden>${chromeIcons.alert}<span id="layoutIssueBannerText">Luxe received a reported warning. Your agent has been notified.</span></div></div><aside class="panel"><h2>Conversation</h2><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer"><div class="presence-banner" id="presenceBanner" hidden>${chromeIcons.alert}<span id="presenceBannerText">Your agent is not listening. If this persists, ask your agent to poll for updates from Luxe.</span></div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first.</div><p class="send-caption" id="sendCaption">Send &amp; End delivers the feedback and closes the session.</p><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button" aria-describedby="sendCaption sendHint">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send" aria-describedby="sendHint">Send to agent</button></div></div></aside></div>
+<div class="layout"><div class="frame"><iframe id="artifact" sandbox="allow-scripts allow-forms allow-popups allow-downloads" data-artifact-src="/artifact/${session.key}/index.html"></iframe><div class="frame-banners"><div class="layout-issue-banner" id="layoutIssueBanner" hidden>${chromeIcons.alert}<span id="layoutIssueBannerText">Luxe received a reported warning. Your agent has been notified.</span></div><div class="layout-issue-banner" id="sdkIssueBanner" hidden>${chromeIcons.alert}<span>The annotation layer failed to start in this artifact. Your agent has been notified. Reload the artifact; if it persists, check the browser console.</span></div></div></div><aside class="panel"><h2>Conversation</h2><div class="panel-scroll" id="panelScroll"><div class="chat" id="chatLog"></div><div class="annotation-pills" id="annotationPills"></div></div><div class="composer"><div class="presence-banner" id="presenceBanner" hidden>${chromeIcons.alert}<span id="presenceBannerText">Your agent is not listening. If this persists, ask your agent to poll for updates from Luxe.</span></div><textarea id="chatInput" placeholder="Write a message for the agent..."></textarea><div class="send-hint" id="sendHint" role="status" aria-live="polite" hidden>Write a message or annotate an element first.</div><p class="send-caption" id="sendCaption">Send &amp; End delivers the feedback and closes the session.</p><div class="actions" id="sendActions"><button class="button button-ghost" id="sendAndEnd" type="button" aria-describedby="sendCaption sendHint">${chromeIcons.exit}<span>Send &amp; End</span></button><button class="button" id="send" aria-describedby="sendHint">Send to agent</button></div></div></aside></div>
 <div class="scrim layout-gate-overlay" id="layoutGateOverlay"${layoutGateHidden}><div class="modal"><div class="modal-title" id="layoutGateTitle">Checking layout. One moment.</div><p class="modal-copy" id="layoutGateCopy">Luxe is waiting for fonts and final geometry before revealing this artifact.</p><button class="button modal-action" id="layoutGateAction" type="button">Show anyway</button></div></div>
 <div class="farewell" id="farewell" role="dialog" aria-modal="true" aria-labelledby="farewellTitle" tabindex="-1" hidden><div class="farewell-card"><div class="farewell-title" id="farewellTitle">OK thanks bye, see you in the terminal!</div><p class="farewell-copy" id="farewellCopy">Your feedback is on its way. Press Ctrl+W to close this tab.</p></div></div>
 <div class="whiteboard-overlay" id="whiteboardOverlay" hidden><div class="whiteboard-shell"><div class="whiteboard-error" id="whiteboardError" hidden></div><button class="whiteboard-close" id="whiteboardClose" type="button" aria-label="Close whiteboard"><svg width="14" height="14" viewBox="0 0 10 10" fill="none" aria-hidden="true" focusable="false"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button><iframe id="whiteboardFrame" title="Excalidraw whiteboard" sandbox="allow-scripts allow-popups"></iframe></div></div>
@@ -1664,6 +1696,40 @@ export async function readLuxeTokensCss() {
   return match ? match[0] : "";
 }
 
+// A broken or incomplete install (observed: a pruned npx cache missing dist assets) fails
+// these reads at request time, which turns /sdk.js into a 500 and every artifact silent:
+// no annotation, no window.luxe, and no signal anywhere. Checking at boot with the SAME
+// reader functions the routes use - fallbacks included - turns a per-artifact mystery into
+// one loud startup line. Warn, never refuse: a server that boots and warns beats one that
+// will not boot while you are debugging it.
+/**
+ * Warn at boot when the assets /sdk.js depends on cannot be read. Warn, never refuse.
+ * @param {{ write?: (line: string) => void, readers?: Array<[string, () => Promise<string>]> }} [options]
+ * @returns {Promise<string[]>}
+ */
+export async function checkServableAssets({ write = (line) => process.stderr.write(`${line}\n`), readers } = {}) {
+  const checks = readers || [
+    ["luxe-tokens.css", () => readLuxeTokensCss()],
+    ["artifact-baseline.css", () => readArtifactBaselineCss()],
+  ];
+  const failures = [];
+  for (const [name, read] of checks) {
+    try {
+      const content = await read();
+      if (!content) failures.push(`${name} resolved to empty content`);
+    } catch (error) {
+      failures.push(`${name} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  for (const failure of failures) {
+    write(
+      `[luxe] WARNING: ${failure}. Artifacts will fail to load their annotation layer (/sdk.js 500). ` +
+        "This usually means a broken or incomplete install - reinstall editeur-luxe, or if you ran it via npx, clear the npx cache and retry.",
+    );
+  }
+  return failures;
+}
+
 export function createSdkJs(key, luxeTokensCss = "", artifactBaselineCss = "") {
   // Serialize every helper exported by mermaid-node.js as a same-scope const so
   // cross-helper calls (e.g. mermaidNodeFrom → mermaidNodeElement) resolve in the
@@ -1680,6 +1746,7 @@ const isNativeInteractiveControl=${isNativeInteractiveControl.toString()};
 const MODE_TOGGLE_HOTKEY_KEY=${JSON.stringify(MODE_TOGGLE_HOTKEY_KEY)};
 const isModeToggleHotkeyEvent=${isModeToggleHotkeyEvent.toString()};
 const mutationsAreAllLuxeUi=${mutationsAreAllLuxeUi.toString()};
+const createPreInitBuffer=${createPreInitBuffer.toString()};
 const classifySevereTextOverflow=${classifySevereTextOverflow.toString()};
 const classifyMaterialRectEscape=${classifyMaterialRectEscape.toString()};
 const isMaterialPageOverflow=${isMaterialPageOverflow.toString()};

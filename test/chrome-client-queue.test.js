@@ -101,6 +101,11 @@ async function createChromeHarness({
       addEventListener(type, handler) {
         listeners.set(type, handler);
       },
+      // Fire a registered listener directly. The frame's "load" event is how the chrome
+      // learns the artifact navigated, and no harness-level event system exists for it.
+      fireEvent(type) {
+        listeners.get(type)?.();
+      },
       children: [],
       // Enough of a matcher for the selectors the chrome actually uses:
       // comma-separated class chains with an optional :not(.class). The fake returned []
@@ -2673,4 +2678,86 @@ test("the farewell takes focus so its dialog is announced", async () => {
   await flushPromises();
 
   assert.equal(chrome.element("farewell").focused, true, "focus moved into the dialog");
+});
+
+test("sdk watchdog shows the banner and reports failed when luxe:ready never arrives", async () => {
+  const sdkStatusPosts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("/sdk-status")) sdkStatusPosts.push(JSON.parse(init.body));
+      return { ok: true };
+    },
+  });
+
+  // The frame loads, but the SDK inside it never completes init (or never arrives).
+  chrome.frame.fireEvent("load");
+  chrome.runTimers(3_000);
+
+  assert.equal(chrome.element("sdkIssueBanner").hidden, false, "the failure banner never showed");
+  assert.deepEqual(sdkStatusPosts, [{ state: "failed" }]);
+});
+
+test("sdk watchdog stays quiet when luxe:ready arrives, even before the load event", async () => {
+  const sdkStatusPosts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("/sdk-status")) sdkStatusPosts.push(JSON.parse(init.body));
+      return { ok: true };
+    },
+  });
+
+  // Real ordering: the SDK posts luxe:ready during document parse, which precedes the
+  // frame's load event. A watchdog that armed unconditionally on load would fire anyway.
+  chrome.sendFrameMessage({ type: "luxe:ready" });
+  chrome.frame.fireEvent("load");
+  chrome.runTimers(3_000);
+
+  assert.equal(chrome.element("sdkIssueBanner").hidden, true, "a ready SDK still raised the banner");
+  assert.deepEqual(sdkStatusPosts, []);
+});
+
+test("a late luxe:ready retracts a fired watchdog, banner and report both", async () => {
+  const sdkStatusPosts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("/sdk-status")) sdkStatusPosts.push(JSON.parse(init.body));
+      return { ok: true };
+    },
+  });
+
+  chrome.frame.fireEvent("load");
+  chrome.runTimers(3_000);
+  assert.equal(chrome.element("sdkIssueBanner").hidden, false);
+
+  // The SDK was slow, not dead: a hot reload that fixes things must not leave a stale
+  // failure attached to the session.
+  chrome.sendFrameMessage({ type: "luxe:ready" });
+
+  assert.equal(chrome.element("sdkIssueBanner").hidden, true, "the banner did not hide on late ready");
+  assert.deepEqual(sdkStatusPosts, [{ state: "failed" }, { state: "ready" }]);
+});
+
+test("reloading the artifact re-arms the sdk watchdog for the new document", async () => {
+  const sdkStatusPosts = [];
+  const chrome = await createChromeHarness({
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("/sdk-status")) sdkStatusPosts.push(JSON.parse(init.body));
+      return { ok: true };
+    },
+  });
+
+  // First document: healthy SDK, quiet watchdog.
+  chrome.sendFrameMessage({ type: "luxe:ready" });
+  chrome.frame.fireEvent("load");
+  chrome.runTimers(3_000);
+  assert.deepEqual(sdkStatusPosts, []);
+
+  // The reviewer reloads the artifact; the new document's SDK never reports. Readiness from
+  // the previous document must not carry over.
+  chrome.element("reloadArtifact").onclick();
+  chrome.frame.fireEvent("load");
+  chrome.runTimers(3_000);
+
+  assert.equal(chrome.element("sdkIssueBanner").hidden, false, "the reloaded frame's dead SDK went unwatched");
+  assert.deepEqual(sdkStatusPosts, [{ state: "failed" }]);
 });

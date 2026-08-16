@@ -16,6 +16,7 @@ import {
   allowsAllHosts,
   ANNOTATION_DEFAULT,
   buildAllowedHostnames,
+  checkServableAssets,
   createChromeHtml,
   createSdkJs,
   displayPathParts,
@@ -25,13 +26,13 @@ import {
   hostnameFromHostHeader,
   isAllowedHostHeader,
   isAllowedRequestHost,
+  remoteBindingWarning,
   resolveArtifactAsset,
   resolveDesignAssetPath,
   resolveExportAssetPath,
   resolveFontAssetPath,
   resolveIdleTimeoutMs,
   resolveWatchTarget,
-  remoteBindingWarning,
   serve,
 } from "../src/server.js";
 import { canonicalFile, sessionKey } from "../src/session-store.js";
@@ -3346,4 +3347,82 @@ test("the diagram toolbar is laid out below the diagram, not over it", async () 
 
   // Hit targets clear the 24px WCAG 2.5.8 floor.
   assert.match(sdk, /min-width:32px;height:32px/);
+});
+
+test("an sdk status failure wakes the long poll once, then retracts on ready", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "luxe-serve-"));
+  const artifact = path.join(dir, "artifact.html");
+  await writeFile(artifact, "<!doctype html><html><body></body></html>");
+  const server = await serve({ port: 0, stateFile: path.join(dir, "state.json"), version: "9.9.9-test" });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const open = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: artifact }),
+    });
+    const { key } = await open.json();
+
+    const postSdkStatus = (targetKey, state) =>
+      fetch(`${base}/api/${targetKey}/sdk-status`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state }),
+      });
+
+    const pollPromise = pollRequest(base, artifact, { timeoutMs: 5000 }).then((res) => res.json());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const report = await postSdkStatus(key, "failed");
+    assert.equal(report.status, 200);
+
+    const delivered = await pollPromise;
+    assert.equal(delivered.status, "feedback");
+    assert.equal(delivered.sdk_status, "failed");
+    assert.deepEqual(delivered.prompts, []);
+
+    // Delivered exactly once: the next poll waits instead of replaying the failure.
+    const second = await pollRequest(base, artifact, { timeoutMs: 300 }).then((res) => res.json());
+    assert.equal(second.status, "waiting");
+    assert.equal(second.sdk_status, undefined);
+
+    // A ready report retracts the failure without waking anything.
+    const cleared = await postSdkStatus(key, "ready");
+    assert.equal(cleared.status, 200);
+
+    // Validation: an unknown state is a 400, an unknown session a 404.
+    const bad = await postSdkStatus(key, "unknown");
+    assert.equal(bad.status, 400);
+    const missing = await postSdkStatus("nosuchsession", "failed");
+    assert.equal(missing.status, 404);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("checkServableAssets warns loudly on unreadable or empty assets and stays quiet otherwise", async () => {
+  const healthy = [];
+  const healthyFailures = await checkServableAssets({ write: (line) => healthy.push(line) });
+  assert.deepEqual(healthyFailures, []);
+  assert.deepEqual(healthy, []);
+
+  const warnings = [];
+  const failures = await checkServableAssets({
+    write: (line) => warnings.push(line),
+    readers: [
+      [
+        "luxe-tokens.css",
+        async () => {
+          throw new Error("ENOENT: no such file or directory");
+        },
+      ],
+      ["artifact-baseline.css", async () => ""],
+    ],
+  });
+  assert.equal(failures.length, 2);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /could not be read/);
+  assert.match(warnings[0], /annotation layer/);
+  assert.match(warnings[0], /npx cache/);
+  assert.match(warnings[1], /empty content/);
 });
