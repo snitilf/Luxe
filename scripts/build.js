@@ -30,6 +30,12 @@ await esbuild.build({
 
 await chmod("dist/cli.mjs", 0o755);
 await copyFile("src/chrome-client.js", "dist/chrome-client.js");
+// The bundle resolves both stylesheets against import.meta.url at runtime
+// (readArtifactBaselineCss, readLuxeTokensCss). Omitting them from dist 500'd /sdk.js
+// for every npm/npx install of 0.3.x - issue #30. The tarball gate in npm run check
+// keeps this list honest.
+await copyFile("src/luxe-tokens.css", "dist/luxe-tokens.css");
+await copyFile("src/artifact-baseline.css", "dist/artifact-baseline.css");
 
 // The design tokens are inlined into the shipped stylesheet - see src/chrome-css.js
 // for why this is not an @import.
