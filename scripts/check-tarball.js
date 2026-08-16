@@ -19,7 +19,13 @@ if (tarballArg) {
     .map((line) => line.trim().replace(/^package\//, ""))
     .filter(Boolean);
 } else {
-  const output = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { encoding: "utf8" });
+  // execFile("npm") is ENOENT on Windows (npm is npm.cmd, and .cmd shims need a shell).
+  // Inside `npm run check` the reliable handle is npm_execpath - the npm CLI's own JS
+  // entry, run with the current node. The bare-npm fallback covers direct invocation.
+  const args = ["pack", "--dry-run", "--json", "--ignore-scripts"];
+  const output = process.env.npm_execpath
+    ? execFileSync(process.execPath, [process.env.npm_execpath, ...args], { encoding: "utf8" })
+    : execFileSync("npm", args, { encoding: "utf8", shell: process.platform === "win32" });
   const parsed = JSON.parse(output);
   entries = parsed[0].files.map((file) => file.path);
 }
