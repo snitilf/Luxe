@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.5](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.3.4...editeur-luxe-v0.3.5) (2026-08-16)
+
+
+### Bug Fixes
+
+* **build:** ship the artifact baseline and token CSS in the tarball ([2840d1c](https://github.com/snitilf/Luxe/commit/2840d1c6db618ccba2dfd2a4a400c3e81b8c210d))
+* **build:** ship the artifact baseline and token CSS in the tarball ([3dc4052](https://github.com/snitilf/Luxe/commit/3dc4052d55ddb6f336d0fb4877cd88ddee00ff3e)), closes [#30](https://github.com/snitilf/Luxe/issues/30)
+
 ## [0.3.4](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.3.3...editeur-luxe-v0.3.4) (2026-08-16)
 
 
