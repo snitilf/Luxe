@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.4](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.3.3...editeur-luxe-v0.3.4) (2026-08-16)
+
+
+### Features
+
+* **chrome:** warn when the artifact SDK never reports ready ([1de097b](https://github.com/snitilf/Luxe/commit/1de097b6ca6cb2602b67fa064d6d199a7d7075bd))
+* **chrome:** warn when the artifact SDK never reports ready ([f457646](https://github.com/snitilf/Luxe/commit/f457646ee3bd8dc11c15401ca36dcbde29da28de))
+
+
+### Bug Fixes
+
+* **sdk:** register the chrome protocol before init work ([ca6deab](https://github.com/snitilf/Luxe/commit/ca6deabae073c21312ce720ad09f6ffc654fb86a))
+* **server:** verify sdk.js assets at startup and log request-time failures ([d946b34](https://github.com/snitilf/Luxe/commit/d946b3446c89b1abe21c3b8f2c9e27f4b0ced548))
+
 ## [0.3.3](https://github.com/snitilf/Luxe/compare/editeur-luxe-v0.3.2...editeur-luxe-v0.3.3) (2026-08-15)
 
 
